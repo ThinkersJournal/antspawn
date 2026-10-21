@@ -3,15 +3,15 @@
 
 use std::process::Command;
 
-fn spec_file() -> std::path::PathBuf {
-    let path = std::env::temp_dir().join(format!("antspawn-cli-{}.toml", std::process::id()));
+fn spec_file(tag: &str) -> std::path::PathBuf {
+    let path = std::env::temp_dir().join(format!("antspawn-cli-{tag}-{}.toml", std::process::id()));
     std::fs::write(&path, "[job]\nname = \"t\"\ncmd = [\"x\"]\n").unwrap();
     path
 }
 
 #[test]
 fn run_refuses_the_uncertified_naive_launcher() {
-    let spec = spec_file();
+    let spec = spec_file("naive");
     let out = Command::new(env!("CARGO_BIN_EXE_spawn"))
         .args(["run", spec.to_str().unwrap(), "--launcher", "naive"])
         .output()
@@ -28,7 +28,7 @@ fn run_refuses_the_uncertified_naive_launcher() {
 
 #[test]
 fn run_without_a_launcher_says_none_is_certified() {
-    let spec = spec_file();
+    let spec = spec_file("auto");
     let out = Command::new(env!("CARGO_BIN_EXE_spawn"))
         .args(["run", spec.to_str().unwrap()])
         .output()
