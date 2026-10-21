@@ -32,9 +32,13 @@ Sandbox: the feature is off on this box (needs CireSnave's one-time elevated ena
 ## Next
 - Runner-only negative tests for windows-sandbox (needs the probe mapped ro into the guest) once the feature exists;
   record in `docs/MEASUREMENTS.md`.
-- PR2b `account`: PM design (no stored password): one-time elevated setup (CireSnave's) registers a service/scheduled
-  task running AS the restricted account; launcher drops the spec into a spool dir the account reads, triggers it
-  (schtasks /Run or ACL'd named pipe), results via a results dir. Send the PM a 6-line design BEFORE coding.
+- PR2b `account` (PM GO 2026-10-21; start only after PR #2 merges, branch from main; PR3 also rebases then, never stacked):
+  runner service AS the restricted account + spool dir, no stored password. Notes: (1) account cannot see C:\Projects, so
+  mounts are COPY-IN (ro source into workdir) and COPY-OUT (declared outputs); say so in docs/DESIGN.md. (2) elevated
+  setup ships as a script, dry-run default, -Apply, reads back state (like gh-runner-setup.ps1); CireSnave runs it.
+  (3) spool ACL: only the owning user writes; the runner refuses specs whose paths/limits exceed its config.
+  (4) schtasks /Run vs ACL'd named pipe: MEASURE on this box before choosing (needs the elevated setup first), record
+  in MEASUREMENTS.md.
 - PR4: Unpopped `slangc` proof + `docs/MEASUREMENTS.md`. Then JIT-runner adapter (decision 241).
 
 ## Unknowns to measure, not guess
