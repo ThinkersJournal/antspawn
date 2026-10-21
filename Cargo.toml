@@ -1,0 +1,21 @@
+[package]
+name = "antspawn"
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.94"
+description = "A sandboxed job runner: one clean environment per job, only what the job declares, outputs collected, environment destroyed. Launchers are certified by tests, never asserted."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/ThinkersJournal/antspawn"
+readme = "README.md"
+keywords = ["sandbox", "ci", "runner", "isolation", "jobs"]
+categories = ["development-tools", "command-line-utilities"]
+
+[[bin]]
+name = "spawn"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.6.7", features = ["derive"] }
+serde = { version = "1.0.229", features = ["derive"] }
+thiserror = "2.0.21"
+toml = "1.1.8"
