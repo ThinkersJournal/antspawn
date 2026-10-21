@@ -2,8 +2,10 @@
 //! The launchers shipped with AntSpawn.
 
 pub mod naive;
+pub mod windows_sandbox;
 
 pub use naive::Naive;
+pub use windows_sandbox::WindowsSandbox;
 
 use crate::launcher::Registry;
 use crate::matrix::Matrix;
@@ -14,7 +16,7 @@ pub const MATRIX: &str = include_str!("../../matrix/launchers.tsv");
 /// Every shipped launcher, certified by [`MATRIX`].
 pub fn registry() -> Registry {
     Registry::new(
-        vec![Box::new(Naive)],
+        vec![Box::new(Naive), Box::new(WindowsSandbox)],
         Matrix::parse(MATRIX).expect("committed matrix parses"),
     )
 }

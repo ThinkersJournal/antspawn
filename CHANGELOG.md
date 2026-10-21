@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.0.3
+
+- `windows-sandbox` launcher: generated `.wsb` (no network, no vGPU, no clipboard; declared mounts only),
+  `job.cmd` run at logon, `exit.code` polled, VM closed and host folders removed on destroy and on drop.
+  cmd.exe metacharacters in the command, env or paths are refused, never escaped. Absent feature gives a loud
+  `NotProvisioned`; the launcher never enables it. UNVERIFIED: no matrix row, no privileged run yet
+  (the Sandbox feature is not enabled on the dev box).
+- Fix: the two CLI tests shared one spec file and raced.
+
 ## 0.0.2
 
 - `naive` launcher: a plain child process, the known-bad control. Never certified; `spawn run`

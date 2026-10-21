@@ -25,14 +25,21 @@ Run on Sonnet, never Opus. You cannot push here: send the PM the SHA of each PR 
 10. `secrets[]` = names only, resolved at run time, never logged or written to env/files; none implemented (spec refused).
 
 ## State
-PR1 merged (a864f71, 0.0.1). PR2a on branch `pr2-launchers` (62b0071, 0.0.2): `naive` launcher, `spawn run/providers/matrix`,
-negative tests via `spawn-probe` (naive fails all three), empty `matrix/launchers.tsv`. SHA sent to PM as [READY].
+PR1 merged. PR #2 (PR2a, naive + spawn run) queued at the gate. PR3 on branch `pr3-windows-sandbox` (stacked on
+`pr2-launchers`, 0.0.3): `windows-sandbox` launcher, UNIT-tested only (config, script, refusals). Not run in a real
+Sandbox: the feature is off on this box (needs CireSnave's one-time elevated enable).
 
 ## Next
-- PR2b: `account` launcher. BLOCKED on an [ASK] to the PM: how does a non-elevated launcher start a process as the
-  pre-provisioned restricted account (needs its password: CreateProcessWithLogonW, or a stored credential)? Also needs
-  `windows-sys` (unsafe FFI). Do not start before the answer. Then the matrix example + runner-only account tests.
-- PR3: `windows-sandbox`. PR4: Unpopped `slangc` proof + `docs/MEASUREMENTS.md`. Then the JIT-runner adapter (decision 241).
+- Runner-only negative tests for windows-sandbox (needs the probe mapped ro into the guest) once the feature exists;
+  record in `docs/MEASUREMENTS.md`.
+- PR2b `account` (PM GO 2026-10-21; start only after PR #2 merges, branch from main; PR3 also rebases then, never stacked):
+  runner service AS the restricted account + spool dir, no stored password. Notes: (1) account cannot see C:\Projects, so
+  mounts are COPY-IN (ro source into workdir) and COPY-OUT (declared outputs); say so in docs/DESIGN.md. (2) elevated
+  setup ships as a script, dry-run default, -Apply, reads back state (like gh-runner-setup.ps1); CireSnave runs it.
+  (3) spool ACL: only the owning user writes; the runner refuses specs whose paths/limits exceed its config.
+  (4) schtasks /Run vs ACL'd named pipe: MEASURE on this box before choosing (needs the elevated setup first), record
+  in MEASUREMENTS.md.
+- PR4: Unpopped `slangc` proof + `docs/MEASUREMENTS.md`. Then JIT-runner adapter (decision 241).
 
 ## Unknowns to measure, not guess
 Windows Sandbox concurrency on this build; GPU in Windows Sandbox / Hyper-V GPU-P; Sandboxie-Plus with named pipes;
