@@ -25,13 +25,14 @@ Run on Sonnet, never Opus. You cannot push here: send the PM the SHA of each PR 
 10. `secrets[]` = names only, resolved at run time, never logged or written to env/files; none implemented (spec refused).
 
 ## State
-PR1 (this scaffold: CI, spec types, capability set, matrix parser, launcher trait + providers, `spawn check`) is
-the first commit set; version 0.0.1 (PM adjusts).
+PR1 merged (a864f71, 0.0.1). PR2a on branch `pr2-launchers` (62b0071, 0.0.2): `naive` launcher, `spawn run/providers/matrix`,
+negative tests via `spawn-probe` (naive fails all three), empty `matrix/launchers.tsv`. SHA sent to PM as [READY].
 
 ## Next
-- PR2: `naive` + `account` launchers, `spawn run`, the three negative tests, matrix example + checked-in matrix.
-- PR3: `windows-sandbox`. PR4: Unpopped `slangc` proof + measurements (start latency, cleanup, concurrency).
-- Then the GitHub Actions JIT-runner adapter (needs board decision 241).
+- PR2b: `account` launcher. BLOCKED on an [ASK] to the PM: how does a non-elevated launcher start a process as the
+  pre-provisioned restricted account (needs its password: CreateProcessWithLogonW, or a stored credential)? Also needs
+  `windows-sys` (unsafe FFI). Do not start before the answer. Then the matrix example + runner-only account tests.
+- PR3: `windows-sandbox`. PR4: Unpopped `slangc` proof + `docs/MEASUREMENTS.md`. Then the JIT-runner adapter (decision 241).
 
 ## Unknowns to measure, not guess
 Windows Sandbox concurrency on this build; GPU in Windows Sandbox / Hyper-V GPU-P; Sandboxie-Plus with named pipes;
