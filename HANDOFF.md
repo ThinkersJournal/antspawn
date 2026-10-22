@@ -31,7 +31,7 @@ tests/{negative,runner,account}.rs. UNVERIFIED (need CireSnave elevated): `scrip
 Branch `pr5-matrix`: matrix generator DONE and committed (0.0.5), waiting on PM merge (SHA sent). Do not redo it.
 
 ## Next (unblocked first)
-1. Branch `pr6-slangc-proof` (stacked on pr5): tests/slangc_proof.rs harness written, UNVERIFIED. When the elevated setups have run: `cargo test --test account`, `cargo test --test slangc_proof -- --nocapture`, measure schtasks /Run non-admin vs named pipe,
+1. PM HOLD: do NOT send PR6 stacked. When PR #5 merges (check `gh pr view 5`), rebase `pr6-slangc-proof` onto origin/main (bump 0.0.6), send the FULL SHA. Branch (local, 72c16e5): tests/slangc_proof.rs harness written, UNVERIFIED. When the elevated setups have run: `cargo test --test account`, `cargo test --test slangc_proof -- --nocapture`, measure schtasks /Run non-admin vs named pipe,
    record in docs/MEASUREMENTS.md, regenerate matrix. Then PR4-proof: Unpopped `slangc` through account and
    windows-sandbox + measurements (start latency, cleanup, concurrency). Then JIT-runner adapter (decision 241).
 
