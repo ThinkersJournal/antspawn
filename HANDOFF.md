@@ -24,15 +24,16 @@ Run on Sonnet, never Opus. You cannot push here: send the PM the SHA of each PR 
    results in `docs/MEASUREMENTS.md` (date, ref).
 10. `secrets[]` = names only, resolved at run time, never logged or written to env/files; none implemented (spec refused).
 
-## State (2026-10-21)
-PR1-5 merged (main 8b16d5f, 0.0.5). Landed: naive + account + windows-sandbox launchers, spawn-runner, setup script,
-tests/{negative,runner,account}.rs. UNVERIFIED (need CireSnave elevated): `scripts/account-setup.ps1 -BinDir 'C:\Program Files\antspawn' -Apply`
-(after copying spawn-runner.exe there) and enabling the Windows Sandbox feature.
+## State (2026-10-22)
+PR1-6 merged (main a3cbe55, 0.0.6). PR7 (`pr7-measure`, 0.0.7, examples/measure.rs + naive baseline) is with the PM.
+UNVERIFIED (need CireSnave elevated): `scripts/account-setup.ps1 -BinDir 'C:\Program Filesntspawn' -Apply`
+(after copying spawn-runner.exe there) and enabling the Windows Sandbox feature. Neither has been run.
 
 ## Next (unblocked first)
-1. PR6 (`pr6-slangc-proof`, 0.0.6, tests/slangc_proof.rs, UNVERIFIED) is with the PM; then the GitHub adapter once board 241 answers. When the elevated setups have run: `cargo test --test account`, `cargo test --test slangc_proof -- --nocapture`, measure schtasks /Run non-admin vs named pipe,
-   record in docs/MEASUREMENTS.md, regenerate matrix. Then PR4-proof: Unpopped `slangc` through account and
-   windows-sandbox + measurements (start latency, cleanup, concurrency). Then JIT-runner adapter (decision 241).
+1. Nothing unblocked until PR7 merges or CireSnave runs the elevated setups. Then: `cargo test --test account`,
+   `cargo test --test slangc_proof -- --nocapture`, `cargo run --example measure -- account|windows-sandbox`,
+   measure schtasks /Run non-admin vs named pipe, record in docs/MEASUREMENTS.md, regenerate matrix.
+2. GitHub/JIT-runner adapter: waits on board decision 241.
 
 ## Unknowns to measure, not guess
 Windows Sandbox concurrency on this build; GPU in Windows Sandbox / Hyper-V GPU-P; Sandboxie-Plus with named pipes;
