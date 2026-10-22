@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.0.4
+
+- `account` launcher + `spawn-runner` service binary: the job runs as a restricted account whose password
+  nobody holds; spool/results directories, copy-in/copy-out, Job Object kill-on-close (the only `unsafe`,
+  Win32 calls in `spawn-runner`), runner-side ceilings in `runner.toml`, loud `NotProvisioned`.
+- `scripts/account-setup.ps1`: one-time elevated setup, dry-run default, `-Apply`, reads state back.
+  Dry run tested; `-Apply` NOT yet run (needs CireSnave, elevated).
+- `tests/runner.rs` (runner mechanics as the current user, passing) and `tests/account.rs` (real account;
+  prints UNVERIFIED until the setup exists). `docs/MEASUREMENTS.md` started.
+- New dependency: `windows-sys` (Windows only).
+
 ## 0.0.3
 
 - `windows-sandbox` launcher: generated `.wsb` (no network, no vGPU, no clipboard; declared mounts only),

@@ -15,3 +15,27 @@
    account, an optional Windows feature or a runner (`account`, `windows-sandbox`) are runner-only and
    are **UNVERIFIED** in CI until a runner exists; they are never `#[ignore]`d. Local results are
    recorded with date and ref in `docs/MEASUREMENTS.md`.
+7. **`account` launcher** (no password anyone holds): the job runs AS the local account `antspawn-run`, whose
+   random password is used once by `scripts/account-setup.ps1 -Apply` (CireSnave, elevated, dry-run by default,
+   reads state back) to register the scheduled task `AntSpawnRunner` (`spawn-runner serve`) and is then
+   discarded. The launcher never elevates and never creates anything; a missing piece is a loud
+   `NotProvisioned`.
+   * **Copy, not bind.** The account has no access to the launcher user's files (and `C:\Projects` is ACL-denied
+     to it), so a mount cannot be a bind: `ro` sources are copied IN (`spool/<id>/in/<n>`, then into the
+     runner's work dir) and declared `[[output]]`s are copied OUT (`results/<id>/out/<name>`). `rw` mounts are
+     refused. Guest paths (mounts, cwd, outputs) are relative to the work dir; absolute, drive and `..` paths
+     are refused.
+   * **Flow.** Launcher: refuse what the runner would refuse, spool `spec.toml` + inputs, `schtasks /Run`,
+     poll `results/<id>/exit.code`, copy outputs, delete its spool and results dirs. Runner: for each pending
+     spool dir, start `spawn-runner exec <id>` which joins a kill-on-close Job Object, copies inputs in, runs
+     the command (children inherit the job), copies outputs out, writes `result.tmp`, then terminates the job.
+     `serve` wipes the work dir and only then renames `result.tmp` to `exit.code`, so that file's presence
+     means the whole process tree is dead and the work dir is gone.
+   * **Authority.** Only the launcher user writes the spool (ACL); `runner.toml` (admin-written) caps
+     `time_s` and `ram_mb`, and the runner re-checks every spec so it does not trust the launcher. `cpu`,
+     `gpu` and `network = "on"` are refused (not provided). The account's outbound traffic is firewalled.
+   * **One job at a time.** The task ignores a second start while running; `serve` rescans until the spool is
+     empty. `concurrent` is never claimed.
+   * **Open (measure, do not guess):** whether a non-admin `schtasks /Run` works through the task's security
+     descriptor on this machine, versus an ACL'd named pipe. See `docs/MEASUREMENTS.md`.
+
