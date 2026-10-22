@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.9
+
+- `scripts/account-setup.ps1`: no ACL deny on BinDir (its W right includes SYNCHRONIZE, which CreateProcess needs; the task
+  failed to launch with 0x80070005) and removes one left by an older run; grants and checks `SeBatchLogonRight` itself.
+  Measured live 2026-10-22: after both, the task runs as `antspawn-run`, LastTaskResult 0.
+
 ## 0.0.8
 
 - `antspawn::adapter::github` and `docs/ADAPTER-GITHUB.md`: design and types for the GitHub App adapter (per-job
