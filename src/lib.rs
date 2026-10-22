@@ -2,6 +2,7 @@
 //! AntSpawn: run one job in a clean sandboxed environment, collect its declared outputs, destroy
 //! the environment. See `README.md` and `docs/DESIGN.md`.
 
+pub mod adapter;
 pub mod capability;
 pub mod launcher;
 pub mod launchers;
