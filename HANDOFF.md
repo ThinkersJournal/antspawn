@@ -24,19 +24,14 @@ Run on Sonnet, never Opus. You cannot push here: send the PM the SHA of each PR 
    results in `docs/MEASUREMENTS.md` (date, ref).
 10. `secrets[]` = names only, resolved at run time, never logged or written to env/files; none implemented (spec refused).
 
-## State (2026-10-22)
+## State (2026-10-21)
 PR1-4 merged (main 0331458, 0.0.4). Landed: naive + account + windows-sandbox launchers, spawn-runner, setup script,
 tests/{negative,runner,account}.rs. UNVERIFIED (need CireSnave elevated): `scripts/account-setup.ps1 -BinDir 'C:\Program Files\antspawn' -Apply`
 (after copying spawn-runner.exe there) and enabling the Windows Sandbox feature. matrix/launchers.tsv is header-only.
-Branch `pr5-matrix` (from main) holds only this HANDOFF so far.
+Branch `pr5-matrix`: matrix generator DONE and committed (0.0.5), waiting on PM merge (SHA sent). Do not redo it.
 
 ## Next (unblocked first)
-1. PR5: `cargo run --example matrix` generator (examples/matrix.rs): runs the negative probes per launcher that is
-   set up, writes capability rows (yes/no + reason) to matrix/launchers.tsv, CI diffs it. Baseline now: `naive`
-   rows = `no` for the isolation caps with the probe that failed it; account/windows-sandbox rows absent or
-   `no` reason `UNVERIFIED: not set up` (never `yes` without a run). Use `cargo +1.99.1` (clippy/fmt/test, exact CI
-   command, windows AND --target x86_64-unknown-linux-gnu) before READY: a 1.98 local missed a 1.99 lint once.
-2. When the elevated setups have run: `cargo test --test account`, measure schtasks /Run non-admin vs named pipe,
+1. When the elevated setups have run: `cargo test --test account`, measure schtasks /Run non-admin vs named pipe,
    record in docs/MEASUREMENTS.md, regenerate matrix. Then PR4-proof: Unpopped `slangc` through account and
    windows-sandbox + measurements (start latency, cleanup, concurrency). Then JIT-runner adapter (decision 241).
 

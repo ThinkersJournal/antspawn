@@ -1,1 +1,25 @@
 subject_kind	subject	backend	version	config	enabled	reason	metadata	note
+capability	isolation.no-read-outside	naive	1		no	job read a host file outside its environment	probe=read	
+capability	isolation.no-write-outside	naive	1		no	job wrote a host file outside its environment	probe=write	
+capability	clean-slate-next-run	naive	1		no	a file written by one job existed for the next	probe=write+exists	
+capability	kills-runaway-process	naive	1		no	a forked process survived the environment	probe=fork	
+capability	gpu.cuda	naive	1		no	no probe for this capability yet		
+capability	gpu.vulkan	naive	1		no	no probe for this capability yet		
+capability	network.off	naive	1		no	no probe for this capability yet		
+capability	concurrent	naive	1		no	no probe for this capability yet		
+capability	isolation.no-read-outside	account	1		no	UNVERIFIED: not set up		
+capability	isolation.no-write-outside	account	1		no	UNVERIFIED: not set up		
+capability	clean-slate-next-run	account	1		no	UNVERIFIED: not set up		
+capability	kills-runaway-process	account	1		no	UNVERIFIED: not set up		
+capability	gpu.cuda	account	1		no	UNVERIFIED: not set up		
+capability	gpu.vulkan	account	1		no	UNVERIFIED: not set up		
+capability	network.off	account	1		no	UNVERIFIED: not set up		
+capability	concurrent	account	1		no	UNVERIFIED: not set up		
+capability	isolation.no-read-outside	windows-sandbox	1		no	UNVERIFIED: not set up		
+capability	isolation.no-write-outside	windows-sandbox	1		no	UNVERIFIED: not set up		
+capability	clean-slate-next-run	windows-sandbox	1		no	UNVERIFIED: not set up		
+capability	kills-runaway-process	windows-sandbox	1		no	UNVERIFIED: not set up		
+capability	gpu.cuda	windows-sandbox	1		no	UNVERIFIED: not set up		
+capability	gpu.vulkan	windows-sandbox	1		no	UNVERIFIED: not set up		
+capability	network.off	windows-sandbox	1		no	UNVERIFIED: not set up		
+capability	concurrent	windows-sandbox	1		no	UNVERIFIED: not set up		

@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 use crate::launcher::{Environment, Exit, LaunchError, Launcher};
 use crate::spec::{JobSpec, MountMode};
 
-const SANDBOX_EXE: &str = r"C:\Windows\System32\WindowsSandbox.exe";
+pub const SANDBOX_EXE: &str = r"C:\Windows\System32\WindowsSandbox.exe";
 const GUEST_IN: &str = r"C:\antspawn\in";
 const GUEST_OUT: &str = r"C:\antspawn\out";
 

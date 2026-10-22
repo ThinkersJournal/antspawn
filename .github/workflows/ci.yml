@@ -41,6 +41,10 @@ jobs:
       - name: cargo test
         run: cargo test --locked --no-fail-fast
 
+      - name: Committed matrix matches the probes (ubuntu: no privileged launcher can be set up there)
+        if: runner.os == 'Linux'
+        run: cargo run --locked --example matrix -- --check
+
   msrv:
     name: msrv
     runs-on: ubuntu-latest

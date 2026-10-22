@@ -6,6 +6,7 @@ pub mod capability;
 pub mod launcher;
 pub mod launchers;
 pub mod matrix;
+pub mod probes;
 pub mod runner;
 pub mod spec;
 
