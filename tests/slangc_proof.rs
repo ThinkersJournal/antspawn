@@ -47,13 +47,19 @@ fn stage_tools(slangc: &Path, dest: &Path) {
     assert!(dest.join("slangc.exe").exists(), "slangc.exe staged");
 }
 
-fn spec(tools: &Path, shader: &Path) -> JobSpec {
+/// `base` is the guest directory for mounts: empty for a launcher with a relative work dir, an
+/// absolute path ending in a backslash for a VM, whose mapped folders must be absolute.
+fn spec(tools: &Path, shader: &Path, base: &str) -> JobSpec {
+    let cwd = match base.strip_suffix('\\') {
+        Some(dir) => format!("cwd = '{dir}'\n"),
+        None => String::new(),
+    };
     JobSpec::from_toml(&format!(
-        "[job]\nname = \"slangc\"\ncmd = ['tools/slangc.exe', 'in/hello.slang', '-target', 'spirv', '-o', 'out.spv']\n\
-         [limits]\ntime_s = 120\n\
-         [[mount]]\nhost = '{}'\nguest = \"tools\"\nmode = \"ro\"\n\
-         [[mount]]\nhost = '{}'\nguest = \"in\"\nmode = \"ro\"\n\
-         [[output]]\nguest = \"out.spv\"\nname = \"out.spv\"\n",
+        "[job]\nname = \"slangc\"\n{cwd}cmd = ['{base}tools/slangc.exe', '{base}in/hello.slang', '-target', 'spirv', '-o', '{base}out.spv']\n\
+         [limits]\ntime_s = 240\n\
+         [[mount]]\nhost = '{}'\nguest = '{base}tools'\nmode = \"ro\"\n\
+         [[mount]]\nhost = '{}'\nguest = '{base}in'\nmode = \"ro\"\n\
+         [[output]]\nguest = '{base}out.spv'\nname = \"out.spv\"\n",
         tools.display(),
         shader.display()
     ))
@@ -70,7 +76,7 @@ fn through(l: &dyn Launcher, s: &JobSpec, results: &Path) -> (Exit, f64, f64) {
     (exit, provisioned, t.elapsed().as_secs_f64())
 }
 
-fn proof(l: &dyn Launcher, set_up: bool, why: &str) {
+fn proof(l: &dyn Launcher, set_up: bool, why: &str, base: &str) {
     if !set_up {
         println!("UNVERIFIED: {} is not set up ({why})", l.id());
         return;
@@ -102,7 +108,7 @@ fn proof(l: &dyn Launcher, set_up: bool, why: &str) {
     let want = std::fs::read(&want).unwrap();
     assert!(!want.is_empty());
 
-    let s = spec(&tools, &shader);
+    let s = spec(&tools, &shader, base);
     let (exit, provisioned, total) = through(l, &s, &results);
     assert_eq!(exit, Exit::Code(0), "slangc through {}", l.id());
     let got = std::fs::read(results.join("out.spv")).expect("output collected");
@@ -130,6 +136,7 @@ fn slangc_through_account_matches_the_host() {
         &Account::default(),
         ok,
         "scripts/account-setup.ps1 -Apply has not run",
+        "",
     );
 }
 
@@ -139,5 +146,6 @@ fn slangc_through_windows_sandbox_matches_the_host() {
         &WindowsSandbox,
         Path::new(SANDBOX_EXE).exists(),
         "Windows Sandbox feature is not enabled",
+        "C:\\work\\",
     );
 }
