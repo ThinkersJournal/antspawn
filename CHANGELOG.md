@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.6
+
+- `tests/slangc_proof.rs`: PR4-proof harness. Runs `slangc` (Unpopped's shader compiler) through `account` and
+  `windows-sandbox` and requires SPIR-V byte-identical to a direct host run; prints `MEASURE` timings.
+  Runner-only: prints UNVERIFIED while a launcher is not set up. Not yet run against a real launcher.
+
 ## 0.0.5
 
 - `examples/matrix.rs`: regenerates `matrix/launchers.tsv` by running the negative probes (`--check` for CI).

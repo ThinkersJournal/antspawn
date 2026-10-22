@@ -25,13 +25,12 @@ Run on Sonnet, never Opus. You cannot push here: send the PM the SHA of each PR 
 10. `secrets[]` = names only, resolved at run time, never logged or written to env/files; none implemented (spec refused).
 
 ## State (2026-10-21)
-PR1-4 merged (main 0331458, 0.0.4). Landed: naive + account + windows-sandbox launchers, spawn-runner, setup script,
+PR1-5 merged (main 8b16d5f, 0.0.5). Landed: naive + account + windows-sandbox launchers, spawn-runner, setup script,
 tests/{negative,runner,account}.rs. UNVERIFIED (need CireSnave elevated): `scripts/account-setup.ps1 -BinDir 'C:\Program Files\antspawn' -Apply`
-(after copying spawn-runner.exe there) and enabling the Windows Sandbox feature. matrix/launchers.tsv is header-only.
-Branch `pr5-matrix`: matrix generator DONE and committed (0.0.5), waiting on PM merge (SHA sent). Do not redo it.
+(after copying spawn-runner.exe there) and enabling the Windows Sandbox feature.
 
 ## Next (unblocked first)
-1. When the elevated setups have run: `cargo test --test account`, measure schtasks /Run non-admin vs named pipe,
+1. PR6 (`pr6-slangc-proof`, 0.0.6, tests/slangc_proof.rs, UNVERIFIED) is with the PM; then the GitHub adapter once board 241 answers. When the elevated setups have run: `cargo test --test account`, `cargo test --test slangc_proof -- --nocapture`, measure schtasks /Run non-admin vs named pipe,
    record in docs/MEASUREMENTS.md, regenerate matrix. Then PR4-proof: Unpopped `slangc` through account and
    windows-sandbox + measurements (start latency, cleanup, concurrency). Then JIT-runner adapter (decision 241).
 
