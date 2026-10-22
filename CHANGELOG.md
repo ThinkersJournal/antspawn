@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.5
+
+- `examples/matrix.rs`: regenerates `matrix/launchers.tsv` by running the negative probes (`--check` for CI).
+  `naive` rows come from real probe runs (all `no`, probe named); `account` and `windows-sandbox` are
+  `no` / `UNVERIFIED: not set up` and are never `yes` without a privileged run.
+- Probes moved to `antspawn::probes` (shared by the tests and the generator); new write-outside probe.
+
 ## 0.0.4
 
 - `account` launcher + `spawn-runner` service binary: the job runs as a restricted account whose password
