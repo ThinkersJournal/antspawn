@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.10
+
+- `tests/slangc_proof.rs`: the VM leg uses absolute guest paths (`C:\work\...`) and `cwd`, since a Windows Sandbox
+  mapped folder cannot be relative; time limit 240 s. `docs/MEASUREMENTS.md`: the `account` slangc proof passes; every
+  `windows-sandbox` attempt on this box timed out (see there). No launcher code changed.
+
 ## 0.0.9
 
 - `scripts/account-setup.ps1`: no ACL deny on BinDir (its W right includes SYNCHRONIZE, which CreateProcess needs; the task

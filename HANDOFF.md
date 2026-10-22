@@ -25,17 +25,15 @@ Run on Sonnet, never Opus. You cannot push here: send the PM the SHA of each PR 
 10. `secrets[]` = names only, resolved at run time, never logged or written to env/files; none implemented (spec refused).
 
 ## State (2026-10-22)
-PR1-8 merged (main at 0.0.8). PR9 (branch `pr9-account-setup-fix`, worktree `C:\Projects\antspawn-wt-fix`) is with the PM:
-account-setup.ps1 drops the BinDir deny and grants/checks SeBatchLogonRight; MEASUREMENTS.md has the live `account` results.
-`account` launcher is LIVE (task runs as antspawn-run); `cargo test --test account` 3/3 pass; jobs run serially (5x2s = 11.3 s).
-UNVERIFIED: the fixed setup script re-run elevated; Windows Sandbox (feature enabled by the 2026-10-22 16:25Z reboot).
+PR1-9 merged (main 6faf909, 0.0.9); PR10 (0.0.10: slangc proof VM paths + measurements) with the PM, branch `pr10-sandbox-proof`.
+`account` is live: `cargo test --test account` 3/3 and the slangc proof pass; it runs jobs serially. `windows-sandbox`: no job has
+ever completed on this box (WindowsSandboxRemoteSession.exe APPCRASH from a tool shell; see docs/MEASUREMENTS.md). Matrix not regenerated.
 
 ## Next
-After the reboot: `cargo test --test account` again, `cargo run --example measure -- windows-sandbox`, windows-sandbox negative
-tests + `--test slangc_proof -- --nocapture`, schtasks /Run non-admin vs named pipe, record in docs/MEASUREMENTS.md, regenerate
-matrix (`cargo run --example matrix`). Then GitHub HTTP client/JWT/watcher once AgentLife's App + key exist.
-After PR9 merges: `git worktree remove ../antspawn-wt-fix`, `git worktree prune`. The main checkout sits on stale branch
-pr6-slangc-proof with an uncommitted HANDOFF edit (superseded by this file): do not commit it.
+1. Needs CireSnave at an interactive desktop: run `cargo test --test slangc_proof -- --nocapture` there, to see if Sandbox works at all.
+2. Then: negative tests for windows-sandbox, fix `examples/measure.rs` to check `Exit`, `schtasks /Run` non-admin vs named pipe,
+   regenerate matrix, GitHub HTTP client/JWT/watcher once AgentLife's C1 helper (App + key) exists.
+Work from a worktree off origin/main; the main checkout sits on stale pr6-slangc-proof.
 
 ## Unknowns to measure, not guess
 Windows Sandbox concurrency on this build; GPU in Windows Sandbox / Hyper-V GPU-P; Sandboxie-Plus with named pipes;

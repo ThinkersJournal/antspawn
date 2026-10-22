@@ -43,8 +43,25 @@ claimed for `account`.
 
 Not measured: `schtasks /Run` by a non-admin vs a named pipe; the matrix was not regenerated.
 
+## 2026-10-22: slangc proof and `windows-sandbox` (ref: pr10-sandbox-proof on 6faf909, 0.0.10)
+
+`cargo test --test slangc_proof -- --nocapture` (debug): `slangc_through_account_matches_the_host` PASSED twice, SPIR-V
+(168 bytes) byte-identical to the host's, total 11.9 s (cold) and 2.4 s.
+
+`windows-sandbox`: **no job has completed.** `WindowsSandbox.exe` is now present, but the logon command never ran:
+`tests/slangc_proof.rs` timed out at 120 s, and again at 240 s with absolute guest paths; a hand-written `.wsb` whose
+only logon command was `cmd.exe /c echo hi > C:\antspawn\out\x.txt` produced no file in 200 s; a launcher spec running
+`whoami` timed out. The Application log shows APPCRASH of `WindowsSandboxRemoteSession.exe` (0.8.107.0, KERNELBASE.dll
+10.0.26100.9711) around these launches (not matched one-to-one with each). Cause unknown; one suspicion is that the
+remote-session client needs an interactive desktop, which a tool shell lacks (untested). Not claimed: that the feature
+fails when started interactively.
+
+Correction to the PR7 harness: `measure -- windows-sandbox` printed `run=61 s` and `ok=...`; 61 s is the harness's own
+`time_s = 60` limit expiring, not a boot time, and the harness does not check `Exit`. Ignore those numbers. The matrix
+row stays `no`.
+
 ## Pending (needs the elevated setup, CireSnave)
 
 - `schtasks /Run` by a non-admin through the task security descriptor vs ACL'd named pipe.
 - `cargo run --example measure -- windows-sandbox`: start latency, cleanup, concurrency; negative tests for it.
-- Windows Sandbox: feature not enabled on the dev box (`WindowsSandbox.exe` absent).
+- Windows Sandbox: run once from an interactive desktop session to see whether it works there at all.
