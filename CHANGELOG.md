@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.7
+
+- `examples/measure.rs`: times any launcher (provision, run, collect, destroy medians over N rounds; N jobs at once
+  against a 2 s sleep for concurrency). `account` and `windows-sandbox` print UNVERIFIED while not set up.
+
 ## 0.0.6
 
 - `tests/slangc_proof.rs`: PR4-proof harness. Runs `slangc` (Unpopped's shader compiler) through `account` and
