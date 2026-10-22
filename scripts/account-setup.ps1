@@ -109,7 +109,42 @@ Step "runner.toml: max_time_s=$MaxTimeS max_ram_mb=$MaxRamMb (admin-written; the
 foreach ($p in $DenyPath) {
     Step "deny the account all access to $p (WARNING: the ACE propagates to EVERY file and folder under $p, which can take minutes on a large tree; it affects only $AccountName, no other user or lane)" { Acl $p @('/deny', "*${sid}:(OI)(CI)F") }
 }
-Step "deny the account write access to $BinDir" { Acl $BinDir @('/deny', "*${sid}:(OI)(CI)(W,D,DC)") }
+# No deny on $BinDir: a standard user already has only read+execute under Program Files, and an ACE
+# with W includes SYNCHRONIZE, which CreateProcess needs (measured 2026-10-22: task launch failed
+# 0x80070005). Remove a deny left by an earlier version of this script.
+Step "remove any earlier deny for the account on $BinDir" {
+    & icacls.exe $BinDir /remove:d "*${sid}" /T | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "icacls $BinDir /remove:d failed ($LASTEXITCODE)" }
+}
+
+# --- 'Log on as a batch job' for the account (the task cannot start without it) --------------------
+function Get-BatchRightSids {
+    $f = Join-Path ([IO.Path]::GetTempPath()) ("antspawn-sec-" + [guid]::NewGuid().ToString('N') + '.inf')
+    try {
+        & secedit.exe /export /cfg $f /areas USER_RIGHTS | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "secedit /export failed ($LASTEXITCODE)" }
+        $line = Get-Content $f | Where-Object { $_ -match '^SeBatchLogonRight\s*=' }
+        # secedit lists groups as *SID but resolvable users by name: normalise everything to *SID
+        if ($line) {
+            ($line -replace '^[^=]*=\s*', '').Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ } | ForEach-Object {
+                if ($_.StartsWith('*')) { $_ } else { '*' + ([Security.Principal.NTAccount]$_).Translate([Security.Principal.SecurityIdentifier]).Value }
+            }
+        } else { @() }
+    } finally { Remove-Item $f -ErrorAction SilentlyContinue }
+}
+Step "grant $AccountName the right 'Log on as a batch job' (SeBatchLogonRight)" {
+    $have = @(Get-BatchRightSids)
+    if ($have -notcontains "*$sid") {
+        $inf = Join-Path ([IO.Path]::GetTempPath()) ("antspawn-sec-" + [guid]::NewGuid().ToString('N') + '.inf')
+        $db = [IO.Path]::ChangeExtension($inf, '.sdb')
+        try {
+            $sids = (@($have) + "*$sid") -join ','
+            Set-Content -Path $inf -Encoding unicode -Value "[Unicode]`r`nUnicode=yes`r`n[Version]`r`nsignature=`"`$CHICAGO`$`"`r`nRevision=1`r`n[Privilege Rights]`r`nSeBatchLogonRight = $sids`r`n"
+            & secedit.exe /configure /db $db /cfg $inf /areas USER_RIGHTS | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "secedit /configure failed ($LASTEXITCODE)" }
+        } finally { Remove-Item $inf, $db -ErrorAction SilentlyContinue }
+    }
+}
 
 # --- no network for the account --------------------------------------------------------------------
 $fw = "antspawn-run: block all outbound"
@@ -167,10 +202,11 @@ Check "task allows $LauncherUser to run it" {
     $sd = (New-Object -ComObject Schedule.Service | ForEach-Object { $_.Connect(); $_.GetFolder('\').GetTask($TaskName) }).GetSecurityDescriptor(4)
     $sd -match 'GRGX'
 }
+Check "$AccountName holds SeBatchLogonRight" { @(Get-BatchRightSids) -contains "*$sid" }
 Check "the account can execute $Exe (read+execute granted, none denied)" {
     $acl = (Get-Acl $Exe).Access
     $allow = $acl | Where-Object { $_.AccessControlType -eq 'Allow' -and $_.FileSystemRights -match 'ReadAndExecute|FullControl|Modify' -and $_.IdentityReference.Value -match "(^|\\)($AccountName|Users|Authenticated Users|Everyone)$" }
-    $deny = $acl | Where-Object { $_.AccessControlType -eq 'Deny' -and $_.IdentityReference.Value -match "$AccountName$" -and $_.FileSystemRights -match 'ExecuteFile|ReadAndExecute|FullControl' }
+    $deny = $acl | Where-Object { $_.AccessControlType -eq 'Deny' -and $_.IdentityReference.Value -match "$AccountName$" }
     $allow -and -not $deny
 }
 Check "task $TaskName actually started as $AccountName and exited 0 (LastTaskResult)" {
