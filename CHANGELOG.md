@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.8
+
+- `antspawn::adapter::github` and `docs/ADAPTER-GITHUB.md`: design and types for the GitHub App adapter (per-job
+  `generate-jitconfig`, ephemeral runners). Redacted `Secret`, `KeyProvider` (a key path inside the job sandbox is
+  refused), strict `AdapterConfig` with runner groups, group verification, `Minter` with backoff and no retry storm.
+  No network or signing code yet; measurements stay UNVERIFIED.
+
 ## 0.0.7
 
 - `examples/measure.rs`: times any launcher (provision, run, collect, destroy medians over N rounds; N jobs at once
