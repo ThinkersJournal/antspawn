@@ -54,12 +54,13 @@ dependencies = [
 
 [[package]]
 name = "antspawn"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "clap",
  "serde",
  "thiserror",
  "toml",
+ "windows-sys",
 ]
 
 [[package]]
