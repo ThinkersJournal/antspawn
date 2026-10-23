@@ -25,10 +25,9 @@ Run on Sonnet, never Opus. You cannot push here: send the PM the SHA of each PR 
 10. `secrets[]` = names only, resolved at run time, never logged or written to env/files; none implemented (spec refused).
 
 ## State (2026-10-23)
-PR1-18 merged (main 8c694b9, 0.0.18). `account` is live and certified (`cargo test --test account -- --test-threads=1` 5/5).
-Open: PR19 `pr19-jobsource` (0.0.19, worktree `C:\Projectsntspawn-wt-jobsource`, head 3ff9528 at hand-off, with the PM):
-`HttpGithub` implements `watcher::JobSource` (queued+in_progress runs -> queued jobs). UNVERIFIED live. Watcher loop is pure logic
-(`adapter::watcher`, merged PR18); no real `Dispatch`.
+PR1-20 merged (main 5a6382b, 0.0.20; PR21 repin in flight). `account` is live and certified (`cargo test --test account -- --test-threads=1` 5/5).
+Merged: PR19 real `JobSource` (UNVERIFIED live; a live run needs a read-only token path, asked the PM), PR20 advisory CodeRipper `portfolio` CI job.
+Waiting: PM's CodeRipper baseline findings: add ONE row here per failing rule. Watcher loop is pure logic; no real `Dispatch`.
 Board 261 (CireSnave, elevated): toggle the `antspawn-run: block all outbound` rule once to prove `network.off` comes from it.
 `windows-sandbox`: no job completes from a tool shell (`slangc_proof` VM leg fails here); CireSnave's desktop re-run of
 `slangc_proof` (PR14 CRT DLLs) is pending (board 253). GitHub App `antspawn-runner` (id 5441608, install 174476958), group
