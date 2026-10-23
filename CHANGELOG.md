@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.0.18
+
+- `antspawn::adapter::watcher`: the watcher loop as pure logic. `Watcher::tick(now)` polls the configured repos through a
+  `JobSource`, routes each queued job, mints one just-in-time runner through the `Minter` and hands it to a `Dispatch`.
+  One job at a time (nothing polled while busy, at most one mint per tick, oldest first), a job is minted for once, a failed
+  mint stays queued under the minter's backoff, unrouted jobs are left alone, a failing repo does not stop the others. The
+  JIT config reaches only the dispatcher; `TickReport` holds no secret. Fake source, API and sink in the tests; no real
+  `JobSource` or `Dispatch` exists yet (the dispatch waits on board 260), so nothing here touches GitHub.
+
 ## 0.0.17
 
 - `account` is certified: `matrix/launchers.tsv` now has `yes` rows for `isolation.no-read-outside`,
