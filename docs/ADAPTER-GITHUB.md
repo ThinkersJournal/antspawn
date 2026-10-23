@@ -1,8 +1,8 @@
 # GitHub adapter (C2 design)
 
 Decided by CireSnave 2026-10-22: *"Lets go with the GitHub app."* (board 241). Types and policy are in
-`src/adapter/github.rs`; this slice has **no network or signing code**, and nothing here is measured. Every
-behaviour that needs GitHub or the elevated setup is UNVERIFIED until it runs.
+`src/adapter/github.rs`; the real client is `src/adapter/github_client.rs` (0.0.13). What has run live is in
+`docs/MEASUREMENTS.md`; everything else that needs GitHub is UNVERIFIED until it runs.
 
 ## Flow
 
@@ -63,8 +63,24 @@ A call inside the cool-down returns `StayQueued` without reaching GitHub (test c
 the counter. Time is passed in, never read, so tests are deterministic. Backoff values are defaults, not
 measurements.
 
-## Not in this slice
+## The client (`github_client.rs`)
 
-The HTTP client, JWT signing, the watcher loop, the hand-off of a JIT config into the runner, and any
-measurement (mint latency, runner registration time, cleanup of a runner that never took a job). Those follow
-the C1 key helper and the elevated setup; until then the matrix rows stay as they are.
+* `DpapiKeyProvider` reads the key as AgentLife's `github-app-setup.ps1` writes it: hex of a DPAPI user-scope blob
+  (`ConvertFrom-SecureString`) whose plaintext is the PEM as UTF-16LE. Only the writing account decrypts it; the
+  sandbox-root check from `FileKeyProvider` applies on construction and on every load. Windows only.
+* `app_jwt` signs RS256 with `ring` (PKCS#1 or PKCS#8 PEM): `iat` = now - 60 s, `exp` = now + 540 s, `iss` = App id.
+  A key that is not an RSA PEM is `KeyError::Malformed`, and the message never contains key text.
+* `HttpGithub` (`ureq` + rustls) exchanges the JWT for an installation token (cached in memory for 3000 s, never
+  written anywhere), then calls: list runner groups and a group's repositories (the `verify_group` input), `POST
+  .../generate-jitconfig` (group id from the live list), list runners, delete a runner. Every call sets
+  `Authorization`, `Accept`, `User-Agent` and `X-GitHub-Api-Version`.
+* `classify` maps answers to `MintError`: 401 is `Auth`; 429, or 403 with `retry-after` or an exhausted quota, is
+  `RateLimited` (wait taken from `retry-after`, else `x-ratelimit-reset`, else 60 s); 5xx and transport failures are
+  `Unavailable`; any other status is `Rejected` carrying GitHub's `message` only (200 chars), never the body.
+* A missing key stops before any request is made (test: a fake server sees zero connections).
+* Group lookup reads the first 100 groups and 100 repositories; an org beyond that needs paging (not built).
+
+## Not yet built
+
+The watcher loop and the hand-off of a JIT config into the runner (starting the runner inside an environment).
+Live results so far: `docs/MEASUREMENTS.md`. The matrix rows stay as they are until a job has run end to end.

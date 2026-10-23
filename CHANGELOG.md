@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.0.13
+
+- `antspawn::adapter::github_client`: the real GitHub client (`HttpGithub`, `DpapiKeyProvider`, `app_jwt`, `classify`).
+  Signs the App JWT with `ring`, exchanges it for an installation token, lists runner groups/repos/runners, mints a
+  JIT runner config, deletes a runner. New `KeyError::Malformed`; `GithubApi` is implemented for `&T`.
+  `examples/github_proof.rs` (Windows) is the live proof. New dependencies: `ureq`, `ring`, `base64`, `serde_json`
+  (and `windows-sys` Win32_Security_Cryptography). `deny.toml` allows CDLA-Permissive-2.0 (webpki-roots).
+  No watcher loop and no runner hand-off yet.
+
 ## 0.0.12
 
 - `windows-sandbox`: `destroy` (and `Drop`) retry removing the job's temp root, up to 60 s (10 s on drop). From an

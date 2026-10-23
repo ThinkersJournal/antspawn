@@ -25,17 +25,21 @@ Run on Sonnet, never Opus. You cannot push here: send the PM the SHA of each PR 
 10. `secrets[]` = names only, resolved at run time, never logged or written to env/files; none implemented (spec refused).
 
 ## State (2026-10-23)
-PR1-11 merged (main 9e4c8f7, 0.0.11; `measure` now errors on a failed job). PR12 (0.0.12, windows-sandbox destroy retries
-removal, branch `pr12-wsb-destroy-retry`, worktree `C:\Projects\antspawn-wt-m`) is rebased and with the PM.
-`account` is live (`cargo test --test account` 3/3, slangc proof passes, serial). `windows-sandbox`: from a tool shell no job ever ran
-(APPCRASH); from CireSnave's desktop run/collect returned Ok but destroy hit os error 32 (docs/MEASUREMENTS.md). Matrix not regenerated.
+PR1-12 merged (main e0d79ba, 0.0.12). `account` is live (`cargo test --test account` 3/3, slangc proof passes, serial).
+`windows-sandbox`: from a tool shell no job ever ran (APPCRASH); from CireSnave's desktop run/collect returned Ok but destroy hit
+os error 32, fixed in PR12, not yet re-run there (docs/MEASUREMENTS.md). Matrix not regenerated.
+C2 TASK (PM 2026-10-23): GitHub App `antspawn-runner` (id 5441608, install 174476958) exists; key = DPAPI file
+`%LOCALAPPDATA%\antspawn\github-app\antspawn-runner.key.dpapi` (never print or copy; gh-runner* must not read it).
+PR13 (0.0.13, branch `pr13-github-client`, worktree `C:\Projects\antspawn-wt-gh`): client + DPAPI provider + `examples/github_proof.rs`;
+live probe and jit proof PASSED 2026-10-23 (docs/MEASUREMENTS.md); with the PM at gate. Group `antspawn-account` (id 3) and repo
+`antspawn-proof` exist (PM-made, leave in place). Proof config: `%TEMP%\antspawn-proof\adapter.toml` (ids + key path only, not committed).
 
 ## Next
-1. After PR12 merges CireSnave re-runs `slangc_proof` on the desktop: record exit and SPIR-V equality in MEASUREMENTS. Remove the
-   `antspawn-wt-m` worktree once PR12 is merged (`git status --porcelain` first).
-2. Then: negative tests for windows-sandbox, `schtasks /Run` non-admin vs named pipe, regenerate matrix, GitHub HTTP client/JWT/watcher
-   once AgentLife's C1 helper (App + key) exists.
-Work from a worktree off origin/main; the main checkout sits on stale pr6-slangc-proof.
+1. Next PR: job hand-off with the `actions/runner` binary (pinned release, sha256 from release notes, MIT licence kept, provenance
+   recorded), then the watcher loop; account launcher first.
+2. After PR12's fix, CireSnave's desktop `slangc_proof` re-run: record exit and SPIR-V equality. Then: negative tests for windows-sandbox,
+   `schtasks /Run` non-admin vs named pipe, regenerate matrix.
+Work from a worktree off origin/main; the main checkout stays on `main` (portfolio rule 2026-10-23).
 
 ## Unknowns to measure, not guess
 Windows Sandbox concurrency on this build; GPU in Windows Sandbox / Hyper-V GPU-P; Sandboxie-Plus with named pipes;

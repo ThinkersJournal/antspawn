@@ -43,6 +43,8 @@ pub enum KeyError {
     InsideSandbox { key: PathBuf, root: PathBuf },
     #[error("key file `{}` is absent or unreadable", .0.display())]
     Unreadable(PathBuf),
+    #[error("the App key is not a usable RSA private key")]
+    Malformed,
 }
 
 /// Supplies the GitHub App private key.
@@ -317,6 +319,15 @@ pub trait GithubApi {
     fn runner_group(&self, org: &str, group: &str) -> Result<GroupInfo, MintError>;
     /// `POST /orgs/{org}/actions/runners/generate-jitconfig`; the result is the encoded JIT config.
     fn generate_jitconfig(&self, req: &JitRequest) -> Result<Secret, MintError>;
+}
+
+impl<T: GithubApi + ?Sized> GithubApi for &T {
+    fn runner_group(&self, org: &str, group: &str) -> Result<GroupInfo, MintError> {
+        (**self).runner_group(org, group)
+    }
+    fn generate_jitconfig(&self, req: &JitRequest) -> Result<Secret, MintError> {
+        (**self).generate_jitconfig(req)
+    }
 }
 
 /// Result of one minting attempt.
