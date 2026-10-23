@@ -52,6 +52,32 @@ mod live {
         };
         let api = HttpGithub::new(cfg.app_id, cfg.installation_id, keys);
 
+        if mode == "queued" {
+            use antspawn::adapter::watcher::JobSource;
+            let Some(repo) = args.get(2) else {
+                eprintln!("usage: github_proof queued <adapter.toml> <owner/repo>");
+                return ExitCode::from(2);
+            };
+            let t = Instant::now();
+            return match api.queued(repo) {
+                Ok(jobs) => {
+                    println!(
+                        "PROOF queued({repo}) ok: {} queued job(s) in {} ms",
+                        jobs.len(),
+                        t.elapsed().as_millis()
+                    );
+                    for j in &jobs {
+                        println!("PROOF job {j:?}");
+                    }
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    println!("PROOF queued({repo}) failed: {e}");
+                    ExitCode::from(1)
+                }
+            };
+        }
+
         if mode == "probe" {
             let t = Instant::now();
             match api.list_runners(&cfg.org) {
