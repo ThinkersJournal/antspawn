@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.21
+
+- CI: the advisory `portfolio` job is repinned to coderipper `789b012` (coderipper#125). Advisory, not required.
+
 ## 0.0.20
 
 - CI: the advisory CodeRipper portfolio check (`portfolio` job, reusable workflow pinned to `c665210`). Not a required check; no rule is silenced.
