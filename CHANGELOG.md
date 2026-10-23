@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.15
+
+- `antspawn::adapter::runner_pin`: the pinned `actions/runner` release (v2.338.1 win-x64: URL, size, SHA-256) and
+  `verify`, which refuses bytes whose size or digest differ. `docs/RUNNER-PROVENANCE.md` records origin, the three-way
+  digest check and licence; the MIT text is kept in `third_party/actions-runner/LICENSE`. Nothing fetches, unpacks or
+  starts the runner yet.
+
 ## 0.0.14
 
 - `tests/slangc_proof.rs`: the tools directory now carries `msvcp140.dll`, `vcruntime140.dll` and `vcruntime140_1.dll`
