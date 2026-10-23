@@ -24,15 +24,17 @@ Run on Sonnet, never Opus. You cannot push here: send the PM the SHA of each PR 
    results in `docs/MEASUREMENTS.md` (date, ref).
 10. `secrets[]` = names only, resolved at run time, never logged or written to env/files; none implemented (spec refused).
 
-## State (2026-10-22)
-PR1-9 merged (main 6faf909, 0.0.9); PR10 (0.0.10: slangc proof VM paths + measurements) with the PM, branch `pr10-sandbox-proof`.
-`account` is live: `cargo test --test account` 3/3 and the slangc proof pass; it runs jobs serially. `windows-sandbox`: no job has
-ever completed on this box (WindowsSandboxRemoteSession.exe APPCRASH from a tool shell; see docs/MEASUREMENTS.md). Matrix not regenerated.
+## State (2026-10-23)
+PR1-11 merged (main 9e4c8f7, 0.0.11; `measure` now errors on a failed job). PR12 (0.0.12, windows-sandbox destroy retries
+removal, branch `pr12-wsb-destroy-retry`, worktree `C:\Projects\antspawn-wt-m`) is rebased and with the PM.
+`account` is live (`cargo test --test account` 3/3, slangc proof passes, serial). `windows-sandbox`: from a tool shell no job ever ran
+(APPCRASH); from CireSnave's desktop run/collect returned Ok but destroy hit os error 32 (docs/MEASUREMENTS.md). Matrix not regenerated.
 
 ## Next
-1. Needs CireSnave at an interactive desktop: run `cargo test --test slangc_proof -- --nocapture` there, to see if Sandbox works at all.
-2. Then: negative tests for windows-sandbox, fix `examples/measure.rs` to check `Exit`, `schtasks /Run` non-admin vs named pipe,
-   regenerate matrix, GitHub HTTP client/JWT/watcher once AgentLife's C1 helper (App + key) exists.
+1. After PR12 merges CireSnave re-runs `slangc_proof` on the desktop: record exit and SPIR-V equality in MEASUREMENTS. Remove the
+   `antspawn-wt-m` worktree once PR12 is merged (`git status --porcelain` first).
+2. Then: negative tests for windows-sandbox, `schtasks /Run` non-admin vs named pipe, regenerate matrix, GitHub HTTP client/JWT/watcher
+   once AgentLife's C1 helper (App + key) exists.
 Work from a worktree off origin/main; the main checkout sits on stale pr6-slangc-proof.
 
 ## Unknowns to measure, not guess

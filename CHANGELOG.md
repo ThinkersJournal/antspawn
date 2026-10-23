@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.12
+
+- `windows-sandbox`: `destroy` (and `Drop`) retry removing the job's temp root, up to 60 s (10 s on drop). From an
+  interactive desktop the VM still held its mapped folders after being closed and removal failed with os error 32.
+  `docs/MEASUREMENTS.md`: that run's results.
+
 ## 0.0.11
 
 - `examples/measure.rs`: a job that times out or exits non-zero is now an error, not a timing. Before, a launcher whose
