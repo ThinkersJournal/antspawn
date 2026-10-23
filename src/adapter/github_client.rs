@@ -15,9 +15,9 @@ use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use ring::rand::SystemRandom;
 use ring::signature::{RSA_PKCS1_SHA256, RsaKeyPair};
 
-use super::github::{
-    GithubApi, GroupInfo, JitRequest, KeyError, KeyProvider, MintError, Secret, check_key_path,
-};
+#[cfg(windows)]
+use super::github::check_key_path;
+use super::github::{GithubApi, GroupInfo, JitRequest, KeyError, KeyProvider, MintError, Secret};
 
 pub const GITHUB_API: &str = "https://api.github.com";
 const API_VERSION: &str = "2022-11-28";
