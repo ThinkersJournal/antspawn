@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.16
+
+- `antspawn::adapter::runner_cache`: `ensure_archive` (cached copy reused only if it passes the pin, download renamed
+  into place only after it passes, a bad cached file is deleted), `verify_file` (streamed), `unpack` (refuses a
+  path-climbing entry and removes the partial result; refuses an existing destination). `examples/runner_fetch.rs` is the
+  live proof. New dependency: `zip` (deflate only). The runner is still not started.
+
 ## 0.0.15
 
 - `antspawn::adapter::runner_pin`: the pinned `actions/runner` release (v2.338.1 win-x64: URL, size, SHA-256) and

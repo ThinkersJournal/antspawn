@@ -28,4 +28,4 @@ this note. Any place that redistributes the archive's contents must ship that fi
 * `adapter::runner_pin` holds the pin; `verify` refuses any bytes whose size or digest differ. Nothing is unpacked
   or run unless it passed.
 * Upgrading is a new pin, a new row here and a new digest check by this method, in its own PR.
-* Not built: fetching, caching and unpacking the archive; starting the runner (see the open questions in HANDOFF).
+* `adapter::runner_cache` fetches, caches and unpacks it under that rule. Not built: starting the runner (waits on board 260).
