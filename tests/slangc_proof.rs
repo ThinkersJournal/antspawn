@@ -30,6 +30,9 @@ fn slangc() -> Option<PathBuf> {
     out.status.success().then(|| PathBuf::from(first))
 }
 
+/// The Visual C++ runtime DLLs `slangc` and its DLLs import and a clean Windows lacks.
+const CRT: [&str; 3] = ["msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"];
+
 /// Copy `slangc.exe` and its `slang*`/`glslang*` neighbours (not debug `*d` DLLs) into `dest`.
 fn stage_tools(slangc: &Path, dest: &Path) {
     std::fs::create_dir_all(dest).unwrap();
@@ -45,6 +48,15 @@ fn stage_tools(slangc: &Path, dest: &Path) {
         }
     }
     assert!(dest.join("slangc.exe").exists(), "slangc.exe staged");
+    // Provenance: Microsoft's Visual C++ Redistributable as installed on this host (System32). It is
+    // copied at test time into a throwaway directory mapped read-only into the VM; it is never
+    // committed or shipped, which its licence would not allow.
+    let sys = Path::new(&std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into()))
+        .join("System32");
+    for n in CRT {
+        std::fs::copy(sys.join(n), dest.join(n))
+            .unwrap_or_else(|e| panic!("{n} is not in {}: {e}", sys.display()));
+    }
 }
 
 /// `base` is the guest directory for mounts: empty for a launcher with a relative work dir, an
@@ -66,14 +78,41 @@ fn spec(tools: &Path, shader: &Path, base: &str) -> JobSpec {
     .unwrap()
 }
 
-fn through(l: &dyn Launcher, s: &JobSpec, results: &Path) -> (Exit, f64, f64) {
+/// Seconds spent in each launcher phase.
+struct Phases {
+    provision: f64,
+    run: f64,
+    collect: f64,
+    destroy: f64,
+    total: f64,
+}
+
+fn through(l: &dyn Launcher, s: &JobSpec, results: &Path) -> (Exit, Phases) {
+    let start = Instant::now();
+    let lap = |t: Instant| t.elapsed().as_secs_f64();
     let t = Instant::now();
     let mut env = l.provision(s).unwrap();
-    let provisioned = t.elapsed().as_secs_f64();
+    let provision = lap(t);
+    let t = Instant::now();
     let exit = env.run(s).unwrap();
+    let run = lap(t);
+    let t = Instant::now();
     env.collect(s, results).unwrap();
+    let collect = lap(t);
+    let t = Instant::now();
     env.destroy().unwrap();
-    (exit, provisioned, t.elapsed().as_secs_f64())
+    let destroy = lap(t);
+    let total = lap(start);
+    (
+        exit,
+        Phases {
+            provision,
+            run,
+            collect,
+            destroy,
+            total,
+        },
+    )
 }
 
 fn proof(l: &dyn Launcher, set_up: bool, why: &str, base: &str) {
@@ -109,7 +148,17 @@ fn proof(l: &dyn Launcher, set_up: bool, why: &str, base: &str) {
     assert!(!want.is_empty());
 
     let s = spec(&tools, &shader, base);
-    let (exit, provisioned, total) = through(l, &s, &results);
+    let (exit, p) = through(l, &s, &results);
+    // Printed before the asserts so a failing run still reports where its time went.
+    println!(
+        "MEASURE launcher={} exit={exit:?} provision_s={:.2} run_s={:.2} collect_s={:.2} destroy_s={:.2} total_s={:.2}",
+        l.id(),
+        p.provision,
+        p.run,
+        p.collect,
+        p.destroy,
+        p.total
+    );
     assert_eq!(exit, Exit::Code(0), "slangc through {}", l.id());
     let got = std::fs::read(results.join("out.spv")).expect("output collected");
     assert_eq!(
@@ -119,11 +168,32 @@ fn proof(l: &dyn Launcher, set_up: bool, why: &str, base: &str) {
         l.id()
     );
     println!(
-        "MEASURE launcher={} provision_s={provisioned:.2} total_s={total:.2} spirv_bytes={}",
+        "MEASURE launcher={} spirv_bytes={} (identical to the host's)",
         l.id(),
         got.len()
     );
     let _ = std::fs::remove_dir_all(root);
+}
+
+/// A clean VM has the Universal CRT but not the Visual C++ runtime, so the tools directory must
+/// carry what `slangc` imports from it (0xC0000135 STATUS_DLL_NOT_FOUND in the sandbox otherwise).
+/// `dumpbin /dependents` on slangc 1.4.350.0 and its DLLs names exactly these three.
+#[test]
+fn staged_tools_carry_the_visual_cpp_runtime_slangc_imports() {
+    let Some(slangc) = slangc() else {
+        println!("UNVERIFIED: no slangc (set SLANGC or put it on PATH)");
+        return;
+    };
+    let dest = std::env::temp_dir().join(format!("antspawn-crt-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dest);
+    stage_tools(&slangc, &dest);
+    let missing: Vec<&str> = CRT
+        .iter()
+        .copied()
+        .filter(|n| !dest.join(n).is_file())
+        .collect();
+    let _ = std::fs::remove_dir_all(&dest);
+    assert!(missing.is_empty(), "not staged: {missing:?}");
 }
 
 #[test]

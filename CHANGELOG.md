@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.14
+
+- `tests/slangc_proof.rs`: the tools directory now carries `msvcp140.dll`, `vcruntime140.dll` and `vcruntime140_1.dll`
+  (copied at test time from the host's installed Visual C++ Redistributable, never committed), which `slangc` imports and a
+  clean Windows Sandbox lacks (exit 0xC0000135 STATUS_DLL_NOT_FOUND on the desktop run). New red-first test
+  `staged_tools_carry_the_visual_cpp_runtime_slangc_imports`. The `MEASURE` line now splits provision/run/collect/destroy and
+  prints before the asserts, so a failing run still reports its timings. No launcher code changed.
+
 ## 0.0.13
 
 - `antspawn::adapter::github_client`: the real GitHub client (`HttpGithub`, `DpapiKeyProvider`, `app_jwt`, `classify`).
