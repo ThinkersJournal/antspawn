@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.19
+
+- `HttpGithub` implements `watcher::JobSource`: `queued(repo)` lists the repo's `queued` and `in_progress` runs (a later job of a
+  multi-job workflow waits inside a running run), reads each run's jobs (`filter=latest`) and keeps those with status `queued`,
+  with their `runs-on` labels. Pages of 100, at most 5 pages per listing. A run that vanishes between the calls (404) is skipped;
+  any other failure fails the poll, so the watcher never forgets a job it merely could not see. **UNVERIFIED against GitHub**
+  until run live against `antspawn-proof`; the parsing is unit-tested on fixed JSON only.
+
 ## 0.0.18
 
 - `antspawn::adapter::watcher`: the watcher loop as pure logic. `Watcher::tick(now)` polls the configured repos through a
