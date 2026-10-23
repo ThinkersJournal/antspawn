@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.20
+
+- CI: the advisory CodeRipper portfolio check (`portfolio` job, reusable workflow pinned to `c665210`). Not a required check; no rule is silenced.
+
 ## 0.0.19
 
 - `HttpGithub` implements `watcher::JobSource`: `queued(repo)` lists the repo's `queued` and `in_progress` runs (a later job of a
