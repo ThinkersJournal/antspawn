@@ -3,15 +3,19 @@
 
 use std::process::Command;
 
-fn spec_file(tag: &str) -> std::path::PathBuf {
+fn spec_file(tag: &str, extra: &str) -> std::path::PathBuf {
     let path = std::env::temp_dir().join(format!("antspawn-cli-{tag}-{}.toml", std::process::id()));
-    std::fs::write(&path, "[job]\nname = \"t\"\ncmd = [\"x\"]\n").unwrap();
+    std::fs::write(
+        &path,
+        format!("[job]\nname = \"t\"\ncmd = [\"x\"]\n{extra}"),
+    )
+    .unwrap();
     path
 }
 
 #[test]
 fn run_refuses_the_uncertified_naive_launcher() {
-    let spec = spec_file("naive");
+    let spec = spec_file("naive", "");
     let out = Command::new(env!("CARGO_BIN_EXE_spawn"))
         .args(["run", spec.to_str().unwrap(), "--launcher", "naive"])
         .output()
@@ -27,8 +31,9 @@ fn run_refuses_the_uncertified_naive_launcher() {
 }
 
 #[test]
-fn run_without_a_launcher_says_none_is_certified() {
-    let spec = spec_file("auto");
+fn run_without_a_launcher_says_none_is_certified_for_an_unmet_need() {
+    // `account` is certified for the default needs now, so ask for something no launcher has.
+    let spec = spec_file("auto", "[needs]\nrequire = [\"gpu.cuda\"]\n");
     let out = Command::new(env!("CARGO_BIN_EXE_spawn"))
         .args(["run", spec.to_str().unwrap()])
         .output()

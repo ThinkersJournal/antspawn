@@ -6,13 +6,18 @@
 //! and passed**: a probe that found the isolation broken gives `no` with the probe named, a launcher
 //! that is not set up gives `no` with `UNVERIFIED`, and a capability with no probe yet gives `no`.
 //! `--check` writes nothing and exits 1 if the committed file differs (what CI runs).
+//!
+//! `account` is probed only on a Windows machine where its setup has been applied (privileged, so CI
+//! cannot). Anywhere else its committed rows are carried over unchanged, never downgraded, but only if
+//! all of them are present and every `yes` names the probe that earned it; the measured run is recorded
+//! in `docs/MEASUREMENTS.md`.
 
-use std::path::PathBuf;
-use std::process::{Command, ExitCode};
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
 
-use antspawn::launchers::{Naive, windows_sandbox::SANDBOX_EXE};
+use antspawn::launchers::Naive;
 use antspawn::matrix::{HEADER, Matrix, Row};
-use antspawn::probes::Probes;
+use antspawn::probes::{NET_ADDR, Probes};
 use antspawn::{Capability, Launcher};
 
 const FILE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/matrix/launchers.tsv");
@@ -78,6 +83,21 @@ fn naive(probes: &Probes) -> Vec<Row> {
                 "fork",
                 "a forked process survived the environment",
             ),
+            Capability::NetworkOff => match probes.violates_network(l, NET_ADDR) {
+                Some(v) => result(
+                    cap,
+                    v,
+                    "connect",
+                    "job opened a TCP connection with the network supposedly off",
+                ),
+                None => row(
+                    "naive",
+                    cap,
+                    false,
+                    "UNVERIFIED: this host cannot reach the probe address, so there is no control",
+                    "connect",
+                ),
+            },
             _ => row("naive", cap, false, "no probe for this capability yet", ""),
         });
     }
@@ -87,25 +107,113 @@ fn naive(probes: &Probes) -> Vec<Row> {
 }
 
 /// A launcher whose privileged setup we do not drive from here: never `yes`.
-fn unverified(launcher: &str, set_up: bool) -> Vec<Row> {
-    let reason = if set_up {
-        "UNVERIFIED: set up, but this generator does not run privileged probes (see tests/)"
-    } else {
-        "UNVERIFIED: not set up"
-    };
+fn unverified(launcher: &str) -> Vec<Row> {
     Capability::ALL
         .iter()
-        .map(|&cap| row(launcher, cap, false, reason, ""))
+        .map(|&cap| row(launcher, cap, false, "UNVERIFIED: not set up", ""))
         .collect()
 }
 
-/// Is the account launcher's scheduled task registered here?
-fn account_set_up() -> bool {
-    cfg!(windows)
-        && Command::new("schtasks")
-            .args(["/Query", "/TN", antspawn::runner::TASK_NAME])
-            .output()
-            .is_ok_and(|o| o.status.success())
+/// `account`, measured: every probe that exists runs through the real restricted account.
+#[cfg(windows)]
+fn account_measured(probe: &Path) -> Vec<Row> {
+    use antspawn::probes::account as a;
+    let result = |cap: Capability, violated: bool, probe: &str, broken: &str| {
+        if violated {
+            row("account", cap, false, broken, probe)
+        } else {
+            row("account", cap, true, "", probe)
+        }
+    };
+    Capability::ALL
+        .iter()
+        .map(|&cap| match cap {
+            Capability::NoReadOutside => result(
+                cap,
+                a::violates_read(probe),
+                "read",
+                "job read a host file outside its environment",
+            ),
+            Capability::NoWriteOutside => result(
+                cap,
+                a::violates_write(probe),
+                "write",
+                "job wrote a host file outside its environment",
+            ),
+            Capability::CleanSlateNextRun => result(
+                cap,
+                a::violates_clean_slate(probe),
+                "write+exists",
+                "a file written by one job existed for the next",
+            ),
+            Capability::KillsRunawayProcess => result(
+                cap,
+                a::violates_kill_runaway(probe),
+                "fork",
+                "a forked process survived the environment",
+            ),
+            Capability::NetworkOff => match a::violates_network(probe, NET_ADDR) {
+                Some(v) => result(
+                    cap,
+                    v,
+                    "connect",
+                    "job opened a TCP connection with the network supposedly off",
+                ),
+                None => row(
+                    "account",
+                    cap,
+                    false,
+                    "UNVERIFIED: this host cannot reach the probe address, so there is no control",
+                    "connect",
+                ),
+            },
+            _ => row(
+                "account",
+                cap,
+                false,
+                "no probe for this capability yet",
+                "",
+            ),
+        })
+        .collect()
+}
+
+/// The `account` rows: measured where the setup is applied, else the committed ones carried over.
+fn account_rows(probe: &Path, committed: &str) -> Vec<Row> {
+    // `--no-privileged` forces the carry-over path, which is what a machine without the setup (CI) takes.
+    #[cfg(windows)]
+    if !std::env::args().any(|a| a == "--no-privileged") && antspawn::probes::account::set_up() {
+        println!("account: set up here, running its probes");
+        return account_measured(probe);
+    }
+    let _ = probe;
+    carry_over("account", committed)
+}
+
+/// The committed rows of a launcher this machine cannot measure, if they are whole and sound.
+fn carry_over(launcher: &str, committed: &str) -> Vec<Row> {
+    let kept: Vec<Row> = Matrix::parse(committed)
+        .map(|m| {
+            m.rows()
+                .iter()
+                .filter(|r| r.backend == launcher)
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+    let complete = Capability::ALL
+        .iter()
+        .all(|c| kept.iter().filter(|r| r.subject == c.id()).count() == 1);
+    // A carried-over `yes` must name the probe that earned it; anything else is rebuilt as UNVERIFIED.
+    let sound = kept
+        .iter()
+        .all(|r| !r.enabled || r.metadata.starts_with("probe="));
+    if complete && sound && kept.len() == Capability::ALL.len() {
+        println!("{launcher}: not measured here, carrying over the committed rows");
+        kept
+    } else {
+        unverified(launcher)
+    }
 }
 
 fn probe_exe() -> PathBuf {
@@ -146,20 +254,18 @@ fn main() -> ExitCode {
         );
         return ExitCode::from(2);
     }
-    let probes = Probes::new(exe);
+    let probes = Probes::new(exe.clone());
 
+    let committed = std::fs::read_to_string(FILE).unwrap_or_default();
     let mut rows = naive(&probes);
-    rows.extend(unverified("account", account_set_up()));
-    rows.extend(unverified(
-        "windows-sandbox",
-        std::path::Path::new(SANDBOX_EXE).exists(),
-    ));
+    rows.extend(account_rows(&exe, &committed));
+    // No probe run drives the sandbox yet (it needs an interactive desktop): never `yes` from here.
+    rows.extend(carry_over("windows-sandbox", &committed));
     let text = render(&rows);
     // Whatever was generated must be accepted by the reader that will certify launchers from it.
     let parsed = Matrix::parse(&text).expect("generated matrix parses");
     assert_eq!(parsed.to_tsv(), text, "generated text is canonical");
 
-    let committed = std::fs::read_to_string(FILE).unwrap_or_default();
     if check {
         if committed.replace("\r\n", "\n") == text {
             println!("matrix/launchers.tsv is up to date");

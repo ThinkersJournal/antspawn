@@ -119,6 +119,16 @@ took 2842 ms, a second `verify_file` passed, unpack took 6995 ms (one sample eac
 `run.cmd`, `config.cmd`, `bin/Runner.Listener.exe` were present. The known-bad controls are unit tests (path-climbing
 entry refused with no file written outside; a tampered cached file is deleted, not reused). The runner was not started.
 
+## 2026-10-23: `account` certified (ref: pr17-certify-account on 0.0.16 + this change, 0.0.17)
+
+`cargo test --test account -- --test-threads=1` as `cires`: 5 of 5 pass (read-outside, write-outside, clean slate, forked survivor
+killed, no network), then `cargo run --example matrix` wrote `yes` rows for those five capabilities. The network probe
+connects to 1.1.1.1:443; its control (this process connecting to the same address) succeeded, and the same probe run through
+`naive` connected, so the probe can fail. `account` refuses nothing it was not already built to refuse; `write-outside` targets a
+file under the launcher user's temp dir, which the account has no ACL on. Afterwards `spawn providers` lists `account` as
+satisfying all default needs and `spawn run <cmd.exe /c dir spec> --launcher account` exited 0. One sample each; the firewall
+rule (`antspawn-run: block all outbound`) is the claimed cause of the network result and was not toggled to test that.
+
 ## Pending (needs the elevated setup, CireSnave)
 
 - `schtasks /Run` by a non-admin through the task security descriptor vs ACL'd named pipe.

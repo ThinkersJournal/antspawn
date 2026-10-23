@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.0.17
+
+- `account` is certified: `matrix/launchers.tsv` now has `yes` rows for `isolation.no-read-outside`,
+  `isolation.no-write-outside`, `clean-slate-next-run`, `kills-runaway-process` and `network.off`, each from a probe that ran
+  through the real restricted account on 2026-10-23 (`docs/MEASUREMENTS.md`). `gpu.*` and `concurrent` stay `no`.
+  Before this, `spawn run --launcher account` refused every spec.
+- New probes: `connect <host:port>` in `spawn-probe`; `Probes::violates_network` (needs a control: the host itself must reach
+  the address, else no verdict) and `probes::account::*`, the account launcher's probes, shared by `tests/account.rs` (now five
+  tests, adding write-outside and network) and `examples/matrix.rs`. `naive` must reach the network (`tests/negative.rs`).
+- `examples/matrix.rs`: `account` is probed where its setup is applied; elsewhere (CI) its committed rows are carried over,
+  only if complete and every `yes` names its probe. `windows-sandbox` rows are carried over too (nothing probes it yet).
+  `--no-privileged` forces the carry-over path.
+
 ## 0.0.16
 
 - `antspawn::adapter::runner_cache`: `ensure_archive` (cached copy reused only if it passes the pin, download renamed

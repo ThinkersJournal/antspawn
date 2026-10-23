@@ -61,6 +61,15 @@ impl Probes {
         self.succeeds(l, &["exists", "leftover.txt"])
     }
 
+    /// Can a job open a TCP connection to `addr`? `None` when the host itself cannot (no network
+    /// here), because then a refused job proves nothing: the control must connect first.
+    pub fn violates_network(&self, l: &dyn Launcher, addr: &str) -> Option<bool> {
+        if !host_can_connect(addr) {
+            return None;
+        }
+        Some(self.succeeds(l, &["connect", addr]))
+    }
+
     /// Is a process the job forked still alive after the environment is destroyed?
     pub fn violates_kill_runaway(&self, l: &dyn Launcher, pidfile: &Path) -> bool {
         assert!(self.succeeds(l, &["fork", pidfile.to_str().unwrap()]));
@@ -69,6 +78,20 @@ impl Probes {
         kill(pid.trim());
         alive
     }
+}
+
+/// An address a job must not reach when the network is off: a public IP, so the loopback exemption
+/// in the host firewall cannot hide a hole.
+pub const NET_ADDR: &str = "1.1.1.1:443";
+
+/// The positive control for the network probe: can this process itself connect to `addr`?
+pub fn host_can_connect(addr: &str) -> bool {
+    use std::net::ToSocketAddrs;
+    addr.to_socket_addrs().is_ok_and(|mut it| {
+        it.any(|a| {
+            std::net::TcpStream::connect_timeout(&a, std::time::Duration::from_secs(5)).is_ok()
+        })
+    })
 }
 
 fn alive(pid: &str) -> bool {
@@ -93,4 +116,121 @@ fn kill(pid: &str) {
     } else {
         Command::new("kill").args(["-9", pid]).output()
     };
+}
+
+/// The same probes through the `account` launcher, which cannot bind host paths: the probe binary is
+/// copied in as a read-only mount and outputs are copied out. Shared by `tests/account.rs` (asserts
+/// nothing is violated) and `examples/matrix.rs` (records the rows). Windows only.
+#[cfg(windows)]
+pub mod account {
+    use std::path::{Path, PathBuf};
+
+    use crate::launchers::Account;
+    use crate::{Exit, JobSpec, Launcher};
+
+    use super::{alive, host_can_connect, kill};
+
+    /// Has the one-time elevated setup been applied here (is the task registered)?
+    pub fn set_up() -> bool {
+        std::process::Command::new("schtasks")
+            .args(["/Query", "/TN", crate::runner::TASK_NAME])
+            .output()
+            .is_ok_and(|o| o.status.success())
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("antspawn-acct-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).expect("scratch dir");
+        d
+    }
+
+    fn spec(probe: &Path, args: &[&str], extra: &str) -> JobSpec {
+        let cmd: Vec<String> = std::iter::once("spawn-probe.exe")
+            .chain(args.iter().copied())
+            .map(|a| format!("'{a}'"))
+            .collect();
+        JobSpec::from_toml(&format!(
+            "[job]\nname = \"p\"\ncmd = [{}]\n[limits]\ntime_s = 30\n[[mount]]\nhost = '{}'\nguest = \"spawn-probe.exe\"\nmode = \"ro\"\n{extra}",
+            cmd.join(", "),
+            probe.display()
+        ))
+        .unwrap()
+    }
+
+    fn run(s: &JobSpec, results: &Path) -> Exit {
+        let mut env = Account::default().provision(s).expect("provision");
+        let exit = env.run(s).expect("run");
+        env.collect(s, results).expect("collect");
+        env.destroy().expect("destroy");
+        exit
+    }
+
+    /// The probe's own answer: `true` = the action succeeded. Any other exit (unknown arguments,
+    /// killed, timed out) is inconclusive and panics, so it can never read as "isolated".
+    fn succeeded(s: &JobSpec, results: &Path) -> bool {
+        match run(s, results) {
+            Exit::Code(0) => true,
+            Exit::Code(1) => false,
+            other => panic!("probe was inconclusive: {other:?}"),
+        }
+    }
+
+    pub fn violates_read(probe: &Path) -> bool {
+        let d = scratch("read");
+        let sentinel = d.join("outside.txt");
+        std::fs::write(&sentinel, b"secret").unwrap();
+        let s = spec(probe, &["read", sentinel.to_str().unwrap()], "");
+        let v = succeeded(&s, &d.join("res"));
+        let _ = std::fs::remove_dir_all(d);
+        v
+    }
+
+    pub fn violates_write(probe: &Path) -> bool {
+        let d = scratch("write");
+        let target = d.join("written.txt");
+        let s = spec(probe, &["write", target.to_str().unwrap()], "");
+        let ran = succeeded(&s, &d.join("res"));
+        let v = ran || target.exists();
+        let _ = std::fs::remove_dir_all(d);
+        v
+    }
+
+    pub fn violates_clean_slate(probe: &Path) -> bool {
+        let d = scratch("slate");
+        assert!(
+            succeeded(&spec(probe, &["write", "leftover.txt"], ""), &d),
+            "first job must be able to write"
+        );
+        let v = succeeded(&spec(probe, &["exists", "leftover.txt"], ""), &d);
+        let _ = std::fs::remove_dir_all(d);
+        v
+    }
+
+    pub fn violates_kill_runaway(probe: &Path) -> bool {
+        let d = scratch("fork");
+        let s = spec(
+            probe,
+            &["fork", "pid.txt"],
+            "[[output]]\nguest = \"pid.txt\"\nname = \"pid\"\n",
+        );
+        // `succeeded` also collects: the pid file lands in `d/pid`.
+        assert!(succeeded(&s, &d), "the fork probe must run");
+        let pid = std::fs::read_to_string(d.join("pid")).unwrap();
+        let v = alive(pid.trim());
+        kill(pid.trim());
+        let _ = std::fs::remove_dir_all(d);
+        v
+    }
+
+    /// `None` when this host cannot reach `addr` itself (no control, no verdict).
+    pub fn violates_network(probe: &Path, addr: &str) -> Option<bool> {
+        if !host_can_connect(addr) {
+            return None;
+        }
+        let d = scratch("net");
+        let v = succeeded(&spec(probe, &["connect", addr], ""), &d);
+        let _ = std::fs::remove_dir_all(d);
+        Some(v)
+    }
 }
