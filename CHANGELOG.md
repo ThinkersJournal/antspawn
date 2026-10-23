@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.22
+
+- `github_proof queued <adapter.toml> <owner/repo>`: runs the PR19 `JobSource` live, read-only. First live run is recorded in
+  `docs/MEASUREMENTS.md`: refused, the App lacks the repository `Actions: read` permission. `JobSource` stays UNVERIFIED.
+
 ## 0.0.21
 
 - CI: the advisory `portfolio` job is repinned to coderipper `789b012` (coderipper#125). Advisory, not required.

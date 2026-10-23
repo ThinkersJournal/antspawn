@@ -129,6 +129,14 @@ file under the launcher user's temp dir, which the account has no ACL on. Afterw
 satisfying all default needs and `spawn run <cmd.exe /c dir spec> --launcher account` exited 0. One sample each; the firewall
 rule (`antspawn-run: block all outbound`) is the claimed cause of the network result and was not toggled to test that.
 
+## JobSource live (2026-10-23, main 75688eb + the `queued` mode of 0.0.22)
+
+`cargo run --example github_proof -- queued <adapter.toml> ThinkersJournal/antspawn-proof` as `cires`: the JWT and installation-token
+exchange worked (the same App listed runners in the earlier `probe`), then `GET /repos/ThinkersJournal/antspawn-proof/actions/runs`
+failed `HTTP 403: Resource not accessible by integration`. Cause read from the message: the installation lacks the repository
+permission `Actions: read`. Not retried; the App's permissions are CireSnave's to change. `JobSource` remains UNVERIFIED against
+GitHub. Control not re-run this session: the earlier `probe` and `jit` runs (above) used the same App and token path and succeeded.
+
 ## Pending (needs the elevated setup, CireSnave)
 
 - `schtasks /Run` by a non-admin through the task security descriptor vs ACL'd named pipe.
