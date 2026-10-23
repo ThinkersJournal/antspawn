@@ -112,6 +112,13 @@ the run phase (Task Scheduler start plus `slangc`), varies by about 4x here with
 is unknown (load, Defender scanning of the 74 MB tools copy, or scheduler start latency are candidates, none tested). The
 `MEASURE` line now splits the phases, so the next slow run says which phase it was.
 
+## 2026-10-23: pinned runner fetch and unpack (ref: pr16-runner-fetch on ab0f9d1, 0.0.16)
+
+`cargo run --release --example runner_fetch -- <cache> <dir>` as `cires`, empty cache: download plus pinned-digest check
+took 2842 ms, a second `verify_file` passed, unpack took 6995 ms (one sample each, release build, home network), and
+`run.cmd`, `config.cmd`, `bin/Runner.Listener.exe` were present. The known-bad controls are unit tests (path-climbing
+entry refused with no file written outside; a tampered cached file is deleted, not reused). The runner was not started.
+
 ## Pending (needs the elevated setup, CireSnave)
 
 - `schtasks /Run` by a non-admin through the task security descriptor vs ACL'd named pipe.

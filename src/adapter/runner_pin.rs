@@ -33,12 +33,20 @@ pub fn verify(bytes: &[u8]) -> Result<(), PinError> {
 }
 
 fn verify_against(bytes: &[u8], size: u64, hex: &str) -> Result<(), PinError> {
-    if bytes.len() as u64 != size {
-        return Err(PinError::Size {
-            got: bytes.len() as u64,
-        });
+    check(bytes.len() as u64, &digest(&SHA256, bytes), size, hex)
+}
+
+/// Compare a measured size and digest to expected ones, size first. Shared with the streaming check.
+pub(crate) fn check(
+    got_size: u64,
+    got: &ring::digest::Digest,
+    size: u64,
+    hex: &str,
+) -> Result<(), PinError> {
+    if got_size != size {
+        return Err(PinError::Size { got: got_size });
     }
-    let got = hex_of(digest(&SHA256, bytes).as_ref());
+    let got = hex_of(got.as_ref());
     if got != hex {
         return Err(PinError::Digest { got });
     }
