@@ -25,6 +25,7 @@ Run on Sonnet, never Opus. You cannot push here: send the PM the SHA of each PR 
 10. `secrets[]` = names only, resolved at run time, never logged or written to env/files; none implemented (spec refused).
 
 ## State (2026-10-23)
+<<<<<<< HEAD
 PR1-13 merged (main d5f1c62, 0.0.13). `account` is live (`cargo test --test account` 3/3, slangc proof passes, serial).
 `windows-sandbox`: from a tool shell no job ever ran; from CireSnave's desktop the VM runs and is destroyed (PR12), but slangc died with
 0xC0000135 (VC++ runtime absent in the VM); PR14 stages the three CRT DLLs, UNVERIFIED until his next desktop run. `account` once took
@@ -39,6 +40,22 @@ Key = DPAPI file `%LOCALAPPDATA%\antspawn\github-app\antspawn-runner.key.dpapi`:
    config inside the account launcher, then the watcher loop. Then negative tests for windows-sandbox, `schtasks /Run` non-admin vs
    named pipe, regenerate matrix. Remove merged worktrees (`git status --porcelain` first).
 Work from a worktree off origin/main; the primary checkout stays on `main`.
+=======
+PR1-13 merged (main d5f1c62, 0.0.13). `account` live (`cargo test --test account` 3/3, slangc proof passes). `windows-sandbox`:
+PR12 retry fix not re-run on the desktop; PR14 (`pr14-sandbox-crt`, 0.0.14, open) stages the VC++ runtime for the VM proof.
+GitHub App `antspawn-runner` (id 5441608): client + DPAPI key + live jit proof merged (PR13). Group `antspawn-account` (id 3) and
+repo `antspawn-proof` are PM-made, leave them. Proof config `%TEMP%ntspawn-proofdapter.toml` (ids + key path only).
+PR15 (`pr15-runner-pin`, worktree `C:\Projectsntspawn-wt-runnerpin`, 0.0.15 proposed): runner v2.338.1 pinned + verified,
+`docs/RUNNER-PROVENANCE.md`; sent to the PM for gate.
+
+## Next
+1. Runner hand-off is BLOCKED on two PM/CireSnave decisions (asked in PR15 [ASK]): (a) how the JIT config reaches the runner without
+   a file or env (specs refuse `secrets`; the account spool is files); (b) the runner needs github.com, but `account` refuses
+   `network = "on"` and firewalls the account. Do not start before they are answered.
+2. Unblocked meanwhile: fetch/cache/unpack of the pinned zip (verify first); CireSnave's desktop `slangc_proof` re-run; negative
+   tests for windows-sandbox; `schtasks /Run` non-admin vs named pipe; regenerate matrix.
+Work from a worktree off origin/main; the main checkout stays on `main`.
+>>>>>>> ab0f9d1 (HANDOFF: state after PR13/PR15)
 
 ## Unknowns to measure, not guess
 Windows Sandbox concurrency on this build; GPU in Windows Sandbox / Hyper-V GPU-P; Sandboxie-Plus with named pipes;
