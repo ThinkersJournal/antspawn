@@ -60,8 +60,20 @@ Correction to the PR7 harness: `measure -- windows-sandbox` printed `run=61 s` a
 `time_s = 60` limit expiring, not a boot time, and the harness does not check `Exit`. Ignore those numbers. The matrix
 row stays `no`.
 
+## 2026-10-23: `slangc_proof` from an interactive desktop (ref: origin/main 3a6432b, 0.0.10; run by CireSnave, pasted output relayed by the PM)
+
+`account` PASSED: provision_s=0.11 total_s=16.29 spirv_bytes=168, matches the host.
+
+`windows-sandbox` FAILED at `tests/slangc_proof.rs:75`, which is `env.destroy().unwrap()`, with `Io(Os code 32 "being used
+by another process")`: a sharing violation removing the job's temp root, not an APPCRASH. `run` and `collect` returned
+`Ok` before it, so from an interactive desktop the VM boots and runs the logon command (the exit code was never
+compared, since `through` unwrapped `destroy` first, so SPIR-V equality is still UNVERIFIED). The tool-shell failures
+above therefore point at the non-interactive session, not at the feature. Cause of the sharing violation: the VM
+holds its mapped folders open for a while after its client is killed (inferred, not observed); the fix retries
+the removal (`remove_dir_retrying`, unit-tested with a held file). Not yet re-run on the desktop.
+
 ## Pending (needs the elevated setup, CireSnave)
 
 - `schtasks /Run` by a non-admin through the task security descriptor vs ACL'd named pipe.
 - `cargo run --example measure -- windows-sandbox`: start latency, cleanup, concurrency; negative tests for it.
-- Windows Sandbox: run once from an interactive desktop session to see whether it works there at all.
+- Windows Sandbox: re-run `slangc_proof` from an interactive desktop on the retry fix.

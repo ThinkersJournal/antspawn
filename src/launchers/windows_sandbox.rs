@@ -125,14 +125,32 @@ impl Environment for WsbEnv {
 
     fn destroy(mut self: Box<Self>) -> Result<(), LaunchError> {
         self.close();
-        std::fs::remove_dir_all(&self.root).map_err(Into::into)
+        remove_dir_retrying(&self.root, Duration::from_secs(60)).map_err(Into::into)
     }
 }
 
 impl Drop for WsbEnv {
     fn drop(&mut self) {
         self.close();
-        let _ = std::fs::remove_dir_all(&self.root);
+        let _ = remove_dir_retrying(&self.root, Duration::from_secs(10));
+    }
+}
+
+/// The VM keeps its mapped folders open for a while after its client is killed (measured
+/// 2026-10-23: `remove_dir_all` failed with a sharing violation, os error 32), so retry until
+/// `patience` runs out and then report the last error.
+fn remove_dir_retrying(dir: &Path, patience: Duration) -> std::io::Result<()> {
+    let start = Instant::now();
+    loop {
+        match std::fs::remove_dir_all(dir) {
+            Err(e) if !matches!(e.kind(), std::io::ErrorKind::NotFound) => {
+                if start.elapsed() >= patience {
+                    return Err(e);
+                }
+                std::thread::sleep(Duration::from_millis(500));
+            }
+            _ => return Ok(()),
+        }
     }
 }
 
@@ -289,6 +307,30 @@ mod tests {
         assert!(job_script(&s).is_err());
         let s = JobSpec::from_toml("[job]\nname = \"t\"\ncmd = [\"a\", \"%PATH%\"]\n").unwrap();
         assert!(job_script(&s).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn removal_waits_for_a_held_file_and_gives_up_on_a_stuck_one() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir = std::env::temp_dir().join(format!("antspawn-retry-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let held = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .share_mode(0)
+            .open(dir.join("f"))
+            .unwrap();
+        // Control: while the file is held, a short patience reports the sharing violation.
+        let e = remove_dir_retrying(&dir, Duration::from_millis(600)).unwrap_err();
+        assert_eq!(e.raw_os_error(), Some(32), "{e}");
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(1200));
+            drop(held);
+        });
+        remove_dir_retrying(&dir, Duration::from_secs(20)).unwrap();
+        assert!(!dir.exists());
     }
 
     #[test]
