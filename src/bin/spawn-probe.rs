@@ -6,6 +6,7 @@
 //! * `write <path>`: exit 0 if the file can be created.
 //! * `exists <path>`: exit 0 if the path exists.
 //! * `fork <pidfile>`: start a detached 60 s sleeper, write its pid to `pidfile`, exit.
+//! * `connect <host:port>`: exit 0 if a TCP connection opens within 5 s.
 //! * `sleep <secs>`: sleep.
 
 use std::process::{Command, ExitCode, Stdio};
@@ -16,6 +17,15 @@ fn main() -> ExitCode {
         ["read", p] => std::fs::read(p).is_ok(),
         ["write", p] => std::fs::write(p, b"x").is_ok(),
         ["exists", p] => std::path::Path::new(p).exists(),
+        ["connect", addr] => {
+            use std::net::ToSocketAddrs;
+            addr.to_socket_addrs().is_ok_and(|mut it| {
+                it.any(|a| {
+                    std::net::TcpStream::connect_timeout(&a, std::time::Duration::from_secs(5))
+                        .is_ok()
+                })
+            })
+        }
         ["sleep", s] => {
             std::thread::sleep(std::time::Duration::from_secs(s.parse().unwrap_or(0)));
             true

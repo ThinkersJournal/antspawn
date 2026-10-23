@@ -41,6 +41,12 @@ fn naive_fails_every_negative_control() {
         "naive must write outside"
     );
 
+    // Only with a control: on a host that cannot connect there is no verdict (see `violates_network`).
+    match p.violates_network(&Naive, antspawn::probes::NET_ADDR) {
+        Some(v) => assert!(v, "naive must reach the network"),
+        None => println!("no network control on this host; network probe not exercised"),
+    }
+
     let _ = std::fs::remove_dir_all(Naive::work_dir());
     let _ = std::fs::remove_dir_all(dir);
 }
