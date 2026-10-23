@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.11
+
+- `examples/measure.rs`: a job that times out or exits non-zero is now an error, not a timing. Before, a launcher whose
+  jobs never completed (`windows-sandbox`, 2026-10-22) printed its own time limit as `run`.
+
 ## 0.0.10
 
 - `tests/slangc_proof.rs`: the VM leg uses absolute guest paths (`C:\work\...`) and `cwd`, since a Windows Sandbox

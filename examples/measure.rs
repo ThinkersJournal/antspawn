@@ -15,7 +15,7 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use antspawn::launchers::{Account, Naive, WindowsSandbox};
-use antspawn::{JobSpec, LaunchError, Launcher};
+use antspawn::{Exit, JobSpec, LaunchError, Launcher};
 
 const SLEEP_S: u64 = 2;
 
@@ -73,8 +73,12 @@ fn one(l: &dyn Launcher, s: &JobSpec, results: &std::path::Path) -> Result<Steps
     let mut env = l.provision(s)?;
     let provision = t.elapsed();
     let t = Instant::now();
-    env.run(s)?;
+    let exit = env.run(s)?;
     let run = t.elapsed();
+    // A job that timed out or failed measured the limit or the failure, not a run: refuse it.
+    if exit != Exit::Code(0) {
+        return Err(LaunchError::Other(format!("job did not succeed: {exit:?}")));
+    }
     let t = Instant::now();
     env.collect(s, results)?;
     let collect = t.elapsed();
