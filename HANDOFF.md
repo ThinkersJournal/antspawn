@@ -26,13 +26,13 @@ Run on Sonnet, never Opus. You cannot push here: send the PM the SHA of each PR 
 
 ## State (2026-10-23)
 PR1-16 merged (main 92c1e885, 0.0.16). `account` is live and, with PR17 (0.0.17, `pr17-certify-account`, worktree
-`C:\Projectsntspawn-wt-certify`), certified: matrix `yes` rows for read/write-outside, clean slate, kills-runaway, network.off
+`C:\Projects\antspawn-wt-certify`), certified: matrix `yes` rows for read/write-outside, clean slate, kills-runaway, network.off
 from real probe runs (`cargo test --test account -- --test-threads=1` 5/5). Generator carries committed account/windows-sandbox rows
 over where it cannot measure (CI); `--no-privileged` emulates that. commy#51 reruns once 0.0.17 merges (PM tells commy).
 `windows-sandbox`: no job ever completes from a tool shell (`slangc_proof` VM leg fails here, 253 s); CireSnave's desktop re-run of
 `slangc_proof` (PR14 CRT DLLs) is pending (board 253). GitHub App `antspawn-runner` (id 5441608, install 174476958), group
 `antspawn-account` (id 3), repo `antspawn-proof`: PM-made, leave in place. Key = DPAPI file
-`%LOCALAPPDATA%ntspawn\github-appntspawn-runner.key.dpapi`: never print or copy it. Runner v2.338.1 is pinned, fetched and
+`%LOCALAPPDATA%\antspawn\github-app\antspawn-runner.key.dpapi`: never print or copy it. Runner v2.338.1 is pinned, fetched and
 unpacked (`adapter::runner_pin`, `runner_cache`, `docs/RUNNER-PROVENANCE.md`); never started.
 
 ## Next
