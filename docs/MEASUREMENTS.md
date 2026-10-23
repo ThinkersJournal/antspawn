@@ -72,6 +72,27 @@ above therefore point at the non-interactive session, not at the feature. Cause 
 holds its mapped folders open for a while after its client is killed (inferred, not observed); the fix retries
 the removal (`remove_dir_retrying`, unit-tested with a held file). Not yet re-run on the desktop.
 
+## 2026-10-23: GitHub client against the live App (ref: pr13-github-client on e0d79ba, 0.0.13)
+
+`cargo run --example github_proof -- probe <adapter.toml>` as `cires` (the account that holds the DPAPI key), App
+`antspawn-runner` (id 5441608), org installation 174476958 on ThinkersJournal: DPAPI decrypt, RS256 JWT and installation
+token exchange succeeded, and `GET /orgs/ThinkersJournal/actions/runners` answered with 0 runners; the first call,
+including key load, JWT and token exchange, took 760 ms (debug build, one sample). Before the PM created the group,
+`runner_group` answered `Rejected: runner group ... does not exist` (the same call is the known-bad control for the run below).
+
+Then, with the PM's group `antspawn-account` (id 3, visibility `selected`, only `ThinkersJournal/antspawn-proof`, id
+1431038343, public repos off): `probe` read it back as `visibility=selected repos=["ThinkersJournal/antspawn-proof"]`, and
+`github_proof -- jit <adapter.toml> antspawn-account` (through `Minter`, so `verify_group` ran first) printed:
+
+    PROOF minted runner `antspawn-proof-1792759671` in 1763 ms (jit config 4096 bytes, not shown)
+    PROOF registered: id=123 status=offline busy=false
+    PROOF removed: runner `antspawn-proof-1792759671` absent from the list = true
+
+exit 0. A `probe` afterwards listed 0 runners in the org (the same client reads before and after, so this is not an
+independent check). The mint-to-listed and delete calls are verified once, debug build, one sample; no job ran, so
+runner start-up and an unused runner's cleanup by GitHub's own expiry are not measured. UNVERIFIED: rate-limit
+handling against GitHub, paging past 100 groups/repos/runners, and the ubuntu build of `ring`/`ureq` (CI will say).
+
 ## Pending (needs the elevated setup, CireSnave)
 
 - `schtasks /Run` by a non-admin through the task security descriptor vs ACL'd named pipe.
