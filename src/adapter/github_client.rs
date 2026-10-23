@@ -364,6 +364,97 @@ impl<K: KeyProvider> HttpGithub<K> {
     }
 }
 
+/// Pages of 100 read per listing; anything beyond waits for a later tick.
+const MAX_PAGES: u32 = 5;
+
+/// The ids of the runs in one page of `/actions/runs`.
+fn run_ids(v: &serde_json::Value) -> Vec<u64> {
+    v["workflow_runs"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|r| r["id"].as_u64())
+        .collect()
+}
+
+/// The queued jobs in one page of `/actions/runs/{id}/jobs`. A job missing its id or labels is skipped:
+/// a job we cannot route is never one we should mint for.
+fn queued_jobs(repo: &str, run_id: u64, v: &serde_json::Value) -> Vec<super::watcher::QueuedJob> {
+    v["jobs"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|j| j["status"] == "queued")
+        .filter_map(|j| {
+            Some(super::watcher::QueuedJob {
+                repo: repo.to_owned(),
+                run_id,
+                job_id: j["id"].as_u64()?,
+                labels: j["labels"]
+                    .as_array()?
+                    .iter()
+                    .filter_map(|l| l.as_str().map(str::to_owned))
+                    .collect(),
+            })
+        })
+        .collect()
+}
+
+impl<K: KeyProvider> HttpGithub<K> {
+    /// Run ids with the given status, as GitHub lists them.
+    fn runs_with_status(&self, repo: &str, status: &str) -> Result<Vec<u64>, MintError> {
+        let mut out = Vec::new();
+        for page in 1..=MAX_PAGES {
+            let v = self.call(
+                "GET",
+                &format!("/repos/{repo}/actions/runs?status={status}&per_page=100&page={page}"),
+                None,
+            )?;
+            let ids = run_ids(&v);
+            let n = ids.len();
+            out.extend(ids);
+            if n < 100 {
+                break;
+            }
+        }
+        Ok(out)
+    }
+}
+
+impl<K: KeyProvider> super::watcher::JobSource for HttpGithub<K> {
+    /// Queued jobs of `repo`. A run that is itself `queued` or `in_progress` can hold queued jobs (a
+    /// later job of a multi-job workflow waits while an earlier one runs), so both are read. A run
+    /// that vanishes between the two calls (404) is skipped; any other failure fails the whole poll,
+    /// so the watcher does not forget jobs it merely could not see.
+    fn queued(&self, repo: &str) -> Result<Vec<super::watcher::QueuedJob>, MintError> {
+        let mut run_ids = self.runs_with_status(repo, "queued")?;
+        for id in self.runs_with_status(repo, "in_progress")? {
+            if !run_ids.contains(&id) {
+                run_ids.push(id);
+            }
+        }
+        let mut jobs = Vec::new();
+        for run in run_ids {
+            for page in 1..=MAX_PAGES {
+                let token = self.installation_token()?;
+                let path = format!(
+                    "/repos/{repo}/actions/runs/{run}/jobs?filter=latest&per_page=100&page={page}"
+                );
+                let reply = self.send("GET", &path, &token, None)?;
+                if reply.status == 404 {
+                    break;
+                }
+                let v = self.json(reply)?;
+                jobs.extend(queued_jobs(repo, run, &v));
+                if v["jobs"].as_array().map_or(0, Vec::len) < 100 {
+                    break;
+                }
+            }
+        }
+        Ok(jobs)
+    }
+}
+
 /// A transport error without the URL (which is harmless but noisy) or any header.
 fn transport(e: &ureq::Error) -> String {
     format!("transport: {e}")
@@ -529,6 +620,31 @@ mod tests {
     use super::*;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+
+    #[test]
+    fn run_ids_reads_ids_and_skips_malformed() {
+        let v = serde_json::json!({"workflow_runs": [{"id": 7}, {"id": "x"}, {}, {"id": 9}]});
+        assert_eq!(run_ids(&v), vec![7, 9]);
+        // Positive control: an unrelated shape yields nothing rather than panicking.
+        assert!(run_ids(&serde_json::json!({"message": "Not Found"})).is_empty());
+    }
+
+    #[test]
+    fn queued_jobs_keeps_only_queued_with_labels() {
+        let v = serde_json::json!({"jobs": [
+            {"id": 1, "status": "queued", "labels": ["self-hosted", "antspawn"]},
+            {"id": 2, "status": "in_progress", "labels": ["antspawn"]},
+            {"id": 3, "status": "completed", "labels": ["antspawn"]},
+            {"status": "queued", "labels": ["antspawn"]},
+            {"id": 5, "status": "queued"},
+        ]});
+        let got = queued_jobs("O/r", 40, &v);
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0].job_id, 1);
+        assert_eq!(got[0].run_id, 40);
+        assert_eq!(got[0].repo, "O/r");
+        assert_eq!(got[0].labels, vec!["self-hosted", "antspawn"]);
+    }
 
     struct NoKey;
     impl KeyProvider for NoKey {
