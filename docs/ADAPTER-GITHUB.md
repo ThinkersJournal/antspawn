@@ -80,7 +80,16 @@ measurements.
 * A missing key stops before any request is made (test: a fake server sees zero connections).
 * Group lookup reads the first 100 groups and 100 repositories; an org beyond that needs paging (not built).
 
+## The watcher (`watcher.rs`, 0.0.18)
+
+`Watcher::tick(now_s)`: if the dispatcher is busy, stop (nothing is polled). Otherwise poll every repo any group names (a failing
+repo is reported and the others still run), forget remembered job ids GitHub no longer lists as queued (only after a complete
+poll), take the oldest queued job not yet minted for that a group routes to, mint one runner named `antspawn-<run>-<job>`, hand
+it to `Dispatch`, and stop: one job per tick. A minted job is remembered at once, even if the dispatch fails, so a broken
+hand-off cannot mint a runner per tick (the unused ephemeral runner expires at GitHub). A failed mint is not remembered; the
+`Minter` backoff spaces the retries. Tests use fakes and include a mutation check that dropping `seen` fails four of them.
+
 ## Not yet built
 
-The watcher loop and the hand-off of a JIT config into the runner (starting the runner inside an environment).
-Live results so far: `docs/MEASUREMENTS.md`. The matrix rows stay as they are until a job has run end to end.
+A real `JobSource` (list queued runs and their jobs over REST) and a real `Dispatch` (start the runner inside the group's
+launcher, which needs the JIT config delivered without a file or env: board 260). Live results so far: `docs/MEASUREMENTS.md`.

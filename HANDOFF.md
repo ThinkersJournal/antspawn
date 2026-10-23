@@ -25,10 +25,11 @@ Run on Sonnet, never Opus. You cannot push here: send the PM the SHA of each PR 
 10. `secrets[]` = names only, resolved at run time, never logged or written to env/files; none implemented (spec refused).
 
 ## State (2026-10-23)
-PR1-16 merged (main 92c1e885, 0.0.16). `account` is live and, with PR17 (0.0.17, `pr17-certify-account`, worktree
-`C:\Projects\antspawn-wt-certify`), certified: matrix `yes` rows for read/write-outside, clean slate, kills-runaway, network.off
-from real probe runs (`cargo test --test account -- --test-threads=1` 5/5). Generator carries committed account/windows-sandbox rows
-over where it cannot measure (CI); `--no-privileged` emulates that. commy#51 reruns once 0.0.17 merges (PM tells commy).
+PR1-17 merged (main c9a5bc8, 0.0.17). `account` is live and certified: matrix `yes` rows for read/write-outside, clean slate,
+kills-runaway, network.off from real probe runs (`cargo test --test account -- --test-threads=1` 5/5). Generator carries committed
+account/windows-sandbox rows over where it cannot measure (CI); `--no-privileged` emulates that. commy#51 R9 is the PM's rerun.
+Open: PR18 `pr18-watcher` (0.0.18, worktree `C:\Projects\antspawn-wt-watcher`): the watcher loop as pure logic (`adapter::watcher`).
+Board 261 (CireSnave, elevated): toggle the `antspawn-run: block all outbound` rule once to prove `network.off` comes from it.
 `windows-sandbox`: no job ever completes from a tool shell (`slangc_proof` VM leg fails here, 253 s); CireSnave's desktop re-run of
 `slangc_proof` (PR14 CRT DLLs) is pending (board 253). GitHub App `antspawn-runner` (id 5441608, install 174476958), group
 `antspawn-account` (id 3), repo `antspawn-proof`: PM-made, leave in place. Key = DPAPI file
@@ -38,10 +39,10 @@ unpacked (`adapter::runner_pin`, `runner_cache`, `docs/RUNNER-PROVENANCE.md`); n
 ## Next
 1. Runner hand-off is BLOCKED on CireSnave (board 260): how the JIT config reaches the runner without a file or env (PM recommends a
    memory-only pipe to a shim setting `ACTIONS_RUNNER_INPUT_JITCONFIG` in the one child), and network for the runner (PM recommends only
-   inside Windows Sandbox). Build neither until he rules. Then the watcher loop.
-2. Unblocked: record CireSnave's `slangc_proof` re-run; windows-sandbox probes + negative tests (needs an interactive desktop);
-   `schtasks /Run` non-admin vs named pipe. Remove merged worktrees (`git status --porcelain` first): `antspawn-wt-crt`,
-   `antspawn-wt-runnerpin`, `antspawn-wt-runnerfetch`.
+   inside Windows Sandbox). Build neither until he rules. The watcher's `Dispatch` is that hand-off.
+2. Unblocked: a real `JobSource` (REST: queued runs and their jobs, paging; UNVERIFIED until run live against `antspawn-proof`);
+   record CireSnave's `slangc_proof` re-run; windows-sandbox probes + negative tests (needs an interactive desktop);
+   `schtasks /Run` non-admin vs named pipe.
 Work from a worktree off origin/main; the primary checkout stays on `main`.
 
 ## Unknowns to measure, not guess
