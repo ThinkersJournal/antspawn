@@ -135,7 +135,7 @@ rule (`antspawn-run: block all outbound`) is the claimed cause of the network re
 exchange worked (the same App listed runners in the earlier `probe`), then `GET /repos/ThinkersJournal/antspawn-proof/actions/runs`
 failed `HTTP 403: Resource not accessible by integration`. Cause read from the message: the installation lacks the repository
 permission `Actions: read`. Not retried; the App's permissions are CireSnave's to change. `JobSource` remains UNVERIFIED against
-GitHub. Control: `probe` (org runner list) succeeded with the same App and token path.
+GitHub. Control not re-run this session: the earlier `probe` and `jit` runs (above) used the same App and token path and succeeded.
 
 ## Pending (needs the elevated setup, CireSnave)
 
