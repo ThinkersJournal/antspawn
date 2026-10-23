@@ -25,21 +25,20 @@ Run on Sonnet, never Opus. You cannot push here: send the PM the SHA of each PR 
 10. `secrets[]` = names only, resolved at run time, never logged or written to env/files; none implemented (spec refused).
 
 ## State (2026-10-23)
-PR1-12 merged (main e0d79ba, 0.0.12). `account` is live (`cargo test --test account` 3/3, slangc proof passes, serial).
-`windows-sandbox`: from a tool shell no job ever ran (APPCRASH); from CireSnave's desktop run/collect returned Ok but destroy hit
-os error 32, fixed in PR12, not yet re-run there (docs/MEASUREMENTS.md). Matrix not regenerated.
-C2 TASK (PM 2026-10-23): GitHub App `antspawn-runner` (id 5441608, install 174476958) exists; key = DPAPI file
-`%LOCALAPPDATA%\antspawn\github-app\antspawn-runner.key.dpapi` (never print or copy; gh-runner* must not read it).
-PR13 (0.0.13, branch `pr13-github-client`, worktree `C:\Projects\antspawn-wt-gh`): client + DPAPI provider + `examples/github_proof.rs`;
-live probe and jit proof PASSED 2026-10-23 (docs/MEASUREMENTS.md); with the PM at gate. Group `antspawn-account` (id 3) and repo
-`antspawn-proof` exist (PM-made, leave in place). Proof config: `%TEMP%\antspawn-proof\adapter.toml` (ids + key path only, not committed).
+PR1-13 merged (main d5f1c62, 0.0.13). `account` is live (`cargo test --test account` 3/3, slangc proof passes, serial).
+`windows-sandbox`: from a tool shell no job ever ran; from CireSnave's desktop the VM runs and is destroyed (PR12), but slangc died with
+0xC0000135 (VC++ runtime absent in the VM); PR14 stages the three CRT DLLs, UNVERIFIED until his next desktop run. `account` once took
+108 s there vs ~2.5 s here; not reproduced, MEASURE now splits phases (docs/MEASUREMENTS.md). Matrix not regenerated.
+Open: PR14 `pr14-sandbox-crt` (0.0.14), worktree `C:\Projects\antspawn-wt-crt`, rebased on d5f1c62.
+GitHub App `antspawn-runner` (id 5441608, install 174476958), group `antspawn-account` (id 3), repo `antspawn-proof`: PM-made, leave in place.
+Key = DPAPI file `%LOCALAPPDATA%\antspawn\github-app\antspawn-runner.key.dpapi`: never print or copy it.
 
 ## Next
-1. Next PR: job hand-off with the `actions/runner` binary (pinned release, sha256 from release notes, MIT licence kept, provenance
-   recorded), then the watcher loop; account launcher first.
-2. After PR12's fix, CireSnave's desktop `slangc_proof` re-run: record exit and SPIR-V equality. Then: negative tests for windows-sandbox,
-   `schtasks /Run` non-admin vs named pipe, regenerate matrix.
-Work from a worktree off origin/main; the main checkout stays on `main` (portfolio rule 2026-10-23).
+1. Ask CireSnave (via the PM) for another desktop `slangc_proof` run on PR14; record exit, SPIR-V equality and the phase split.
+2. Job hand-off: run the `actions/runner` binary (pinned release, sha256 from release notes, MIT licence kept, provenance) with a JIT
+   config inside the account launcher, then the watcher loop. Then negative tests for windows-sandbox, `schtasks /Run` non-admin vs
+   named pipe, regenerate matrix. Remove merged worktrees (`git status --porcelain` first).
+Work from a worktree off origin/main; the primary checkout stays on `main`.
 
 ## Unknowns to measure, not guess
 Windows Sandbox concurrency on this build; GPU in Windows Sandbox / Hyper-V GPU-P; Sandboxie-Plus with named pipes;

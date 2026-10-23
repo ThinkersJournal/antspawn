@@ -93,6 +93,25 @@ independent check). The mint-to-listed and delete calls are verified once, debug
 runner start-up and an unused runner's cleanup by GitHub's own expiry are not measured. UNVERIFIED: rate-limit
 handling against GitHub, paging past 100 groups/repos/runners, and the ubuntu build of `ring`/`ureq` (CI will say).
 
+## 2026-10-23: `windows-sandbox` STATUS_DLL_NOT_FOUND and `account` timing variance (ref: pr14-sandbox-crt on e0d79ba, 0.0.14)
+
+CireSnave's desktop re-run on 0.0.12 (relayed by the PM): the retry fix worked (VM ran, collected, destroyed), but
+`slangc` exited `Code(-1073741515)` = 0xC0000135 STATUS_DLL_NOT_FOUND. `dumpbin /dependents` (VS 18, 14.52.36815) on
+`slangc.exe` and each of the seven `slang*`/`glslang*` DLLs the test stages (VulkanSDK 1.4.350.0) lists, besides OS DLLs
+(kernel32, advapi32, user32, shell32, ole32 and the `api-ms-win-crt-*` Universal CRT, which Windows ships), exactly
+`msvcp140.dll`, `vcruntime140.dll`, `vcruntime140_1.dll`. The test copied none of them. Red-first: the new test
+`staged_tools_carry_the_visual_cpp_runtime_slangc_imports` failed with all three "not staged"; after `stage_tools` copies
+them from `System32` (the installed Visual C++ Redistributable; test-time only, not committed) it passes, and the `account`
+proof still passes (spirv_bytes=168). Whether the sandbox now loads them is UNVERIFIED: it cannot run from a tool shell and
+needs CireSnave's next desktop run. Other missing dependencies would show as the same exit code; this fixes the three found.
+
+`account` timing: CireSnave saw total_s 16.29, then 108.72 on the next run. Here, same code, on an otherwise ordinary
+dev box (CPU 20-40% from other work), eight runs gave total_s 11.88 (cold), 2.40, 5.59, 2.16, 9.59, then five steady at
+2.21-2.64 (per-phase after this PR: provision 0.05, run 2.1-2.5, collect 0.00, destroy 0.07-0.09). So the cost sits in
+the run phase (Task Scheduler start plus `slangc`), varies by about 4x here with load, and 108 s was NOT reproduced; the cause
+is unknown (load, Defender scanning of the 74 MB tools copy, or scheduler start latency are candidates, none tested). The
+`MEASURE` line now splits the phases, so the next slow run says which phase it was.
+
 ## Pending (needs the elevated setup, CireSnave)
 
 - `schtasks /Run` by a non-admin through the task security descriptor vs ACL'd named pipe.
