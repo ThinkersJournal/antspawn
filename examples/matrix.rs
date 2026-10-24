@@ -9,7 +9,7 @@
 //! 1 if the committed file differs from the probes (what CI runs).
 //!
 //! `account` is probed only on a Windows machine where its setup has been applied (privileged, so CI
-//! cannot); `windows-sandbox` is not probed from here at all. Where a launcher cannot be probed, CapAnt
+//! cannot); `windows-sandbox` likewise, on a Windows machine with the feature and `wsb.exe` (it boots a VM per probe). Where a launcher cannot be probed, CapAnt
 //! carries its committed rows over (never downgraded), but only if all of them are present and every
 //! `yes` names the probe that earned it; the measured run is recorded in `docs/MEASUREMENTS.md`.
 
@@ -150,6 +150,37 @@ impl Matrixer {
             _ => untested(),
         }
     }
+
+    /// `windows-sandbox`, measured: every probe that exists runs through a real throwaway VM.
+    #[cfg(windows)]
+    fn sandbox(&self, cap: Capability) -> Outcome {
+        use antspawn::probes::sandbox as s;
+        let probe = self.exe.as_path();
+        match cap {
+            Capability::NoReadOutside => verdict(
+                s::violates_read(probe),
+                "read",
+                "job read a host file outside its environment",
+            ),
+            Capability::NoWriteOutside => verdict(
+                s::violates_write(probe),
+                "write",
+                "job wrote a host file outside its environment",
+            ),
+            Capability::CleanSlateNextRun => verdict(
+                s::violates_clean_slate(probe),
+                "write+exists",
+                "a file written by one job existed for the next",
+            ),
+            Capability::KillsRunawayProcess => verdict(
+                s::violates_kill_runaway(probe),
+                "fork",
+                "a sandbox survived destroy with the job's forked process in it",
+            ),
+            Capability::NetworkOff => network(s::violates_network(probe, NET_ADDR)),
+            _ => untested(),
+        }
+    }
 }
 
 impl Prober for Matrixer {
@@ -162,7 +193,12 @@ impl Prober for Matrixer {
                 !std::env::args().any(|a| a == "--no-privileged")
                     && antspawn::probes::account::set_up()
             }
-            // No probe run drives the sandbox yet (it needs an interactive desktop): never `yes` from here.
+            // Same carry-over rule as `account`: where the sandbox is absent (CI) the committed rows stand.
+            #[cfg(windows)]
+            "windows-sandbox" => {
+                !std::env::args().any(|a| a == "--no-privileged")
+                    && antspawn::probes::sandbox::available()
+            }
             _ => false,
         }
     }
@@ -175,6 +211,8 @@ impl Prober for Matrixer {
             "naive" => self.naive(cap),
             #[cfg(windows)]
             "account" => self.account(cap),
+            #[cfg(windows)]
+            "windows-sandbox" => self.sandbox(cap),
             _ => untested(),
         }
     }

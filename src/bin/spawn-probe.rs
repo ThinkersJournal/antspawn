@@ -8,8 +8,14 @@
 //! * `fork <pidfile>`: start a detached 60 s sleeper, write its pid to `pidfile`, exit.
 //! * `connect <host:port>`: exit 0 if a TCP connection opens within 5 s.
 //! * `sleep <secs>`: sleep.
+//!
+//! Exit 0 = yes, 10 = no, anything else = the probe did not answer.
 
 use std::process::{Command, ExitCode, Stdio};
+
+/// "No" is exit 10, not 1: a launcher or policy that refuses to run the probe at all (a code-integrity block
+/// in a fresh VM exits 1, measured 2026-10-24) must never read as "the action failed, so isolated".
+const NO: u8 = 10;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -51,6 +57,6 @@ fn main() -> ExitCode {
     if ok {
         ExitCode::SUCCESS
     } else {
-        ExitCode::from(1)
+        ExitCode::from(NO)
     }
 }
