@@ -27,7 +27,7 @@ use crate::spec::{JobSpec, MountMode};
 pub const SANDBOX_EXE: &str = r"C:\Windows\System32\WindowsSandbox.exe";
 
 /// The package's CLI (an app execution alias, so it starts with package identity).
-fn wsb_exe() -> PathBuf {
+pub fn wsb_exe() -> PathBuf {
     std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .unwrap_or_default()
@@ -208,6 +208,21 @@ impl Drop for WsbEnv {
         self.close();
         let _ = remove_dir_retrying(&self.root, Duration::from_secs(10));
     }
+}
+
+/// Ids of the sandboxes `wsb list` shows now (any owner).
+pub fn running_sandboxes() -> Vec<String> {
+    Command::new(wsb_exe())
+        .arg("list")
+        .output()
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Records which process owns sandbox `id`, so a later run can stop one whose owner was killed

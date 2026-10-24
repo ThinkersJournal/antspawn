@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.30
+
+- `windows-sandbox` matrix probes (`probes::sandbox`), run as `cmd` scripts of signed tools: the guest runs Smart App Control, which blocks an
+  unsigned exe after its first start (measured). Each probe checks its own tool first (exit 3 = inconclusive); the same script on the host is the
+  known-bad control. `spawn-probe` answers "no" with exit 10 (was 1) so a blocked run cannot read as isolated; `account` follows.
+
 ## 0.0.29
 
 - `windows-sandbox` now drives the package's `wsb.exe` (`start`, `exec -r System`, `stop --id`) instead of

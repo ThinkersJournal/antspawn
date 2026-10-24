@@ -171,7 +171,7 @@ pub mod account {
     fn succeeded(s: &JobSpec, results: &Path) -> bool {
         match run(s, results) {
             Exit::Code(0) => true,
-            Exit::Code(1) => false,
+            Exit::Code(10) => false,
             other => panic!("probe was inconclusive: {other:?}"),
         }
     }
@@ -230,6 +230,176 @@ pub mod account {
         }
         let d = scratch("net");
         let v = succeeded(&spec(probe, &["connect", addr], ""), &d);
+        let _ = std::fs::remove_dir_all(d);
+        Some(v)
+    }
+}
+
+/// The same probes through `windows-sandbox`. The VM has its own disk, so a host path the job names
+/// does not exist inside it: "read" and "write" are violated only if the HOST sees the effect, and
+/// "kills runaway" means the VM (and with it everything the job forked) is gone after `destroy`. The
+/// probes reach the guest as a read-only mapped folder holding a `cmd` script. Shared by `tests/windows_sandbox.rs`
+/// and `examples/matrix.rs`. Windows only.
+#[cfg(windows)]
+pub mod sandbox {
+    use std::path::{Path, PathBuf};
+    use std::time::{Duration, Instant};
+
+    use crate::launchers::WindowsSandbox;
+    use crate::launchers::windows_sandbox::{SANDBOX_EXE, running_sandboxes, wsb_exe};
+    use crate::{Exit, JobSpec, Launcher};
+
+    use super::host_can_connect;
+
+    /// Is the Windows Sandbox feature on and `wsb.exe` installed here?
+    pub fn available() -> bool {
+        Path::new(SANDBOX_EXE).exists() && wsb_exe().exists()
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("antspawn-sbx-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).expect("scratch dir");
+        d
+    }
+
+    /// Exit 0 = yes, 10 = no, 3 = the tool the probe relies on does not work here (so "no" would
+    /// prove nothing). Written as a script of Windows' own signed tools: the guest runs Smart App
+    /// Control, which blocks an unsigned executable such as `spawn-probe.exe` (measured 2026-10-24:
+    /// exit 0xC0000... "blocked by your organization's Device Guard policy", intermittently).
+    pub const PROBE_CMD: &str = "@echo off\r\n\
+        if /i \"%~1\"==\"read\" goto read\r\n\
+        if /i \"%~1\"==\"write\" goto write\r\n\
+        if /i \"%~1\"==\"exists\" goto exists\r\n\
+        if /i \"%~1\"==\"connect\" goto connect\r\n\
+        exit /b 2\r\n\
+        :read\r\n\
+        type \"%SystemRoot%\\System32\\drivers\\etc\\hosts\" >nul 2>&1\r\n\
+        if errorlevel 1 exit /b 3\r\n\
+        type \"%~2\" >nul 2>&1\r\n\
+        goto answer\r\n\
+        :write\r\n\
+        copy nul \"%TEMP%\\antspawn-control.txt\" >nul 2>&1\r\n\
+        if errorlevel 1 exit /b 3\r\n\
+        copy nul \"%~2\" >nul 2>&1\r\n\
+        goto answer\r\n\
+        :exists\r\n\
+        if exist \"%~2\" exit /b 0\r\n\
+        exit /b 10\r\n\
+        :connect\r\n\
+        curl.exe --version >nul 2>&1\r\n\
+        if errorlevel 1 exit /b 3\r\n\
+        curl.exe -sS -k --connect-timeout 5 -o NUL \"https://%~2/\" >nul 2>&1\r\n\
+        goto answer\r\n\
+        :answer\r\n\
+        if errorlevel 1 exit /b 10\r\n\
+        exit /b 0\r\n";
+
+    /// A folder holding `probe.cmd`, because only folders can be mapped.
+    fn staged(d: &Path) -> PathBuf {
+        let dir = d.join("probe");
+        std::fs::create_dir_all(&dir).expect("probe dir");
+        std::fs::write(dir.join("probe.cmd"), PROBE_CMD).expect("stage probe");
+        dir
+    }
+
+    fn spec(probe_dir: &Path, args: &[&str], extra: &str) -> JobSpec {
+        let cmd: Vec<String> = ["cmd", "/c", "C:\\probe\\probe.cmd"]
+            .into_iter()
+            .chain(args.iter().copied())
+            .map(|a| format!("'{a}'"))
+            .collect();
+        JobSpec::from_toml(&format!(
+            "[job]\nname = \"p\"\ncmd = [{}]\n[limits]\ntime_s = 120\n[[mount]]\nhost = '{}'\nguest = 'C:\\probe'\nmode = \"ro\"\n{extra}",
+            cmd.join(", "),
+            probe_dir.display()
+        ))
+        .unwrap()
+    }
+
+    fn run(s: &JobSpec, results: &Path) -> Exit {
+        let mut env = WindowsSandbox.provision(s).expect("provision");
+        let exit = env.run(s).expect("run");
+        env.collect(s, results).expect("collect");
+        env.destroy().expect("destroy");
+        exit
+    }
+
+    /// The probe's own answer: `true` = the action succeeded. Any other exit is inconclusive and
+    /// panics, so it can never read as "isolated".
+    fn succeeded(s: &JobSpec, results: &Path) -> bool {
+        match run(s, results) {
+            Exit::Code(0) => true,
+            Exit::Code(10) => false,
+            other => panic!("probe was inconclusive: {other:?}"),
+        }
+    }
+
+    pub fn violates_read(_probe: &Path) -> bool {
+        let d = scratch("read");
+        let sentinel = d.join("outside.txt");
+        std::fs::write(&sentinel, b"secret").unwrap();
+        let s = spec(&staged(&d), &["read", sentinel.to_str().unwrap()], "");
+        let v = succeeded(&s, &d.join("res"));
+        let _ = std::fs::remove_dir_all(d);
+        v
+    }
+
+    pub fn violates_write(_probe: &Path) -> bool {
+        let d = scratch("write");
+        let target = d.join("written.txt");
+        let s = spec(&staged(&d), &["write", target.to_str().unwrap()], "");
+        let _ = succeeded(&s, &d.join("res"));
+        let v = target.exists();
+        let _ = std::fs::remove_dir_all(d);
+        v
+    }
+
+    pub fn violates_clean_slate(_probe: &Path) -> bool {
+        let d = scratch("slate");
+        let dir = staged(&d);
+        assert!(
+            succeeded(&spec(&dir, &["write", "leftover.txt"], ""), &d),
+            "first job must be able to write"
+        );
+        let v = succeeded(&spec(&dir, &["exists", "leftover.txt"], ""), &d);
+        let _ = std::fs::remove_dir_all(d);
+        v
+    }
+
+    /// The job forks a survivor, then the environment is destroyed: is any sandbox still running?
+    pub fn violates_kill_runaway(_probe: &Path) -> bool {
+        let d = scratch("fork");
+        // Not `spawn-probe fork`: the guest's code-integrity policy lets an unsigned file start once, so
+        // the probe could not start its own sleeper (measured 2026-10-24). A signed `ping` stands in.
+        let s = JobSpec::from_toml(
+            "[job]
+name = \"fork\"
+cmd = ['powershell', '-NoProfile', '-Command', \"Start-Process ping -ArgumentList '-n','300','127.0.0.1'\"]
+[limits]
+time_s = 120
+",
+        )
+        .unwrap();
+        let exit = run(&s, &d);
+        assert_eq!(exit, Exit::Code(0), "the job that forks must run");
+        let start = Instant::now();
+        let mut v = !running_sandboxes().is_empty();
+        while v && start.elapsed() < Duration::from_secs(30) {
+            std::thread::sleep(Duration::from_millis(500));
+            v = !running_sandboxes().is_empty();
+        }
+        let _ = std::fs::remove_dir_all(d);
+        v
+    }
+
+    /// `None` when this host cannot reach `addr` itself (no control, no verdict).
+    pub fn violates_network(_probe: &Path, addr: &str) -> Option<bool> {
+        if !host_can_connect(addr) {
+            return None;
+        }
+        let d = scratch("net");
+        let v = succeeded(&spec(&staged(&d), &["connect", addr], ""), &d);
         let _ = std::fs::remove_dir_all(d);
         Some(v)
     }

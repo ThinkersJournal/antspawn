@@ -229,3 +229,61 @@ fn a_killed_run_leaves_a_sandbox_that_the_next_run_stops() {
     });
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The probes the matrix records, asserted here too: a pass is a pass that could have failed (the
+/// `naive` launcher fails the same probes in `tests/negative.rs`).
+#[test]
+fn the_matrix_probes_find_the_sandbox_isolated() {
+    use antspawn::probes::{NET_ADDR, sandbox};
+    if !available() {
+        return;
+    }
+    let _g = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+    let probe = Path::new(env!("CARGO_BIN_EXE_spawn-probe"));
+    assert!(
+        !sandbox::violates_read(probe),
+        "the probe read the sentinel"
+    );
+    assert!(!sandbox::violates_write(probe), "the host saw a file");
+    assert!(!sandbox::violates_clean_slate(probe));
+    assert!(!sandbox::violates_kill_runaway(probe), "a sandbox survived");
+    match sandbox::violates_network(probe, NET_ADDR) {
+        Some(v) => assert!(!v, "the probe connected to {NET_ADDR}"),
+        None => println!("UNVERIFIED: this host cannot reach {NET_ADDR}, so there is no control"),
+    }
+}
+
+/// Known-bad control for the matrix probes: the SAME script, run on the host (no isolation), must
+/// answer "yes, the action succeeded" (exit 0) for each, so a "no" from the VM means something.
+#[test]
+fn the_matrix_probe_script_finds_every_leak_on_the_host() {
+    use antspawn::probes::{NET_ADDR, sandbox::PROBE_CMD};
+    let dir = std::env::temp_dir().join(format!("antspawn-hostctl-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let script = dir.join("probe.cmd");
+    std::fs::write(&script, PROBE_CMD).unwrap();
+    let sentinel = dir.join("outside.txt");
+    std::fs::write(&sentinel, b"secret").unwrap();
+    let written = dir.join("written.txt");
+    let code = |args: &[&str]| {
+        Command::new("cmd")
+            .arg("/c")
+            .arg(&script)
+            .args(args)
+            .status()
+            .unwrap()
+            .code()
+    };
+    assert_eq!(code(&["read", sentinel.to_str().unwrap()]), Some(0));
+    assert_eq!(code(&["write", written.to_str().unwrap()]), Some(0));
+    assert!(written.exists());
+    assert_eq!(code(&["exists", sentinel.to_str().unwrap()]), Some(0));
+    assert_eq!(
+        code(&["read", dir.join("nope").to_str().unwrap()]),
+        Some(10)
+    );
+    if antspawn::probes::host_can_connect(NET_ADDR) {
+        assert_eq!(code(&["connect", NET_ADDR]), Some(0));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

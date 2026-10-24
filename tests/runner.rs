@@ -128,8 +128,8 @@ fn a_file_left_by_one_job_is_not_there_for_the_next() {
     );
     assert_eq!(
         run_job(&root, &spec(&["exists", "leftover.txt"], ""), &res),
-        Exit::Code(1),
-        "exit 1 = the probe did not find the file"
+        Exit::Code(10),
+        "exit 10 = the probe did not find the file"
     );
 }
 
