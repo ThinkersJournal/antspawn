@@ -198,6 +198,20 @@ Replaces the earlier "host health" note, whose "cause UNKNOWN / suspect launch c
   went to `nul`. The probe now uses `copy nul`; the earlier reading was a test bug, not a hole (read-only mount checked by hand: no
   file appeared on the host).
 
+## windows-sandbox certified in the matrix (2026-10-24, 0.0.30 on main 3ab115d)
+
+- `cargo run --example matrix` on this host re-earned 5 `yes` for `windows-sandbox` (read, write, write+exists, fork, connect), one VM per
+  probe, and the 5 `account` and 5 `no` `naive` rows again; rows gained a new `probed_at` only. `--check` green with and without `--no-privileged`.
+- The guest runs the Smart App Control policy (`VerifiedAndReputableDesktop`, event 3096 in its CodeIntegrity log). It lets an UNSIGNED exe
+  start once per VM and then blocks it: `spawn-probe.exe sleep 0` printed rc=0 at t+1 s and "blocked by your organization's Device Guard policy"
+  (rc 1073751882) on every later start, in 3 VMs; signed Windows tools (`cmd`, `curl.exe`, `powershell`) were never blocked. Consequences: (1) the
+  `fork` probe could not start its own sleeper, (2) a blocked first-use exits 1, which the old probe protocol read as "no, isolated", a possible
+  false pass. Fix: the sandbox probes are a `cmd` script of signed tools; `spawn-probe` now answers "no" with exit 10 and every other code is
+  inconclusive; each script step checks its own tool first (exit 3). Not established: why the first start is allowed (cache or evaluation),
+  and slangc staying allowed across runs (not checked whether it is signed). A job that runs its own unsigned exe twice in a VM will fail.
+- Known-bad control: the same `probe.cmd` on the host answers 0 for read, write, exists and connect (and 10 for a missing file), so the
+  VM's "no" answers could have been "yes". Fork probe: a signed `ping` started by PowerShell, then `destroy`, then `wsb list` empty within 30 s.
+
 ## Matrix regeneration (2026-10-24, main 767b614, capant 0.0.7)
 
 - `cargo run --example matrix` on this host, `account` set up: its probes ran (read, write, write+exists, fork, connect) and
