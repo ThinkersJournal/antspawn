@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.26
+
+- First real regeneration of `matrix/launchers.tsv` with CapAnt 0.0.7: the file gains a `probed_at` column (`check` ignores
+  it). No `environment` column (ruling A, 2026-10-24: one committed file must match CI on every OS). `matrix --check` still
+  drops `inherited_from` from the generated side, and now prints the carried-over rows it hides (generated side) and any
+  committed rows marked inherited (`Report::carried`), so review sees which rows rest on trust.
+- `account` probes re-run on this host (5/5 `yes` rows re-earned), recorded in `docs/MEASUREMENTS.md`.
+
 ## 0.0.25
 
 - Docs: `CLAUDE.md` records the ruled JIT-config exception to "secrets are names only" (CireSnave, board 260, "A: 1 B: 1"):

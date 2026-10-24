@@ -226,9 +226,23 @@ fn main() -> ExitCode {
     assert_eq!(capant::write(&parsed), text, "generated text is canonical");
 
     if check {
-        // CapAnt marks carried-over `yes` rows inherited, which adds an `inherited_from` column the
-        // committed file does not have yet. That column arrives with the first real regeneration (a
-        // separate commit); until then the check compares without it.
+        // CapAnt marks a carried-over `yes` row inherited, which adds an `inherited_from` column to
+        // the generated side on a machine that cannot probe `account` (CI). The committed file is
+        // written by a machine that can, so it has none, and one committed file must match every
+        // machine: the comparison drops that one column (PM ruling 2026-10-24). The rows it hides are
+        // printed below, so review sees which rows rest on trust rather than on a probe.
+        let carried: Vec<String> = generated
+            .rows()
+            .iter()
+            .filter(|r| r.evidence.inherited_from.is_some())
+            .map(|r| format!("{} on {}", r.subject, r.backend))
+            .collect();
+        if !carried.is_empty() {
+            println!(
+                "carried over, NOT verified by this run: {}",
+                carried.join(", ")
+            );
+        }
         let comparable = Matrix::from_rows(
             generated
                 .rows()
@@ -241,6 +255,12 @@ fn main() -> ExitCode {
                 .collect(),
         );
         let report = capant::check(&committed_text, &comparable, &ctx);
+        if !report.carried.is_empty() {
+            println!(
+                "committed rows marked inherited: {}",
+                report.carried.join(", ")
+            );
+        }
         if report.is_ok() {
             println!("matrix/launchers.tsv is up to date");
             ExitCode::SUCCESS

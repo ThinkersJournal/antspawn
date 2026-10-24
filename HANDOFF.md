@@ -45,8 +45,8 @@ runs: `%TEMP%\antspawn-proof\adapter.toml`. Runner v2.338.1 pinned, fetched, unp
 2. Roadmap row: Windows Sandbox host health (WinRT.Runtime crash) - find out whether it is the package (repair/update is
    CireSnave's), then the 260 hand-off. Update CLAUDE.md exception wording per the 260 ruling.
 3. Needs an interactive desktop / elevation: windows-sandbox probes + negative tests; `schtasks /Run` non-admin vs named pipe.
-4. ROADMAP row: remove the `inherited_from` strip in `examples/matrix.rs` `--check` with the real regeneration commit
-   (adds `inherited_from`, `environment`, `probed_at` to `launchers.tsv`; PM-accepted deviation in PR24).
+4. `--check` drops `inherited_from` from the generated side on purpose and keeps doing so (PM ruling A, 2026-10-24: no
+   `environment` column, one committed file must match CI on every OS); it prints the carried rows. Do not remove the strip.
 Work from a worktree off origin/main; the primary checkout stays on `main`.
 
 ## Unknowns to measure, not guess

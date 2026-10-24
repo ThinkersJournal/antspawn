@@ -176,6 +176,12 @@ the old form is the known-bad control (empty file for `hostname`'s code 0). Not 
   (suspect launch context from a tool shell, e.g. WindowsApps access or package identity). Not yet tried: launch from a desktop
   session (CireSnave's rerun is the control). No repair or update done.
 
+## Matrix regeneration (2026-10-24, main 767b614, capant 0.0.7)
+
+- `cargo run --example matrix` on this host, `account` set up: its probes ran (read, write, write+exists, fork, connect) and
+  re-earned 5 `yes`; `naive` rows unchanged (5 `no`, each naming its probe; the rest untested). Rows gained `probed_at`
+  only. `cargo test --test account -- --test-threads=1`: 5/5. `--check` green with and without `--no-privileged`.
+
 ## Pending (needs the elevated setup, CireSnave)
 
 - `schtasks /Run` by a non-admin through the task security descriptor vs ACL'd named pipe.
