@@ -12,7 +12,9 @@ this file only adds to them. Read `HANDOFF.md` first and begin its first unblock
 - **Privileged tests** (account, windows-sandbox) are runner-only and named UNVERIFIED in CI until a runner
   exists. Never `#[ignore]` them. Record local runs in `docs/MEASUREMENTS.md` with date and ref.
 - **Secrets are names only**, never logged or written to env or files. Not implemented yet: a spec listing
-  one is refused.
+  one is refused. **One ruled exception (CireSnave, board 260, "A: 1 B: 1"):** the runner's JIT config reaches it
+  in memory only, by an anonymous pipe to a shim that sets `ACTIONS_RUNNER_INPUT_JITCONFIG` in that one child,
+  never a file, never inherited; the runner gets network only inside Windows Sandbox.
 - **Repo rules:** pinned actions, `permissions: contents: read`, `deny.toml`, SPDX header on every source file
   (`bash .github/spdx_gate.sh`), MIT OR Apache-2.0, crates.io deps only, `CHANGELOG.md` entry and version bump
   per PR (the PM allocates the number), `cargo fmt` before pushing.

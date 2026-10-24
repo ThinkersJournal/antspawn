@@ -33,7 +33,7 @@ CireSnave's pop-up: from a tool shell `WindowsSandboxRemoteSession.exe` 0.8.107.
 264 DONE: Actions:read granted; positive control passed (run 40047740331 listed, 1 queued job): JobSource VERIFIED (MEASUREMENTS).
 260 RULED (CireSnave "A: 1 B: 1"): JIT config reaches the runner by an anonymous pipe to a shim that sets
 `ACTIONS_RUNNER_INPUT_JITCONFIG` in that one child, never a file, never inherited; runner network only inside Windows Sandbox.
-Update the CLAUDE.md exception wording, then build the hand-off AFTER the sandbox starts (it depends on it).
+CLAUDE.md exception wording: done in PR25 (0.0.25). Build the hand-off AFTER the sandbox starts (it depends on it).
 Waiting: PM's CodeRipper baseline findings: add ONE row per failing rule. Watcher loop is pure logic; no real `Dispatch`.
 GitHub App `antspawn-runner` (id 5441608, install 174476958), group `antspawn-account` (id 3), repo `antspawn-proof`: PM-made,
 leave in place. Key = DPAPI file in `%LOCALAPPDATA%\antspawn\github-app\`: never print or copy it. Adapter config for live
@@ -45,6 +45,8 @@ runs: `%TEMP%\antspawn-proof\adapter.toml`. Runner v2.338.1 pinned, fetched, unp
 2. Roadmap row: Windows Sandbox host health (WinRT.Runtime crash) - find out whether it is the package (repair/update is
    CireSnave's), then the 260 hand-off. Update CLAUDE.md exception wording per the 260 ruling.
 3. Needs an interactive desktop / elevation: windows-sandbox probes + negative tests; `schtasks /Run` non-admin vs named pipe.
+4. ROADMAP row: remove the `inherited_from` strip in `examples/matrix.rs` `--check` with the real regeneration commit
+   (adds `inherited_from`, `environment`, `probed_at` to `launchers.tsv`; PM-accepted deviation in PR24).
 Work from a worktree off origin/main; the primary checkout stays on `main`.
 
 ## Unknowns to measure, not guess

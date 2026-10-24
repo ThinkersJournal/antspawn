@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.25
+
+- Docs: `CLAUDE.md` records the ruled JIT-config exception to "secrets are names only" (CireSnave, board 260, "A: 1 B: 1"):
+  in-memory pipe to a shim for the runner's JIT config, runner network only inside Windows Sandbox. No code change.
+
 ## 0.0.24
 
 - The matrix is CapAnt's: `matrix.rs` wraps `capant::parse` (still refusing an unknown capability or a duplicate row), `Registry`
