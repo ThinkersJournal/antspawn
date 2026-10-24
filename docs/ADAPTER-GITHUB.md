@@ -93,3 +93,9 @@ hand-off cannot mint a runner per tick (the unused ephemeral runner expires at G
 
 A real `JobSource` (list queued runs and their jobs over REST) and a real `Dispatch` (start the runner inside the group's
 launcher, which needs the JIT config delivered without a file or env: board 260). Live results so far: `docs/MEASUREMENTS.md`.
+
+## Runner hand-off (board 260, built in 0.0.27 as far as the host)
+
+The JIT config reaches the runner by an anonymous pipe to `spawn-jit-shim`, which sets `ACTIONS_RUNNER_INPUT_JITCONFIG` on the one
+child it starts: never an argument, a file, or a variable of the host or the shim. `adapter::handoff::start_shim` is the host end.
+The runner gets network only inside Windows Sandbox, so the shim is to be started there; that step waits on the sandbox starting.

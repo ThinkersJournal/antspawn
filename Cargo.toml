@@ -1,6 +1,6 @@
 [package]
 name = "antspawn"
-version = "0.0.26"
+version = "0.0.27"
 edition = "2024"
 rust-version = "1.94"
 description = "A sandboxed job runner: one clean environment per job, only what the job declares, outputs collected, environment destroyed. Launchers are certified by tests, never asserted."
