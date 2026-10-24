@@ -137,6 +137,12 @@ failed `HTTP 403: Resource not accessible by integration`. Cause read from the m
 permission `Actions: read`. Not retried; the App's permissions are CireSnave's to change. `JobSource` remains UNVERIFIED against
 GitHub. Control not re-run this session: the earlier `probe` and `jit` runs (above) used the same App and token path and succeeded.
 
+Board 264 (2026-10-23 17:57, same code at main 00b2aad): CireSnave granted `Actions: Read-only`. `queued` now answers `ok: 0
+queued job(s) in 916 ms` (no 403); `github_proof perms` reads back `actions=read`, `metadata=read`,
+`organization_self_hosted_runners=write` (3 granted). Zero jobs cannot tell "works" from "sees nothing", and `antspawn-proof` is
+empty (contents API 404, no workflow), so there is no positive control yet: `JobSource` stays UNVERIFIED until a queued job
+is listed.
+
 ## 2026-10-24: `windows-sandbox` slangc `TimedOut` diagnosed (ref: main 00b2aad, 0.0.22; fix in 0.0.23)
 
 CireSnave's desktop run of 0.0.22 (relayed by the PM): `account` PASSED (run_s=3.29, 168 bytes, identical to the host);

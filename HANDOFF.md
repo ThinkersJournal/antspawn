@@ -24,24 +24,31 @@ Run on Sonnet, never Opus. You cannot push here: send the PM the SHA of each PR 
    results in `docs/MEASUREMENTS.md` (date, ref).
 10. `secrets[]` = names only, resolved at run time, never logged or written to env/files; none implemented (spec refused).
 
-## State (2026-10-23)
-PR1-22 merged (main 00b2aad, 0.0.22). `account` is live and certified (`cargo test --test account -- --test-threads=1` 5/5).
-PR19 `JobSource` ran live against `antspawn-proof` (`github_proof queued`): 403, the App lacks `Actions: read`. UNVERIFIED.
-HELD: do not re-run until the PM says CireSnave granted it (board 264). Dispatch hand-off waits on board 260.
-Waiting: PM's CodeRipper baseline findings: add ONE row here per failing rule. Watcher loop is pure logic; no real `Dispatch`.
-Board 261 (CireSnave, elevated): toggle the `antspawn-run: block all outbound` rule once to prove `network.off` comes from it.
-`windows-sandbox`: no job completes from a tool shell (`slangc_proof` VM leg fails here); CireSnave's desktop re-run of
-`slangc_proof` (PR14 CRT DLLs) is pending (board 253). GitHub App `antspawn-runner` (id 5441608, install 174476958), group
-`antspawn-account` (id 3), repo `antspawn-proof`: PM-made, leave in place. Key = DPAPI file in
-`%LOCALAPPDATA%\antspawn\github-app\`: never print or copy it. Adapter config for live runs: `%TEMP%\antspawn-proof\adapter.toml`.
-Runner v2.338.1 pinned, fetched, unpacked (`adapter::runner_pin`, `runner_cache`, `docs/RUNNER-PROVENANCE.md`); never started.
+## State (2026-10-24)
+PR1-22 merged (main 00b2aad); PR23 (0.0.23, head 2b4c758, branch pr23-sandbox-timeout) is at the PM gate. `account` is live and
+certified (`cargo test --test account -- --test-threads=1` 5/5). Board 261 DONE: rule off -> `account_has_no_network` FAILS, on -> passes.
+253: `windows-sandbox` TimedOut = empty `exit.code` for one-digit codes (fixed in PR23, host-proven). Separate and UNVERIFIED for
+CireSnave's pop-up: from a tool shell `WindowsSandboxRemoteSession.exe` 0.8.107.0 APPCRASHes 0.3 s after each start
+(`FileNotFoundException WinRT.Runtime 2.2.0.0`, Application log since 10-22), so the sandbox is unusable from here; roadmap row below.
+264: Actions:read granted; `github_proof queued` now answers 200 with 0 queued jobs (2026-10-23 17:57), but `antspawn-proof` is
+EMPTY (no workflow), so no positive control: JobSource stays UNVERIFIED. Asked the PM to approve pushing a never-running
+`runs-on: [self-hosted, antspawn-nonexistent]` workflow there (and a `perms` mode printing only permission names/levels).
+260 RULED (CireSnave "A: 1 B: 1"): JIT config reaches the runner by an anonymous pipe to a shim that sets
+`ACTIONS_RUNNER_INPUT_JITCONFIG` in that one child, never a file, never inherited; runner network only inside Windows Sandbox.
+Update the CLAUDE.md exception wording, then build the hand-off AFTER the sandbox starts (it depends on it).
+Waiting: PM's CodeRipper baseline findings: add ONE row per failing rule. Watcher loop is pure logic; no real `Dispatch`.
+GitHub App `antspawn-runner` (id 5441608, install 174476958), group `antspawn-account` (id 3), repo `antspawn-proof`: PM-made,
+leave in place. Key = DPAPI file in `%LOCALAPPDATA%\antspawn\github-app\`: never print or copy it. Adapter config for live
+runs: `%TEMP%\antspawn-proof\adapter.toml`. Runner v2.338.1 pinned, fetched, unpacked; never started.
 
 ## Next
-1. After the PM says board 264 is done: `cargo run --example github_proof -- queued <adapter.toml> ThinkersJournal/antspawn-proof`
-   (queue a job there first for a positive control), record in `docs/MEASUREMENTS.md`, drop UNVERIFIED from the PR19 changelog note.
-2. Board 260 (JIT config hand-off, runner network) BLOCKED on CireSnave: build neither until he rules.
-3. Needs an interactive desktop / elevation: record CireSnave's `slangc_proof` re-run; windows-sandbox probes + negative tests;
-   `schtasks /Run` non-admin vs named pipe.
+1. When the PM answers: positive control for `JobSource` (queue a job in `antspawn-proof`, rerun `github_proof queued`, expect >=1),
+   record in `docs/MEASUREMENTS.md`, drop UNVERIFIED from the PR19 changelog note.
+2. After PR23 merges the PM asks CireSnave for the desktop rerun (`cargo test --test slangc_proof slangc_through_windows_sandbox
+   -- --nocapture`): record MEASURE, GUEST logs, EVENTS in `docs/MEASUREMENTS.md`.
+3. Roadmap row: Windows Sandbox host health (WinRT.Runtime crash) - find out whether it is the package (repair/update is
+   CireSnave's), then the 260 hand-off. Update CLAUDE.md exception wording per the 260 ruling.
+4. Needs an interactive desktop / elevation: windows-sandbox probes + negative tests; `schtasks /Run` non-admin vs named pipe.
 Work from a worktree off origin/main; the primary checkout stays on `main`.
 
 ## Unknowns to measure, not guess

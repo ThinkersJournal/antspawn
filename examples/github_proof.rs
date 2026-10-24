@@ -52,6 +52,22 @@ mod live {
         };
         let api = HttpGithub::new(cfg.app_id, cfg.installation_id, keys);
 
+        if mode == "perms" {
+            return match api.installation_permissions() {
+                Ok(p) => {
+                    for (name, level) in &p {
+                        println!("PROOF permission {name}={level}");
+                    }
+                    println!("PROOF permissions: {} granted", p.len());
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    println!("PROOF permissions failed: {e}");
+                    ExitCode::from(1)
+                }
+            };
+        }
+
         if mode == "queued" {
             use antspawn::adapter::watcher::JobSource;
             let Some(repo) = args.get(2) else {

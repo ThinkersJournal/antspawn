@@ -228,15 +228,8 @@ impl<K: KeyProvider> HttpGithub<K> {
             .map_err(|_| MintError::Unavailable("GitHub sent a non-JSON body".into()))
     }
 
-    /// The installation token, exchanged from a fresh App JWT when absent or near expiry.
-    fn installation_token(&self) -> Result<Secret, MintError> {
-        let now = (self.now)();
-        let mut cached = self.token.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some((t, expires)) = cached.as_ref()
-            && *expires > now + 300
-        {
-            return Ok(Secret::new(t.expose().to_owned()));
-        }
+    /// One App-JWT-for-installation-token exchange; the answer carries `token` and `permissions`.
+    fn exchange(&self, now: u64) -> Result<serde_json::Value, MintError> {
         let pem = self.keys.load()?;
         let jwt = app_jwt(self.app_id, &pem, now)?;
         drop(pem);
@@ -249,7 +242,33 @@ impl<K: KeyProvider> HttpGithub<K> {
         if reply.status == 401 || reply.status == 403 && !reply.quota_exhausted {
             return Err(MintError::Auth);
         }
-        let v = self.json(reply)?;
+        self.json(reply)
+    }
+
+    /// The permissions the installation grants (`name -> level`), read from a fresh token exchange.
+    /// Names and levels only: the token in the same answer is dropped unread.
+    pub fn installation_permissions(&self) -> Result<Vec<(String, String)>, MintError> {
+        let v = self.exchange((self.now)())?;
+        let mut out: Vec<(String, String)> = v["permissions"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter_map(|(k, l)| Some((k.clone(), l.as_str()?.to_owned())))
+            .collect();
+        out.sort();
+        Ok(out)
+    }
+
+    /// The installation token, exchanged from a fresh App JWT when absent or near expiry.
+    fn installation_token(&self) -> Result<Secret, MintError> {
+        let now = (self.now)();
+        let mut cached = self.token.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((t, expires)) = cached.as_ref()
+            && *expires > now + 300
+        {
+            return Ok(Secret::new(t.expose().to_owned()));
+        }
+        let v = self.exchange(now)?;
         let token = v
             .get("token")
             .and_then(|t| t.as_str())

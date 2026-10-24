@@ -9,6 +9,8 @@
 - `windows-sandbox`: the guest writes `trace.log` (start, command exit) and `cmd.log` (the command's stdout and stderr);
   `collect` returns them as `windows-sandbox.trace.log` / `.cmd.log`. `run` fails at once if `WindowsSandbox.exe` itself
   exits non-zero before the job finished. `slangc_proof` prints both logs and, on failure, Hyper-V/Sandbox/WER events.
+- `github_proof perms <adapter.toml>`: prints the installation's permission names and levels (from the token exchange's
+  `permissions`; the token itself is dropped unread). `HttpGithub::installation_permissions`.
 - `LICENSE-MIT` holder is now "The antspawn contributors" (CireSnave, decision 263; the company holder waits on ownership).
 
 ## 0.0.22
