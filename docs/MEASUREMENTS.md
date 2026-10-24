@@ -143,6 +143,12 @@ queued job(s) in 916 ms` (no 403); `github_proof perms` reads back `actions=read
 empty (contents API 404, no workflow), so there is no positive control yet: `JobSource` stays UNVERIFIED until a queued job
 is listed.
 
+Positive control (2026-10-23 18:00, same code): the PM pushed a never-running workflow `queue-probe.yml` to `antspawn-proof` (commit
+417f87a2) and dispatched run 40047740331 on `[self-hosted, antspawn-nonexistent]`; `queued` then printed `ok: 1 queued job(s) in
+1851 ms` and `QueuedJob { run_id: 40047740331, job_id: 120733219368, labels: ["self-hosted", "antspawn-nonexistent"] }`. Zero
+before, one after, and the run id and labels are the dispatched ones, so `JobSource` is VERIFIED for the queued-run listing.
+Not covered: paging past 100 runs, rate-limit handling. The PM cancels the run and removes the file after this row.
+
 ## 2026-10-24: `windows-sandbox` slangc `TimedOut` diagnosed (ref: main 00b2aad, 0.0.22; fix in 0.0.23)
 
 CireSnave's desktop run of 0.0.22 (relayed by the PM): `account` PASSED (run_s=3.29, 168 bytes, identical to the host);

@@ -16,7 +16,7 @@
 ## 0.0.22
 
 - `github_proof queued <adapter.toml> <owner/repo>`: runs the PR19 `JobSource` live, read-only. First live run is recorded in
-  `docs/MEASUREMENTS.md`: refused, the App lacks the repository `Actions: read` permission. `JobSource` stays UNVERIFIED.
+  `docs/MEASUREMENTS.md`: refused, the App lacks the repository `Actions: read` permission. `JobSource` was UNVERIFIED until 0.0.23 (see there).
 
 ## 0.0.21
 
@@ -31,7 +31,7 @@
 - `HttpGithub` implements `watcher::JobSource`: `queued(repo)` lists the repo's `queued` and `in_progress` runs (a later job of a
   multi-job workflow waits inside a running run), reads each run's jobs (`filter=latest`) and keeps those with status `queued`,
   with their `runs-on` labels. Pages of 100, at most 5 pages per listing. A run that vanishes between the calls (404) is skipped;
-  any other failure fails the poll, so the watcher never forgets a job it merely could not see. **UNVERIFIED against GitHub**
+  any other failure fails the poll, so the watcher never forgets a job it merely could not see. **verified against GitHub 2026-10-23 (0.0.23: one queued job listed, see MEASUREMENTS)**
   until run live against `antspawn-proof`; the parsing is unit-tested on fixed JSON only.
 
 ## 0.0.18

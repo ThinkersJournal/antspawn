@@ -30,9 +30,7 @@ certified (`cargo test --test account -- --test-threads=1` 5/5). Board 261 DONE:
 253: `windows-sandbox` TimedOut = empty `exit.code` for one-digit codes (fixed in PR23, host-proven). Separate and UNVERIFIED for
 CireSnave's pop-up: from a tool shell `WindowsSandboxRemoteSession.exe` 0.8.107.0 APPCRASHes 0.3 s after each start
 (`FileNotFoundException WinRT.Runtime 2.2.0.0`, Application log since 10-22), so the sandbox is unusable from here; roadmap row below.
-264: Actions:read granted; `github_proof queued` now answers 200 with 0 queued jobs (2026-10-23 17:57), but `antspawn-proof` is
-EMPTY (no workflow), so no positive control: JobSource stays UNVERIFIED. Asked the PM to approve pushing a never-running
-`runs-on: [self-hosted, antspawn-nonexistent]` workflow there (and a `perms` mode printing only permission names/levels).
+264 DONE: Actions:read granted; positive control passed (run 40047740331 listed, 1 queued job): JobSource VERIFIED (MEASUREMENTS).
 260 RULED (CireSnave "A: 1 B: 1"): JIT config reaches the runner by an anonymous pipe to a shim that sets
 `ACTIONS_RUNNER_INPUT_JITCONFIG` in that one child, never a file, never inherited; runner network only inside Windows Sandbox.
 Update the CLAUDE.md exception wording, then build the hand-off AFTER the sandbox starts (it depends on it).
@@ -42,13 +40,11 @@ leave in place. Key = DPAPI file in `%LOCALAPPDATA%\antspawn\github-app\`: never
 runs: `%TEMP%\antspawn-proof\adapter.toml`. Runner v2.338.1 pinned, fetched, unpacked; never started.
 
 ## Next
-1. When the PM answers: positive control for `JobSource` (queue a job in `antspawn-proof`, rerun `github_proof queued`, expect >=1),
-   record in `docs/MEASUREMENTS.md`, drop UNVERIFIED from the PR19 changelog note.
-2. After PR23 merges the PM asks CireSnave for the desktop rerun (`cargo test --test slangc_proof slangc_through_windows_sandbox
+1. After PR23 merges the PM asks CireSnave for the desktop rerun (`cargo test --test slangc_proof slangc_through_windows_sandbox
    -- --nocapture`): record MEASURE, GUEST logs, EVENTS in `docs/MEASUREMENTS.md`.
-3. Roadmap row: Windows Sandbox host health (WinRT.Runtime crash) - find out whether it is the package (repair/update is
+2. Roadmap row: Windows Sandbox host health (WinRT.Runtime crash) - find out whether it is the package (repair/update is
    CireSnave's), then the 260 hand-off. Update CLAUDE.md exception wording per the 260 ruling.
-4. Needs an interactive desktop / elevation: windows-sandbox probes + negative tests; `schtasks /Run` non-admin vs named pipe.
+3. Needs an interactive desktop / elevation: windows-sandbox probes + negative tests; `schtasks /Run` non-admin vs named pipe.
 Work from a worktree off origin/main; the primary checkout stays on `main`.
 
 ## Unknowns to measure, not guess
