@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.0.27
+
+- Board 260 (CireSnave, "A: 1 B: 1"), host end of the runner hand-off: `spawn-jit-shim <runner> [args...]` reads the JIT config
+  from stdin (an anonymous pipe), refuses anything that is not plausible base64 (empty, over 64 KiB, not text), and starts the
+  runner with `ACTIONS_RUNNER_INPUT_JITCONFIG` set on that one child only; nothing prints the value. `adapter::handoff::start_shim`
+  starts the shim and writes the `Secret` to its stdin. Tests (`tests/jit_shim.rs`) include controls: a wrong value and an unset
+  variable fail the same check. NOT built: running the shim inside Windows Sandbox (the only place the runner gets network),
+  which waits on the sandbox starting; the watcher still has no real `Dispatch`.
+
 ## 0.0.26
 
 - First real regeneration of `matrix/launchers.tsv` with CapAnt 0.0.7: the file gains a `probed_at` column (`check` ignores
