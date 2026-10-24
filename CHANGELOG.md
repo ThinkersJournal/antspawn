@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.0.29
+
+- `windows-sandbox` now drives the package's `wsb.exe` (`start`, `exec -r System`, `stop --id`) instead of
+  `WindowsSandbox.exe <file>.wsb`, whose identity-less client crashed on `WinRT.Runtime` (board 253, measured). The proof
+  through it passes from a tool shell; no `LogonCommand`, no `taskkill` by image name.
+- `run` fails within about 2 s, naming the Application-log event, when a `WindowsSandbox*.exe` crash follows the request.
+- A run killed outright leaves its VM; the next run stops it (`antspawn-wsb-<id>.owner` in the temp dir, own ids only).
+- New `tests/windows_sandbox.rs`: guest cannot read `C:\Projects` or the host profile, a read-only mount is not writable,
+  network off, orphan reaped; the same probe on the host is the known-bad control. UNVERIFIED where the sandbox is absent.
+- CI: the advisory `portfolio` job repinned to coderipper 30e012b7 (PM notice). `docs/MEASUREMENTS.md`, `docs/DESIGN.md`.
+
 ## 0.0.28
 
 - Docs: `HANDOFF.md` rewritten to current state. No code change.

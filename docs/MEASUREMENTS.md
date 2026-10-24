@@ -167,14 +167,36 @@ in the package folder, its version unread). `guest trace.log` was never produced
 pop-up is this crash is UNVERIFIED: the same `Get-WinEvent` on his run would show it. Tests: the generated script is run on the host;
 the old form is the known-bad control (empty file for `hostname`'s code 0). Not run in a VM here. The next desktop run decides.
 
-## Windows Sandbox host health (2026-10-24, main 3e7e6e2)
+## Windows Sandbox crash: cause found, launcher moved to `wsb.exe` (2026-10-23 local, main bba0da5 + 0.0.29)
 
-- Package `MicrosoftWindows.WindowsSandbox` 0.8.107.0 (Store, Status Ok). From a tool shell `WindowsSandboxRemoteSession.exe` crashes
-  (Application log event 1000, exception 0xe0434352, `FileNotFoundException WinRT.Runtime 2.2.0.0`) on every start since 10-22.
-- The package is NOT missing the file: `WinRT.Runtime.dll` in its folder has assembly identity exactly 2.2.0.0 (file 2.2.0.48161),
-  read with `AssemblyName.GetAssemblyName`. So the load fails for the process, not for the package contents; cause UNKNOWN
-  (suspect launch context from a tool shell, e.g. WindowsApps access or package identity). Not yet tried: launch from a desktop
-  session (CireSnave's rerun is the control). No repair or update done.
+Replaces the earlier "host health" note, whose "cause UNKNOWN / suspect launch context" is retracted.
+
+- Not the package, the feature or virtualization: `WinRT.Runtime.dll` (2.2.0.0) is in the package folder, Authenticode Valid,
+  readable by Users, same SHA-256 in a copy; hypervisor present, `vmcompute`/`vmms`/`HvHost` running, WSL2 VMs running, no
+  pending reboot, 21 GB free RAM, VBS on. The host was a console session of the same user as CireSnave's desktop.
+- Cause: the client crashes only when started WITHOUT package identity. Every crash event (ours and CireSnave's 20:35) has an
+  empty "Faulting package full name". Running `...\WindowsApps\<pkg>\WindowsSandboxRemoteSession.exe` directly reproduced
+  `0xe0434352 FileNotFoundException WinRT.Runtime 2.2.0.0` (with `COREHOST_TRACE`, the file is in the trusted-assembly list);
+  a copy of the folder run from `%TEMP%` got past that load and died with a plain `System.Exception`, the text of the pop-up
+  "Windows Sandbox failed to initialize. Exception of type 'System.Exception' was thrown."; started through the package's
+  app-execution alias the client stayed up and `vmmemWindowsSandbox` started, and CireSnave saw a full desktop.
+- So `System32\WindowsSandbox.exe <file>.wsb`, which this launcher used through 0.0.28, starts the client without identity here.
+  UNVERIFIED: why that worked on 2026-10-23 afternoon (the run that reached `destroy`). Why identity matters for the load is
+  not established; the fix does not depend on it.
+- Fix (0.0.29): the launcher drives the package's own CLI, `%LOCALAPPDATA%\Microsoft\WindowsApps\wsb.exe`: `start -c <config>`
+  (id in about 6 s), `exec --id <id> -r System -c "cmd.exe /c C:\antspawn\in\job.cmd"`, `stop --id <id>`. A `LogonCommand` in the
+  start configuration never ran (126 s, no interactive guest logon); `exec -r ExistingLogin` answers `A specified logon
+  session does not exist (0x80070520)`, so the job runs as SYSTEM inside the throwaway VM (see `docs/DESIGN.md`).
+- `slangc_through_windows_sandbox_matches_the_host` (run from a tool shell, no elevation, no one at the desktop): exit 0, 168
+  SPIR-V bytes identical to the host's, provision 0.01 s, run 38.1 s, destroy 3.6 s, total 41.8 s; `wsb list` empty after. One sample.
+- `cargo test --test windows_sandbox -- --test-threads=1` (2/2): inside the VM `C:\Projects` and the host profile are not
+  readable, a read-only mount is not writable, `ping 1.1.1.1` fails; controls: `C:\Windows` readable and `%TEMP%` writable in
+  the guest, and the same probe script run on the host reports `read_profile=LEAK` and `net=LEAK`. A run killed outright leaves
+  its VM listed (control), and the next run's `reap_orphans` stops it. Not measured: other hosts, concurrent sandboxes, GPU.
+  The matrix row for `windows-sandbox` stays `no` until the matrix probes certify it.
+- A first probe of the read-only mount reported a false `LEAK`: `echo x> file >nul` lets the last redirect win and the write
+  went to `nul`. The probe now uses `copy nul`; the earlier reading was a test bug, not a hole (read-only mount checked by hand: no
+  file appeared on the host).
 
 ## Matrix regeneration (2026-10-24, main 767b614, capant 0.0.7)
 
@@ -186,4 +208,3 @@ the old form is the known-bad control (empty file for `hostname`'s code 0). Not 
 
 - `schtasks /Run` by a non-admin through the task security descriptor vs ACL'd named pipe.
 - `cargo run --example measure -- windows-sandbox`: start latency, cleanup, concurrency; negative tests for it.
-- Windows Sandbox: re-run `slangc_proof` from an interactive desktop on the retry fix.

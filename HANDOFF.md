@@ -25,27 +25,27 @@ Run on Sonnet, never Opus. You cannot push here: send the PM the SHA of each PR 
 10. `secrets[]` = names only, resolved at run time, never logged or written to env/files; none implemented (spec refused).
 
 ## State (2026-10-24)
-main 8d51982 (0.0.27). Merged this session: #23 sandbox exit-code fix, #24 matrix on capant, #25 JIT wording in CLAUDE.md,
-#26 regenerated launchers.tsv (capant 0.0.7, `probed_at` only), #27 host end of the 260 hand-off. `account` is live and certified
+main bba0da5 (0.0.28); branch `pr29-sandbox-failfast` (0.0.29) is the PM's to gate. `account` is live and certified
 (`cargo test --test account -- --test-threads=1` 5/5). JobSource VERIFIED live (MEASUREMENTS).
-`windows-sandbox`: the TimedOut bug is fixed (0.0.23). From a tool shell `WindowsSandboxRemoteSession.exe` still APPCRASHes
-(`WinRT.Runtime 2.2.0.0`); the package is intact, so the cause is a launch-context failure, unknown. The control is CireSnave's
-desktop rerun at 3e7e6e24 (`cargo test --test slangc_proof slangc_through_windows_sandbox -- --nocapture`); the PM forwards the
-result. Record MEASURE, GUEST logs and EVENTS in `docs/MEASUREMENTS.md`.
-260 (CireSnave "A: 1 B: 1"): `spawn-jit-shim` + `adapter::handoff::start_shim` are built and tested. NOT built, waits on the sandbox
-starting: the shim INSIDE Windows Sandbox (the only place the runner gets network) and a real `Dispatch` for the watcher.
-Matrix: `--check` drops `inherited_from` from the generated side on purpose (PM ruling A: no `environment` column, one committed
-file must match CI on every OS) and prints the carried rows. Do not remove the strip.
-Waiting on the PM: CodeRipper baseline findings (add ONE row per failing rule); the PM's `[NOTICE]` with the rerun result.
+`windows-sandbox` WORKS from a tool shell (board 253 solved): the identity-less `WindowsSandbox.exe <file>.wsb` stub crashed the
+client; the launcher now drives the package's `wsb.exe` (start / exec -r System / stop). slangc proof passes, isolation probes pass
+(`cargo test --test windows_sandbox -- --test-threads=1`), orphan VMs are reaped. Detail and numbers: MEASUREMENTS, DESIGN.
+Matrix row for `windows-sandbox` is still `no`: certifying it means adding its probes to `examples/matrix.rs`.
+260 (CireSnave "A: 1 B: 1"): `spawn-jit-shim` + `adapter::handoff::start_shim` built and tested (PR27). NOT built: the shim INSIDE
+Windows Sandbox (the only place the runner gets network; `wsb exec`/`share` make it possible now) and a real `Dispatch`.
+Matrix: `--check` drops `inherited_from` from the generated side on purpose (PM ruling A). Do not remove the strip.
+**CireSnave is never asked to run a command** (PM, 2026-10-24: "Why do I need to be the one running them?"): run everything from
+your own shell; ask him only for UAC/elevation or a physical action. Never kill another lane's sandbox processes.
+Waiting on the PM: CodeRipper baseline findings (add ONE row per failing rule).
 GitHub App `antspawn-runner` (id 5441608, install 174476958), group `antspawn-account` (id 3), repo `antspawn-proof`: PM-made,
 leave in place. Key = DPAPI file in `%LOCALAPPDATA%\antspawn\github-app\`: never print or copy it. Adapter config for live
 runs: `%TEMP%\antspawn-proof\adapter.toml`. Runner v2.338.1 pinned, fetched, unpacked; never started.
 Primary checkout: untracked `supertool` (origin unknown, not ours to delete).
 
 ## Next
-1. If the PM sent the rerun result: record it in `docs/MEASUREMENTS.md`; if the sandbox ran a job, build the shim-in-sandbox
-   step and the real `Dispatch`. If not sent, idle (PM ruling B, 2026-10-24: no other row is unblocked).
-2. Needs an interactive desktop / elevation: windows-sandbox probes + negative tests; `schtasks /Run` non-admin vs named pipe.
+1. Certify `windows-sandbox` in the matrix (probes from `tests/windows_sandbox.rs`; start latency ~6 s, run, stop; concurrency).
+2. 260: the shim inside the sandbox via `wsb exec`, then a real `Dispatch` for the watcher.
+3. Needs elevation: `schtasks /Run` non-admin vs named pipe.
 Work from a worktree off origin/main; the primary checkout stays on `main`.
 
 ## Unknowns to measure, not guess
