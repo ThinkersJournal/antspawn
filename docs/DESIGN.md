@@ -39,3 +39,14 @@
    * **Open (measure, do not guess):** whether a non-admin `schtasks /Run` works through the task's security
      descriptor on this machine, versus an ACL'd named pipe. See `docs/MEASUREMENTS.md`.
 
+## `windows-sandbox`: how it starts and who the job runs as
+
+It drives `wsb.exe` (the Windows Sandbox package's CLI, which starts with package identity; the System32
+`WindowsSandbox.exe <file>.wsb` stub does not, and its client crashes). `wsb start -c <config>` creates the VM
+(network and vGPU off, clipboard/printer/audio/video redirection off, only the declared folders mapped, `in` read-only),
+`wsb exec -r System` runs the generated `job.cmd`, `wsb stop --id` ends it. The job therefore runs as SYSTEM inside the
+throwaway VM: `ExistingLogin` needs an interactive guest logon, which a headless start never creates (0x80070520), and
+nothing the job does as SYSTEM outlives the VM or reaches the host except through the writable `out` mapping and the
+declared `rw` mounts. A launcher that is killed outright leaves its VM; every run first stops the sandboxes recorded in
+`%TEMP%\antspawn-wsb-<id>.owner` whose owning process is gone (only its own, by id). `run` also fails within about 2 s,
+naming the event, when the Application log shows a `WindowsSandbox*.exe` crash after the request.
