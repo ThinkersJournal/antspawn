@@ -6,6 +6,7 @@
 //! operator stores one id; [`Registry::open_named`] re-checks the matrix at run time and refuses
 //! a launcher that no longer satisfies the needs. Launchers never elevate and never create
 //! accounts: whatever they need must already be provisioned, and they say so loudly if it is not.
+//! Ranking and the rule for when a recorded `yes` counts are CapAnt's.
 
 use std::path::Path;
 
@@ -80,64 +81,82 @@ fn list(caps: &[Capability]) -> String {
     caps.iter().map(|c| c.id()).collect::<Vec<_>>().join(", ")
 }
 
+/// "Now" and "here" for the engine: the clock and this machine's os and arch.
+fn context() -> capant::Context {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX));
+    capant::Context::new(
+        now,
+        capant::Config::new()
+            .with("os", std::env::consts::OS)
+            .with("arch", std::env::consts::ARCH),
+    )
+}
+
+fn capabilities<'a>(ids: impl Iterator<Item = &'a capant::NeedOutcome>) -> Vec<Capability> {
+    ids.filter_map(|o| o.id.as_str().parse().ok()).collect()
+}
+
 /// The registered launchers and the matrix that certifies them.
 pub struct Registry {
     launchers: Vec<Box<dyn Launcher>>,
     matrix: Matrix,
+    table: Vec<capant::Provider>,
+    ctx: capant::Context,
 }
 
 impl Registry {
     pub fn new(launchers: Vec<Box<dyn Launcher>>, matrix: Matrix) -> Self {
-        Registry { launchers, matrix }
+        let table = launchers
+            .iter()
+            .map(|l| {
+                let surface = capant::Surface::new(l.id(), "1", capant::Config::new());
+                capant::Provider::new(l.id(), vec![surface]).expect("one surface")
+            })
+            .collect();
+        Registry {
+            launchers,
+            matrix,
+            table,
+            ctx: context(),
+        }
     }
 
-    fn unmet(&self, id: &str, needs: &Needs) -> Vec<Capability> {
-        needs
-            .capabilities
-            .iter()
-            .copied()
-            .filter(|&c| !self.matrix.enabled(id, c))
-            .collect()
+    fn evaluation(&self, needs: &Needs) -> capant::Evaluation {
+        let need = capant::Need::new(needs.capabilities.iter().map(|c| c.cap_id()).collect())
+            .prefer_providers(needs.prefer.clone());
+        capant::evaluate(&self.table, &need, &self.matrix, &self.ctx)
+            .expect("launcher ids are unique")
     }
 
     /// Every registered launcher, satisfying ones first. Within each group the spec's `prefer`
     /// order comes first, then registry order.
     pub fn providers(&self, needs: &Needs) -> Vec<Provider> {
-        let rank = |id: &str| {
-            needs
-                .prefer
-                .iter()
-                .position(|p| p == id)
-                .unwrap_or(usize::MAX)
-        };
-        let mut out: Vec<Provider> = self
-            .launchers
+        self.evaluation(needs)
+            .entries()
             .iter()
-            .map(|l| Provider {
-                id: l.id().to_owned(),
-                unmet: self.unmet(l.id(), needs),
+            .map(|e| Provider {
+                id: e.provider.clone(),
+                unmet: capabilities(e.unmet()),
             })
-            .collect();
-        // Stable sort keeps registry order among equals.
-        out.sort_by_key(|p| (!p.satisfies(), rank(&p.id)));
-        out
+            .collect()
     }
 
     /// Re-check the matrix and return the named launcher, or say what it lacks.
     pub fn open_named(&self, id: &str, needs: &Needs) -> Result<&dyn Launcher, OpenError> {
-        let l = self
-            .launchers
-            .iter()
-            .find(|l| l.id() == id)
-            .ok_or_else(|| OpenError::Unknown(id.to_owned()))?;
-        let unmet = self.unmet(id, needs);
-        if unmet.is_empty() {
-            Ok(l.as_ref())
-        } else {
-            Err(OpenError::Unmet {
+        match self.evaluation(needs).check(id) {
+            Ok(_) => Ok(self
+                .launchers
+                .iter()
+                .find(|l| l.id() == id)
+                .expect("the table is built from the launchers")
+                .as_ref()),
+            Err(capant::CheckError::Rejected(u)) => Err(OpenError::Unmet {
                 id: id.to_owned(),
-                unmet,
-            })
+                unmet: capabilities(u.missing.iter()),
+            }),
+            Err(_) => Err(OpenError::Unknown(id.to_owned())),
         }
     }
 }
@@ -156,29 +175,37 @@ mod tests {
         }
     }
 
-    fn row(launcher: &str, cap: &str, yes: bool) -> String {
-        format!(
-            "capability\t{cap}\t{launcher}\t1\t\t{}\t\t\t\n",
-            if yes { "yes" } else { "no" }
+    fn row(launcher: &str, cap: &str, yes: bool) -> capant::Row {
+        let state = if yes {
+            capant::State::Yes
+        } else {
+            capant::State::No(capant::Reason::Other("broken".into()))
+        };
+        capant::Row::capability(
+            capant::CapabilityId::new(cap).unwrap(),
+            launcher,
+            "1",
+            state,
         )
+        .evidence(capant::Evidence::probe("t"))
     }
 
     fn registry() -> Registry {
-        let mut t = format!("{}\n", crate::matrix::HEADER);
+        let mut t = Vec::new();
         for c in ["isolation.no-read-outside", "network.off"] {
-            t += &row("strong", c, true);
+            t.push(row("strong", c, true));
         }
-        t += &row("weak", "network.off", true);
-        t += &row("weak", "isolation.no-read-outside", false);
-        t += &row("other", "isolation.no-read-outside", true);
-        t += &row("other", "network.off", true);
+        t.push(row("weak", "network.off", true));
+        t.push(row("weak", "isolation.no-read-outside", false));
+        t.push(row("other", "isolation.no-read-outside", true));
+        t.push(row("other", "network.off", true));
         Registry::new(
             vec![
                 Box::new(Stub("weak")),
                 Box::new(Stub("other")),
                 Box::new(Stub("strong")),
             ],
-            Matrix::parse(&t).unwrap(),
+            Matrix::from_rows(t),
         )
     }
 
@@ -210,6 +237,26 @@ mod tests {
             ["strong", "other", "weak"],
             "weak is preferred but does not satisfy"
         );
+    }
+
+    #[test]
+    fn a_yes_without_a_probe_grants_nothing() {
+        // Control for the new rule: the old matrix trusted any `yes`; CapAnt wants the probe named.
+        let bare = capant::Row::capability(
+            Capability::NetworkOff.cap_id(),
+            "strong",
+            "1",
+            capant::State::Yes,
+        );
+        let r = Registry::new(
+            vec![Box::new(Stub("strong"))],
+            Matrix::from_rows(vec![bare]),
+        );
+        let n = Needs {
+            capabilities: vec![Capability::NetworkOff],
+            prefer: vec![],
+        };
+        assert_eq!(r.providers(&n)[0].unmet, vec![Capability::NetworkOff]);
     }
 
     #[test]
