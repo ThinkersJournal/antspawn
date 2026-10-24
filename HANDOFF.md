@@ -25,29 +25,27 @@ Run on Sonnet, never Opus. You cannot push here: send the PM the SHA of each PR 
 10. `secrets[]` = names only, resolved at run time, never logged or written to env/files; none implemented (spec refused).
 
 ## State (2026-10-24)
-PR1-22 merged (main 00b2aad); PR23 (0.0.23, head 2b4c758, branch pr23-sandbox-timeout) is at the PM gate. `account` is live and
-certified (`cargo test --test account -- --test-threads=1` 5/5). Board 261 DONE: rule off -> `account_has_no_network` FAILS, on -> passes.
-253: `windows-sandbox` TimedOut = empty `exit.code` for one-digit codes (fixed in PR23, host-proven). Separate and UNVERIFIED for
-CireSnave's pop-up: from a tool shell `WindowsSandboxRemoteSession.exe` 0.8.107.0 APPCRASHes 0.3 s after each start
-(`FileNotFoundException WinRT.Runtime 2.2.0.0`, Application log since 10-22), so the sandbox is unusable from here. Package is intact (WinRT.Runtime.dll identity is 2.2.0.0): see MEASUREMENTS, cause unknown.
-264 DONE: Actions:read granted; positive control passed (run 40047740331 listed, 1 queued job): JobSource VERIFIED (MEASUREMENTS).
-260 RULED (CireSnave "A: 1 B: 1"): JIT config reaches the runner by an anonymous pipe to a shim that sets
-`ACTIONS_RUNNER_INPUT_JITCONFIG` in that one child, never a file, never inherited; runner network only inside Windows Sandbox.
-CLAUDE.md exception wording: done (PR25). Hand-off host end (`spawn-jit-shim`, `adapter::handoff`) built in 0.0.27; what remains is
-running the shim INSIDE Windows Sandbox and a real `Dispatch`, both after the sandbox starts.
-Waiting: PM's CodeRipper baseline findings: add ONE row per failing rule. Watcher loop is pure logic; no real `Dispatch`.
+main 8d51982 (0.0.27). Merged this session: #23 sandbox exit-code fix, #24 matrix on capant, #25 JIT wording in CLAUDE.md,
+#26 regenerated launchers.tsv (capant 0.0.7, `probed_at` only), #27 host end of the 260 hand-off. `account` is live and certified
+(`cargo test --test account -- --test-threads=1` 5/5). JobSource VERIFIED live (MEASUREMENTS).
+`windows-sandbox`: the TimedOut bug is fixed (0.0.23). From a tool shell `WindowsSandboxRemoteSession.exe` still APPCRASHes
+(`WinRT.Runtime 2.2.0.0`); the package is intact, so the cause is a launch-context failure, unknown. The control is CireSnave's
+desktop rerun at 3e7e6e24 (`cargo test --test slangc_proof slangc_through_windows_sandbox -- --nocapture`); the PM forwards the
+result. Record MEASURE, GUEST logs and EVENTS in `docs/MEASUREMENTS.md`.
+260 (CireSnave "A: 1 B: 1"): `spawn-jit-shim` + `adapter::handoff::start_shim` are built and tested. NOT built, waits on the sandbox
+starting: the shim INSIDE Windows Sandbox (the only place the runner gets network) and a real `Dispatch` for the watcher.
+Matrix: `--check` drops `inherited_from` from the generated side on purpose (PM ruling A: no `environment` column, one committed
+file must match CI on every OS) and prints the carried rows. Do not remove the strip.
+Waiting on the PM: CodeRipper baseline findings (add ONE row per failing rule); the PM's `[NOTICE]` with the rerun result.
 GitHub App `antspawn-runner` (id 5441608, install 174476958), group `antspawn-account` (id 3), repo `antspawn-proof`: PM-made,
 leave in place. Key = DPAPI file in `%LOCALAPPDATA%\antspawn\github-app\`: never print or copy it. Adapter config for live
 runs: `%TEMP%\antspawn-proof\adapter.toml`. Runner v2.338.1 pinned, fetched, unpacked; never started.
+Primary checkout: untracked `supertool` (origin unknown, not ours to delete).
 
 ## Next
-1. After PR23 merges the PM asks CireSnave for the desktop rerun (`cargo test --test slangc_proof slangc_through_windows_sandbox
-   -- --nocapture`): record MEASURE, GUEST logs, EVENTS in `docs/MEASUREMENTS.md`.
-2. Roadmap row: Windows Sandbox host health (WinRT.Runtime crash) - find out whether it is the package (repair/update is
-   CireSnave's), then the 260 hand-off. Update CLAUDE.md exception wording per the 260 ruling.
-3. Needs an interactive desktop / elevation: windows-sandbox probes + negative tests; `schtasks /Run` non-admin vs named pipe.
-4. `--check` drops `inherited_from` from the generated side on purpose and keeps doing so (PM ruling A, 2026-10-24: no
-   `environment` column, one committed file must match CI on every OS); it prints the carried rows. Do not remove the strip.
+1. If the PM sent the rerun result: record it in `docs/MEASUREMENTS.md`; if the sandbox ran a job, build the shim-in-sandbox
+   step and the real `Dispatch`. If not sent, idle (PM ruling B, 2026-10-24: no other row is unblocked).
+2. Needs an interactive desktop / elevation: windows-sandbox probes + negative tests; `schtasks /Run` non-admin vs named pipe.
 Work from a worktree off origin/main; the primary checkout stays on `main`.
 
 ## Unknowns to measure, not guess

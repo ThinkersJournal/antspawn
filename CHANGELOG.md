@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.28
+
+- Docs: `HANDOFF.md` rewritten to current state. No code change.
+
 ## 0.0.27
 
 - Board 260 (CireSnave, "A: 1 B: 1"), host end of the runner hand-off: `spawn-jit-shim <runner> [args...]` reads the JIT config
