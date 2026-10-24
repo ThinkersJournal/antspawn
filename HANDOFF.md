@@ -24,24 +24,27 @@ Run on Sonnet, never Opus. You cannot push here: send the PM the SHA of each PR 
    results in `docs/MEASUREMENTS.md` (date, ref).
 10. `secrets[]` = names only, resolved at run time, never logged or written to env/files; none implemented (spec refused).
 
-## State (2026-10-23)
-PR1-20 merged (main 5a6382b, 0.0.20; PR21 repin in flight). `account` is live and certified (`cargo test --test account -- --test-threads=1` 5/5).
-Merged: PR19 real `JobSource` (UNVERIFIED live; a live run needs a read-only token path, asked the PM), PR20 advisory CodeRipper `portfolio` CI job.
-Waiting: PM's CodeRipper baseline findings: add ONE row here per failing rule. Watcher loop is pure logic; no real `Dispatch`.
-Board 261 (CireSnave, elevated): toggle the `antspawn-run: block all outbound` rule once to prove `network.off` comes from it.
-`windows-sandbox`: no job completes from a tool shell (`slangc_proof` VM leg fails here); CireSnave's desktop re-run of
-`slangc_proof` (PR14 CRT DLLs) is pending (board 253). GitHub App `antspawn-runner` (id 5441608, install 174476958), group
-`antspawn-account` (id 3), repo `antspawn-proof`: PM-made, leave in place. Key = DPAPI file
-`%LOCALAPPDATA%ntspawn\github-appntspawn-runner.key.dpapi`: never print or copy it. Runner v2.338.1 pinned, fetched, unpacked
-(`adapter::runner_pin`, `runner_cache`, `docs/RUNNER-PROVENANCE.md`); never started.
+## State (2026-10-24)
+PR1-22 merged (main 00b2aad); PR23 (0.0.23, head 2b4c758, branch pr23-sandbox-timeout) is at the PM gate. `account` is live and
+certified (`cargo test --test account -- --test-threads=1` 5/5). Board 261 DONE: rule off -> `account_has_no_network` FAILS, on -> passes.
+253: `windows-sandbox` TimedOut = empty `exit.code` for one-digit codes (fixed in PR23, host-proven). Separate and UNVERIFIED for
+CireSnave's pop-up: from a tool shell `WindowsSandboxRemoteSession.exe` 0.8.107.0 APPCRASHes 0.3 s after each start
+(`FileNotFoundException WinRT.Runtime 2.2.0.0`, Application log since 10-22), so the sandbox is unusable from here; roadmap row below.
+264 DONE: Actions:read granted; positive control passed (run 40047740331 listed, 1 queued job): JobSource VERIFIED (MEASUREMENTS).
+260 RULED (CireSnave "A: 1 B: 1"): JIT config reaches the runner by an anonymous pipe to a shim that sets
+`ACTIONS_RUNNER_INPUT_JITCONFIG` in that one child, never a file, never inherited; runner network only inside Windows Sandbox.
+Update the CLAUDE.md exception wording, then build the hand-off AFTER the sandbox starts (it depends on it).
+Waiting: PM's CodeRipper baseline findings: add ONE row per failing rule. Watcher loop is pure logic; no real `Dispatch`.
+GitHub App `antspawn-runner` (id 5441608, install 174476958), group `antspawn-account` (id 3), repo `antspawn-proof`: PM-made,
+leave in place. Key = DPAPI file in `%LOCALAPPDATA%\antspawn\github-app\`: never print or copy it. Adapter config for live
+runs: `%TEMP%\antspawn-proof\adapter.toml`. Runner v2.338.1 pinned, fetched, unpacked; never started.
 
 ## Next
-1. Runner hand-off is BLOCKED on CireSnave (board 260): how the JIT config reaches the runner without a file or env (PM recommends a
-   memory-only pipe to a shim setting `ACTIONS_RUNNER_INPUT_JITCONFIG` in the one child), and network for the runner (PM recommends only
-   inside Windows Sandbox). Build neither until he rules. The watcher's `Dispatch` is that hand-off.
-2. Unblocked: run the PR19 `JobSource` live against `antspawn-proof` (example binary, record in `docs/MEASUREMENTS.md`);
-   record CireSnave's `slangc_proof` re-run; windows-sandbox probes + negative tests (needs an interactive desktop);
-   `schtasks /Run` non-admin vs named pipe.
+1. After PR23 merges the PM asks CireSnave for the desktop rerun (`cargo test --test slangc_proof slangc_through_windows_sandbox
+   -- --nocapture`): record MEASURE, GUEST logs, EVENTS in `docs/MEASUREMENTS.md`.
+2. Roadmap row: Windows Sandbox host health (WinRT.Runtime crash) - find out whether it is the package (repair/update is
+   CireSnave's), then the 260 hand-off. Update CLAUDE.md exception wording per the 260 ruling.
+3. Needs an interactive desktop / elevation: windows-sandbox probes + negative tests; `schtasks /Run` non-admin vs named pipe.
 Work from a worktree off origin/main; the primary checkout stays on `main`.
 
 ## Unknowns to measure, not guess

@@ -104,6 +104,17 @@ impl Environment for WsbEnv {
                     return Ok(Exit::Code(code));
                 }
             }
+            // A launcher process that fails says so now; waiting out the limit would hide why.
+            // (One that exits 0 may just have handed off to the VM client, so that is not checked.)
+            if let Some(Ok(Some(st))) = self.wsb.as_mut().map(std::process::Child::try_wait)
+                && !st.success()
+                && !code_file.exists()
+            {
+                return Err(LaunchError::Other(format!(
+                    "WindowsSandbox.exe exited with {st} before the job wrote exit.code \
+                     (the VM did not start or was closed)"
+                )));
+            }
             if limit.is_some_and(|l| start.elapsed() >= l) {
                 self.close();
                 return Ok(Exit::TimedOut);
@@ -118,6 +129,15 @@ impl Environment for WsbEnv {
             let from = self.out.join(&o.name);
             if from.exists() {
                 copy(&from, &results.join(&o.name))?;
+            }
+        }
+        // The guest's own account of the run, kept even when the job never finished.
+        for log in ["trace.log", "cmd.log"] {
+            if self.out.join(log).is_file() {
+                std::fs::copy(
+                    self.out.join(log),
+                    results.join(format!("windows-sandbox.{log}")),
+                )?;
             }
         }
         Ok(())
@@ -213,7 +233,18 @@ fn plain(what: &str, s: &str) -> Result<(), LaunchError> {
 /// The batch file the VM runs at logon: environment, scratch dirs, the command, output copies,
 /// then `exit.code` last, so its presence means everything else is already in `out`.
 pub fn job_script(spec: &JobSpec) -> Result<String, LaunchError> {
-    let mut s = String::from("@echo off\r\n");
+    job_script_in(spec, GUEST_OUT, true)
+}
+
+/// `job_script` with the output folder and the final `shutdown` as parameters, so a test can run
+/// the very same script on the host (a temp folder, no shutdown).
+///
+/// `trace.log` records the guest's progress and `cmd.log` the command's own output, so a run that
+/// never finishes still says how far it got. Redirections are written `>file echo ...`: in
+/// `echo %RC%> file` a one-digit `RC` is read as a handle number (`0>`), the file stays empty and
+/// the host waits for an exit code that never comes (measured 2026-10-24, decision 253).
+pub fn job_script_in(spec: &JobSpec, out: &str, shutdown: bool) -> Result<String, LaunchError> {
+    let mut s = format!("@echo off\r\n>> \"{out}\\trace.log\" echo [start] %DATE% %TIME%\r\n");
     for (k, v) in &spec.job.env {
         plain("env name", k)?;
         plain("env value", v)?;
@@ -242,18 +273,24 @@ pub fn job_script(spec: &JobSpec) -> Result<String, LaunchError> {
         }
         parts.push(format!("\"{a}\""));
     }
-    s += &format!("{}\r\nset RC=%ERRORLEVEL%\r\n", parts.join(" "));
+    s += &format!(
+        "{} >> \"{out}\\cmd.log\" 2>&1\r\nset RC=%ERRORLEVEL%\r\n>> \"{out}\\trace.log\" echo [command-exit] %RC%\r\n",
+        parts.join(" ")
+    );
     for o in &spec.outputs {
         plain("output path", &o.guest)?;
         plain("output name", &o.name)?;
         s += &format!(
-            "if exist \"{g}\\*\" (xcopy \"{g}\" \"{GUEST_OUT}\\{n}\\\" /E /I /Q /Y >nul) else \
-             (copy \"{g}\" \"{GUEST_OUT}\\{n}\" >nul)\r\n",
+            "if exist \"{g}\\*\" (xcopy \"{g}\" \"{out}\\{n}\\\" /E /I /Q /Y >nul) else \
+             (copy \"{g}\" \"{out}\\{n}\" >nul)\r\n",
             g = o.guest,
             n = o.name
         );
     }
-    s += &format!("echo %RC%> \"{GUEST_OUT}\\exit.code\"\r\nshutdown /s /t 0\r\n");
+    s += &format!(">\"{out}\\exit.code\" echo %RC%\r\n");
+    if shutdown {
+        s += "shutdown /s /t 0\r\n";
+    }
     Ok(s)
 }
 
@@ -307,6 +344,73 @@ mod tests {
         assert!(job_script(&s).is_err());
         let s = JobSpec::from_toml("[job]\nname = \"t\"\ncmd = [\"a\", \"%PATH%\"]\n").unwrap();
         assert!(job_script(&s).is_err());
+    }
+
+    /// Run the generated script on the host (output folder in a temp dir, no shutdown) and return
+    /// the files it left in that folder.
+    #[cfg(windows)]
+    fn run_script_on_host(tag: &str, script: impl FnOnce(&str) -> String) -> PathBuf {
+        let out =
+            std::env::temp_dir().join(format!("antspawn-script-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&out);
+        std::fs::create_dir_all(&out).unwrap();
+        let bat =
+            std::env::temp_dir().join(format!("antspawn-script-{tag}-{}.cmd", std::process::id()));
+        std::fs::write(&bat, script(&out.display().to_string())).unwrap();
+        let st = Command::new("cmd").arg("/c").arg(&bat).status().unwrap();
+        assert!(st.success() || st.code().is_some(), "cmd ran: {st}");
+        let _ = std::fs::remove_file(&bat);
+        out
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn exit_code_file_is_written_for_every_exit_code_including_one_digit() {
+        // Arguments are quoted in the script, so pick programs with a known code and no switches:
+        // `hostname` exits 0 and `findstr` with no arguments exits 2 (the one-digit cases
+        // `echo %RC%> file` got wrong); a missing program exits 9009.
+        for (prog, want) in [
+            ("hostname", 0),
+            ("findstr", 2),
+            ("antspawn-no-such-exe", 9009),
+        ] {
+            let s =
+                JobSpec::from_toml(&format!("[job]\nname = \"t\"\ncmd = [\"{prog}\"]\n")).unwrap();
+            let out = run_script_on_host(&format!("rc{want}"), |o| {
+                job_script_in(&s, o, false).unwrap()
+            });
+            let text = std::fs::read_to_string(out.join("exit.code")).unwrap();
+            assert_eq!(text.trim().parse::<i32>().ok(), Some(want), "{text:?}");
+            let trace = std::fs::read_to_string(out.join("trace.log")).unwrap();
+            assert!(trace.contains("[start]") && trace.contains(&format!("[command-exit] {want}")));
+            let _ = std::fs::remove_dir_all(out);
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_old_redirect_form_leaves_an_empty_file_for_a_one_digit_code() {
+        // Known-bad control: the form the launcher used before 0.0.23. If this ever passes, the
+        // test above no longer proves anything about the one-digit case.
+        let out = run_script_on_host("old", |o| {
+            format!("@echo off\r\nset RC=0\r\necho %RC%> \"{o}\\exit.code\"\r\n")
+        });
+        let text = std::fs::read_to_string(out.join("exit.code")).unwrap();
+        assert!(text.trim().parse::<i32>().is_err(), "{text:?}");
+        let _ = std::fs::remove_dir_all(out);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_command_that_cannot_start_leaves_its_reason_in_cmd_log() {
+        let s =
+            JobSpec::from_toml("[job]\nname = \"t\"\ncmd = [\"antspawn-no-such-exe\"]\n").unwrap();
+        let out = run_script_on_host("nope", |o| job_script_in(&s, o, false).unwrap());
+        let log = std::fs::read_to_string(out.join("cmd.log")).unwrap();
+        assert!(log.contains("antspawn-no-such-exe"), "{log:?}");
+        let code = std::fs::read_to_string(out.join("exit.code")).unwrap();
+        assert_eq!(code.trim(), "9009");
+        let _ = std::fs::remove_dir_all(out);
     }
 
     #[cfg(windows)]

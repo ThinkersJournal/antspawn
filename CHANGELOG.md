@@ -1,9 +1,22 @@
 # Changelog
 
+## 0.0.23
+
+- Fix: `windows-sandbox` reported `TimedOut` for any job that exited with a one-digit code (so every success). `job.cmd` wrote
+  `echo %RC%> exit.code`; cmd reads `0>` as a handle redirect, so `exit.code` stayed empty and `run` waited out `time_s`. The
+  script now writes `>file echo %RC%`. Host tests run the generated script (`job_script_in`) and include the old form as a
+  known-bad control.
+- `windows-sandbox`: the guest writes `trace.log` (start, command exit) and `cmd.log` (the command's stdout and stderr);
+  `collect` returns them as `windows-sandbox.trace.log` / `.cmd.log`. `run` fails at once if `WindowsSandbox.exe` itself
+  exits non-zero before the job finished. `slangc_proof` prints both logs and, on failure, Hyper-V/Sandbox/WER events.
+- `github_proof perms <adapter.toml>`: prints the installation's permission names and levels (from the token exchange's
+  `permissions`; the token itself is dropped unread). `HttpGithub::installation_permissions`.
+- `LICENSE-MIT` holder is now "The antspawn contributors" (CireSnave, decision 263; the company holder waits on ownership).
+
 ## 0.0.22
 
 - `github_proof queued <adapter.toml> <owner/repo>`: runs the PR19 `JobSource` live, read-only. First live run is recorded in
-  `docs/MEASUREMENTS.md`: refused, the App lacks the repository `Actions: read` permission. `JobSource` stays UNVERIFIED.
+  `docs/MEASUREMENTS.md`: refused, the App lacks the repository `Actions: read` permission. `JobSource` was UNVERIFIED until 0.0.23 (see there).
 
 ## 0.0.21
 
@@ -18,7 +31,7 @@
 - `HttpGithub` implements `watcher::JobSource`: `queued(repo)` lists the repo's `queued` and `in_progress` runs (a later job of a
   multi-job workflow waits inside a running run), reads each run's jobs (`filter=latest`) and keeps those with status `queued`,
   with their `runs-on` labels. Pages of 100, at most 5 pages per listing. A run that vanishes between the calls (404) is skipped;
-  any other failure fails the poll, so the watcher never forgets a job it merely could not see. **UNVERIFIED against GitHub**
+  any other failure fails the poll, so the watcher never forgets a job it merely could not see. **verified against GitHub 2026-10-23 (0.0.23: one queued job listed, see MEASUREMENTS)**
   until run live against `antspawn-proof`; the parsing is unit-tested on fixed JSON only.
 
 ## 0.0.18

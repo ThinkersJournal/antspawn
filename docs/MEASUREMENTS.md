@@ -137,6 +137,36 @@ failed `HTTP 403: Resource not accessible by integration`. Cause read from the m
 permission `Actions: read`. Not retried; the App's permissions are CireSnave's to change. `JobSource` remains UNVERIFIED against
 GitHub. Control not re-run this session: the earlier `probe` and `jit` runs (above) used the same App and token path and succeeded.
 
+Board 264 (2026-10-23 17:57, same code at main 00b2aad): CireSnave granted `Actions: Read-only`. `queued` now answers `ok: 0
+queued job(s) in 916 ms` (no 403); `github_proof perms` reads back `actions=read`, `metadata=read`,
+`organization_self_hosted_runners=write` (3 granted). Zero jobs cannot tell "works" from "sees nothing", and `antspawn-proof` is
+empty (contents API 404, no workflow), so there is no positive control yet: `JobSource` stays UNVERIFIED until a queued job
+is listed.
+
+Positive control (2026-10-23 18:00, same code): the PM pushed a never-running workflow `queue-probe.yml` to `antspawn-proof` (commit
+417f87a2) and dispatched run 40047740331 on `[self-hosted, antspawn-nonexistent]`; `queued` then printed `ok: 1 queued job(s) in
+1851 ms` and `QueuedJob { run_id: 40047740331, job_id: 120733219368, labels: ["self-hosted", "antspawn-nonexistent"] }`. Zero
+before, one after, and the run id and labels are the dispatched ones, so `JobSource` is VERIFIED for the queued-run listing.
+Not covered: paging past 100 runs, rate-limit handling. The PM cancels the run and removes the file after this row.
+
+## 2026-10-24: `windows-sandbox` slangc `TimedOut` diagnosed (ref: main 00b2aad, 0.0.22; fix in 0.0.23)
+
+CireSnave's desktop run of 0.0.22 (relayed by the PM): `account` PASSED (run_s=3.29, 168 bytes, identical to the host);
+`windows-sandbox` `exit=TimedOut provision_s=0.00 run_s=241.34 destroy_s=2.02`. `provision_s=0.00` is expected, not a symptom:
+`provision` only writes files, the VM starts in `run`. Cause found on this box, no VM needed: `job.cmd` ended `echo %RC%>
+"...\exit.code"`, and cmd reads a one-digit number before `>` as a handle (`0>`), so the redirect never happens. Probe, cmd
+batch, `RC=0`: `echo %RC%> f` left f at 0 bytes; `RC=17` left 4 bytes; `>f echo %RC%` with `RC=0` left 3 bytes. An empty
+`exit.code` does not parse, so `run` polled to the 240 s limit. The 0.0.12 run returned `-1073741515` only because that code
+has more digits. This fits every number in the report; it does not explain the pop-up dialog CireSnave saw, which is
+UNVERIFIED on his desktop (0.0.23 adds `trace.log`/`cmd.log` and event capture to show it). Separately, from this lane's
+tool shell the sandbox never starts, and now there is a reason: 0.3 s after `WindowsSandbox.exe` starts,
+`WindowsSandboxRemoteSession.exe` (package 0.8.107.0) dies, Application log APPCRASH, `System.IO.FileNotFoundException: Could
+not load file or assembly 'WinRT.Runtime, Version=2.2.0.0 ...'` at `InitializeGlobalVtableLookup` (event 17:50:53, test start
+17:50:52.78; the same crash is logged on 10-22 and earlier on 10-23, i.e. every start from here; `WinRT.Runtime.dll` exists
+in the package folder, its version unread). `guest trace.log` was never produced, so the guest never ran. Whether CireSnave's
+pop-up is this crash is UNVERIFIED: the same `Get-WinEvent` on his run would show it. Tests: the generated script is run on the host;
+the old form is the known-bad control (empty file for `hostname`'s code 0). Not run in a VM here. The next desktop run decides.
+
 ## Pending (needs the elevated setup, CireSnave)
 
 - `schtasks /Run` by a non-admin through the task security descriptor vs ACL'd named pipe.
