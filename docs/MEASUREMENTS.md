@@ -167,6 +167,15 @@ in the package folder, its version unread). `guest trace.log` was never produced
 pop-up is this crash is UNVERIFIED: the same `Get-WinEvent` on his run would show it. Tests: the generated script is run on the host;
 the old form is the known-bad control (empty file for `hostname`'s code 0). Not run in a VM here. The next desktop run decides.
 
+## Windows Sandbox host health (2026-10-24, main 3e7e6e2)
+
+- Package `MicrosoftWindows.WindowsSandbox` 0.8.107.0 (Store, Status Ok). From a tool shell `WindowsSandboxRemoteSession.exe` crashes
+  (Application log event 1000, exception 0xe0434352, `FileNotFoundException WinRT.Runtime 2.2.0.0`) on every start since 10-22.
+- The package is NOT missing the file: `WinRT.Runtime.dll` in its folder has assembly identity exactly 2.2.0.0 (file 2.2.0.48161),
+  read with `AssemblyName.GetAssemblyName`. So the load fails for the process, not for the package contents; cause UNKNOWN
+  (suspect launch context from a tool shell, e.g. WindowsApps access or package identity). Not yet tried: launch from a desktop
+  session (CireSnave's rerun is the control). No repair or update done.
+
 ## Pending (needs the elevated setup, CireSnave)
 
 - `schtasks /Run` by a non-admin through the task security descriptor vs ACL'd named pipe.

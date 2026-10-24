@@ -60,9 +60,10 @@ dependencies = [
 
 [[package]]
 name = "antspawn"
-version = "0.0.23"
+version = "0.0.24"
 dependencies = [
  "base64",
+ "capant",
  "clap",
  "ring",
  "serde",
@@ -97,6 +98,12 @@ name = "bytes"
 version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
+
+[[package]]
+name = "capant"
+version = "0.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "564e5071ea108688db7581f60102a0067f82af7e6a26363e079030723740d12b"
 
 [[package]]
 name = "cc"

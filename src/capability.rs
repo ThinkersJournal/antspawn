@@ -23,6 +23,11 @@ macro_rules! capabilities {
             pub fn id(self) -> &'static str {
                 match self { $(Capability::$variant => $id),+ }
             }
+
+            /// The id as the capability engine's type.
+            pub fn cap_id(self) -> capant::CapabilityId {
+                capant::CapabilityId::new(self.id()).expect("every capability id is a valid CapAnt id")
+            }
         }
 
         impl FromStr for Capability {
@@ -79,6 +84,13 @@ mod tests {
             assert_eq!(c.id().parse::<Capability>().unwrap(), c);
         }
         assert_eq!(Capability::ALL.len(), 8);
+    }
+
+    #[test]
+    fn every_id_is_a_valid_engine_id() {
+        for &c in Capability::ALL {
+            assert_eq!(c.cap_id().as_str(), c.id());
+        }
     }
 
     #[test]

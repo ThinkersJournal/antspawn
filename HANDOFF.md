@@ -29,7 +29,7 @@ PR1-22 merged (main 00b2aad); PR23 (0.0.23, head 2b4c758, branch pr23-sandbox-ti
 certified (`cargo test --test account -- --test-threads=1` 5/5). Board 261 DONE: rule off -> `account_has_no_network` FAILS, on -> passes.
 253: `windows-sandbox` TimedOut = empty `exit.code` for one-digit codes (fixed in PR23, host-proven). Separate and UNVERIFIED for
 CireSnave's pop-up: from a tool shell `WindowsSandboxRemoteSession.exe` 0.8.107.0 APPCRASHes 0.3 s after each start
-(`FileNotFoundException WinRT.Runtime 2.2.0.0`, Application log since 10-22), so the sandbox is unusable from here; roadmap row below.
+(`FileNotFoundException WinRT.Runtime 2.2.0.0`, Application log since 10-22), so the sandbox is unusable from here. Package is intact (WinRT.Runtime.dll identity is 2.2.0.0): see MEASUREMENTS, cause unknown.
 264 DONE: Actions:read granted; positive control passed (run 40047740331 listed, 1 queued job): JobSource VERIFIED (MEASUREMENTS).
 260 RULED (CireSnave "A: 1 B: 1"): JIT config reaches the runner by an anonymous pipe to a shim that sets
 `ACTIONS_RUNNER_INPUT_JITCONFIG` in that one child, never a file, never inherited; runner network only inside Windows Sandbox.

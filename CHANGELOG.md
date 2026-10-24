@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.0.24
+
+- The matrix is CapAnt's: `matrix.rs` wraps `capant::parse` (still refusing an unknown capability or a duplicate row), `Registry`
+  ranks and re-checks through `capant::evaluate`, and `examples/matrix.rs` is a CapAnt `Prober` run by `capant::generate` and
+  `capant::check`. `matrix/launchers.tsv` is unchanged and `matrix --check` is green. New rule from CapAnt: a `yes` row must name its
+  probe, or it grants nothing. `--check` ignores the `inherited_from` column that CapAnt adds to carried-over rows, until the first
+  regeneration commit.
+- Docs: `docs/MEASUREMENTS.md` records Windows Sandbox host health (package intact; the `WinRT.Runtime` crash is a tool-shell
+  launch-context failure, cause unknown).
+
 ## 0.0.23
 
 - Fix: `windows-sandbox` reported `TimedOut` for any job that exited with a one-digit code (so every success). `job.cmd` wrote
