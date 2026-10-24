@@ -25,22 +25,22 @@ Run on Sonnet, never Opus. You cannot push here: send the PM the SHA of each PR 
 10. `secrets[]` = names only, resolved at run time, never logged or written to env/files; none implemented (spec refused).
 
 ## State (2026-10-23)
-PR1-20 merged (main 5a6382b, 0.0.20; PR21 repin in flight). `account` is live and certified (`cargo test --test account -- --test-threads=1` 5/5).
-Merged: PR19 real `JobSource` (UNVERIFIED live; a live run needs a read-only token path, asked the PM), PR20 advisory CodeRipper `portfolio` CI job.
+PR1-22 merged (main 00b2aad, 0.0.22). `account` is live and certified (`cargo test --test account -- --test-threads=1` 5/5).
+PR19 `JobSource` ran live against `antspawn-proof` (`github_proof queued`): 403, the App lacks `Actions: read`. UNVERIFIED.
+HELD: do not re-run until the PM says CireSnave granted it (board 264). Dispatch hand-off waits on board 260.
 Waiting: PM's CodeRipper baseline findings: add ONE row here per failing rule. Watcher loop is pure logic; no real `Dispatch`.
 Board 261 (CireSnave, elevated): toggle the `antspawn-run: block all outbound` rule once to prove `network.off` comes from it.
 `windows-sandbox`: no job completes from a tool shell (`slangc_proof` VM leg fails here); CireSnave's desktop re-run of
 `slangc_proof` (PR14 CRT DLLs) is pending (board 253). GitHub App `antspawn-runner` (id 5441608, install 174476958), group
-`antspawn-account` (id 3), repo `antspawn-proof`: PM-made, leave in place. Key = DPAPI file
-`%LOCALAPPDATA%ntspawn\github-appntspawn-runner.key.dpapi`: never print or copy it. Runner v2.338.1 pinned, fetched, unpacked
-(`adapter::runner_pin`, `runner_cache`, `docs/RUNNER-PROVENANCE.md`); never started.
+`antspawn-account` (id 3), repo `antspawn-proof`: PM-made, leave in place. Key = DPAPI file in
+`%LOCALAPPDATA%\antspawn\github-app\`: never print or copy it. Adapter config for live runs: `%TEMP%\antspawn-proof\adapter.toml`.
+Runner v2.338.1 pinned, fetched, unpacked (`adapter::runner_pin`, `runner_cache`, `docs/RUNNER-PROVENANCE.md`); never started.
 
 ## Next
-1. Runner hand-off is BLOCKED on CireSnave (board 260): how the JIT config reaches the runner without a file or env (PM recommends a
-   memory-only pipe to a shim setting `ACTIONS_RUNNER_INPUT_JITCONFIG` in the one child), and network for the runner (PM recommends only
-   inside Windows Sandbox). Build neither until he rules. The watcher's `Dispatch` is that hand-off.
-2. Unblocked: run the PR19 `JobSource` live against `antspawn-proof` (example binary, record in `docs/MEASUREMENTS.md`);
-   record CireSnave's `slangc_proof` re-run; windows-sandbox probes + negative tests (needs an interactive desktop);
+1. After the PM says board 264 is done: `cargo run --example github_proof -- queued <adapter.toml> ThinkersJournal/antspawn-proof`
+   (queue a job there first for a positive control), record in `docs/MEASUREMENTS.md`, drop UNVERIFIED from the PR19 changelog note.
+2. Board 260 (JIT config hand-off, runner network) BLOCKED on CireSnave: build neither until he rules.
+3. Needs an interactive desktop / elevation: record CireSnave's `slangc_proof` re-run; windows-sandbox probes + negative tests;
    `schtasks /Run` non-admin vs named pipe.
 Work from a worktree off origin/main; the primary checkout stays on `main`.
 

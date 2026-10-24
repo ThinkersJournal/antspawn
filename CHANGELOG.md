@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.0.23
+
+- Fix: `windows-sandbox` reported `TimedOut` for any job that exited with a one-digit code (so every success). `job.cmd` wrote
+  `echo %RC%> exit.code`; cmd reads `0>` as a handle redirect, so `exit.code` stayed empty and `run` waited out `time_s`. The
+  script now writes `>file echo %RC%`. Host tests run the generated script (`job_script_in`) and include the old form as a
+  known-bad control.
+- `windows-sandbox`: the guest writes `trace.log` (start, command exit) and `cmd.log` (the command's stdout and stderr);
+  `collect` returns them as `windows-sandbox.trace.log` / `.cmd.log`. `run` fails at once if `WindowsSandbox.exe` itself
+  exits non-zero before the job finished. `slangc_proof` prints both logs and, on failure, Hyper-V/Sandbox/WER events.
+- `LICENSE-MIT` holder is now "The antspawn contributors" (CireSnave, decision 263; the company holder waits on ownership).
+
 ## 0.0.22
 
 - `github_proof queued <adapter.toml> <owner/repo>`: runs the PR19 `JobSource` live, read-only. First live run is recorded in

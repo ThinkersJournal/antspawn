@@ -115,6 +115,29 @@ fn through(l: &dyn Launcher, s: &JobSpec, results: &Path) -> (Exit, Phases) {
     )
 }
 
+/// Error and warning events from the Hyper-V, Windows Sandbox and Application (WER) logs since
+/// `since`, at most 40, for a run that did not finish: a pop-up dialog leaves its text there.
+fn events(since: std::time::SystemTime) -> String {
+    let secs = since
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let script = format!(
+        "$t=[DateTimeOffset]::FromUnixTimeSeconds({secs}).LocalDateTime; \
+         $n=Get-WinEvent -ListLog 'Microsoft-Windows-Hyper-V*','*Sandbox*','Application' -EA SilentlyContinue \
+           | Where-Object {{ $_.RecordCount -and $_.LogName -notlike '*VmSwitch*' }} | Select-Object -Expand LogName; \
+         Get-WinEvent -FilterHashtable @{{LogName=$n; StartTime=$t; Level=1,2,3}} -MaxEvents 40 -EA SilentlyContinue \
+           | ForEach-Object {{ '{{0:o}} {{1}} [{{2}}] {{3}}' -f $_.TimeCreated,$_.LogName,$_.ProviderName,$_.Message.Split([char]10)[0] }}"
+    );
+    let out = Command::new("powershell")
+        .args(["-NoProfile", "-Command", &script])
+        .output();
+    match out {
+        Ok(o) if !o.stdout.is_empty() => String::from_utf8_lossy(&o.stdout).into_owned(),
+        Ok(o) => format!("(none; stderr: {})", String::from_utf8_lossy(&o.stderr)),
+        Err(e) => format!("(powershell failed: {e})"),
+    }
+}
+
 fn proof(l: &dyn Launcher, set_up: bool, why: &str, base: &str) {
     if !set_up {
         println!("UNVERIFIED: {} is not set up ({why})", l.id());
@@ -148,6 +171,7 @@ fn proof(l: &dyn Launcher, set_up: bool, why: &str, base: &str) {
     assert!(!want.is_empty());
 
     let s = spec(&tools, &shader, base);
+    let started = std::time::SystemTime::now();
     let (exit, p) = through(l, &s, &results);
     // Printed before the asserts so a failing run still reports where its time went.
     println!(
@@ -159,6 +183,17 @@ fn proof(l: &dyn Launcher, set_up: bool, why: &str, base: &str) {
         p.destroy,
         p.total
     );
+    for log in ["trace.log", "cmd.log"] {
+        if let Ok(text) = std::fs::read_to_string(results.join(format!("{}.{log}", l.id()))) {
+            println!("GUEST {log}:\n{text}");
+        }
+    }
+    if exit != Exit::Code(0) {
+        println!(
+            "EVENTS since {started:?} (Hyper-V, Sandbox, WER):\n{}",
+            events(started)
+        );
+    }
     assert_eq!(exit, Exit::Code(0), "slangc through {}", l.id());
     let got = std::fs::read(results.join("out.spv")).expect("output collected");
     assert_eq!(
