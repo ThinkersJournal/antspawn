@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `examples/measure.rs` runs the `windows-sandbox` launcher (mapped folder + VC++ runtime) and prints each concurrent job's error. Measured: run 5.5 to 6.9 s, destroy 3 s, one VM at a time (`CO_E_APPSINGLEUSE`); see MEASUREMENTS.
+
 ## 0.0.36
 
 - `windows-sandbox`: `runner_wsb_config` (network on, only `in`, `out` and the pinned runner mapped) and `runner_job_script` (SAC off in the guest, copy the runner, start line, `exit.code` last). Unit-tested, not run in a VM; waits on board 321/322 (the JIT-config transport is not built).
