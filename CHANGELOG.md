@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45
+
+- docs: ROADMAP.md, the work source (HANDOFF is state, not a queue); one row per failing CodeRipper rule.
+
 ## 0.0.44
 
 - ci: CodeRipper portfolio workflow pin moved from 30e012b7 (v0.9.x era) to 74996d75, the commit v0.15.0 points to (`git rev-parse v0.15.0^{commit}` on a clone; the tag object is 0cac390d). Findings may change; listed in the PR. Version provisional (PM allocates).
