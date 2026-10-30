@@ -2,7 +2,7 @@
 
 ## 0.0.43
 
-- `adapter::jit_host::ListenerTransport`: the real `JitTransport` (`wsb ip`, then one connection to the shim's listener). Piece 3 of board 322, stacked on #44; **not run against a VM until board 321 is settled**. Version provisional (PM allocates).
+- `adapter::jit_host::ListenerTransport`: the real `JitTransport` (`wsb ip`, then one connection to the shim's listener). Piece 3 of board 322; **not run against a VM until board 321 is settled**. Version provisional (PM allocates).
 
 ## 0.0.42
 
