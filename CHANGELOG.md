@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.42
+
+- measure: `examples/toolchain.rs` and the toolchain-loading-cost numbers (MEASUREMENTS): mapped vs copied vs bare VM.
+
 ## 0.0.40
 
 - docs: HANDOFF rewritten to current state.
