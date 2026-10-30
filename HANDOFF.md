@@ -36,13 +36,13 @@ NOT built: any real `JitTransport` (`wsb exec` forwards NO stdin; board 322 asks
 Matrix: `--check` drops `inherited_from` from the generated side on purpose (PM ruling A). Do not remove the strip.
 **CireSnave is never asked to run a command**: run everything from your own shell; ask him only for UAC/elevation or a physical action.
 Never kill another lane's sandbox processes. No admin changes, no account creation (board 321 awaits him: runner for the runner-only tests).
-Waiting on the PM: CodeRipper baseline findings (add ONE row per failing rule). `gh-runner` exists but cannot be acted as from here: wsb-as-gh-runner is UNMEASURED.
+Open PRs (not merged by me): #41 ROADMAP.md (0.0.41, the work source; CodeRipper rows 14-17 added, SEC-002 not reproduced locally), #42 toolchain-cost measure (0.0.42, ROADMAP row 13: mapped 5.8 s vs copied 5.5 s vs bare VM 4.4 s run phase). Once merged, mark row 13 done(#42). SOAK wave 1 (CireSnave 2026-10-30): relaunched onto claude-peers + Synapse; after the relaunch send the PM "soak antspawn #1" on synapse and reply on the channel a message arrived on. `gh-runner` exists but cannot be acted as from here: wsb-as-gh-runner is UNMEASURED.
 GitHub App `antspawn-runner` (id 5441608, install 174476958), group `antspawn-account` (id 3), repo `antspawn-proof`: PM-made, leave in place.
 Key = DPAPI file in `%LOCALAPPDATA%\antspawn\github-app\`: never print or copy it. Adapter config for live runs: `%TEMP%\antspawn-proof\adapter.toml`.
 Runner v2.338.1 pinned, fetched, unpacked; never started. Lanes push their own branches only when the PM tasks it; never merge.
 Primary checkout: untracked `supertool` (origin unknown, not ours to delete).
 
-## Next
+## Next (the queue is `ROADMAP.md`; this list is a snapshot)
 0. Stale SAC control: re-run `cargo test --test windows_sandbox -- --test-threads=1` after the NEXT Windows update, record date and result in MEASUREMENTS
    "Stale control"; the claim stays withdrawn until the control bites again.
 1. 260 runner slice, blocked on board 322 (JIT transport): then the guest-side listener + shim, a real `JitTransport`, a real run against `antspawn-proof`,

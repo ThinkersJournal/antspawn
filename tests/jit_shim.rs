@@ -139,3 +139,121 @@ fn a_missing_runner_is_an_error_that_names_no_secret() {
     assert_eq!(out.status.code(), Some(2));
     assert!(!String::from_utf8_lossy(&out.stderr).contains("c2VjcmV0"));
 }
+
+// ---- listen mode (board 322, ruled A): exactly one connection, then nothing left to connect to ----
+
+use std::io::{BufRead, BufReader};
+use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::process::Child;
+use std::time::{Duration, Instant};
+
+/// Start the shim in listen mode on a free loopback port; returns the child and the bound address.
+fn listening_shim(want: &str) -> (Child, SocketAddr) {
+    let (runner, args) = expects(want);
+    let mut child = Command::new(SHIM)
+        .args(["--listen", "127.0.0.1:0"])
+        .arg(runner)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut line = String::new();
+    BufReader::new(child.stdout.as_mut().unwrap())
+        .read_line(&mut line)
+        .unwrap();
+    let addr = line
+        .trim()
+        .rsplit(' ')
+        .next()
+        .and_then(|a| a.parse().ok())
+        .unwrap_or_else(|| panic!("no address in {line:?}"));
+    (child, addr)
+}
+
+fn send_once(addr: SocketAddr, bytes: &[u8]) {
+    let mut s = TcpStream::connect(addr).expect("first connection is accepted");
+    s.write_all(bytes).unwrap();
+}
+
+#[test]
+fn listen_the_runner_child_sees_the_config_sent_once() {
+    let (child, addr) = listening_shim("c2VjcmV0Cg==");
+    send_once(addr, b"c2VjcmV0Cg==");
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert!(!String::from_utf8_lossy(&out.stderr).contains("c2VjcmV0"));
+    assert!(std::env::var_os(VAR).is_none());
+}
+
+#[test]
+fn listen_control_a_wrong_value_fails_the_same_check() {
+    let (child, addr) = listening_shim("b3RoZXI=");
+    send_once(addr, b"c2VjcmV0Cg==");
+    assert_eq!(child.wait_with_output().unwrap().status.code(), Some(3));
+}
+
+#[test]
+fn listen_a_connection_after_the_first_is_refused_and_the_listener_has_exited() {
+    let (mut child, addr) = listening_shim("c2VjcmV0Cg==");
+    send_once(addr, b"c2VjcmV0Cg==");
+    assert_eq!(child.wait().unwrap().code(), Some(0), "the shim exited");
+    assert!(
+        TcpStream::connect_timeout(&addr, Duration::from_secs(2)).is_err(),
+        "nothing listens after the one connection"
+    );
+}
+
+#[test]
+fn listen_a_second_connection_while_the_first_is_open_is_refused_and_never_read() {
+    let (child, addr) = listening_shim("c2VjcmV0Cg==");
+    let mut first = TcpStream::connect(addr).unwrap();
+    // The shim closes its listener as soon as it has accepted `first`; a second connection that slips
+    // into the backlog before that is reset, one after it is refused. Either way it gets no service.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match TcpStream::connect_timeout(&addr, Duration::from_secs(1)) {
+            Err(_) => break,
+            Ok(mut second) => {
+                let _ = second.write_all(b"b3RoZXI=");
+                second
+                    .set_read_timeout(Some(Duration::from_millis(200)))
+                    .ok();
+                assert!(Instant::now() < deadline, "second connection stayed open");
+            }
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    first.write_all(b"c2VjcmV0Cg==").unwrap();
+    drop(first);
+    // Exit 0 means the runner saw the FIRST connection's value, not the second's.
+    assert_eq!(child.wait_with_output().unwrap().status.code(), Some(0));
+}
+
+#[test]
+fn listen_a_config_that_is_not_one_is_refused_before_the_runner_starts() {
+    let (child, addr) = listening_shim("x");
+    send_once(addr, b"not base64 !");
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert!(!String::from_utf8_lossy(&out.stderr).contains("not base64 !"));
+}
+
+#[test]
+fn control_a_naive_listener_would_accept_a_second_connection() {
+    // Proves the "second connection is refused" checks above can fail: a listener that keeps
+    // listening serves both.
+    let naive = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = naive.local_addr().unwrap();
+    assert!(TcpStream::connect(addr).is_ok());
+    assert!(TcpStream::connect(addr).is_ok());
+}
+
+#[test]
+fn listen_needs_an_address() {
+    let out = Command::new(SHIM)
+        .args(["--listen", "not-an-address", "x"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+}
