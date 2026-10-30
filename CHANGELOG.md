@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.42
+
+- `adapter::jit_host`: the host end of the board 322 transport: `guest_ip` (`wsb ip --id`, accepts only one unambiguous IPv4), `send_once` (connect with retry until the guest listener is up, write the config once, close; errors never contain it), `deliver_to_sandbox`. Loopback-tested with controls; **not run against a VM until board 321 is settled**; the `wsb ip` output format is unmeasured. Version number provisional (PM allocates); branches off main, independent of #43.
+
 ## 0.0.41
 
 - `spawn-jit-shim --listen <addr:port>`: guest-side one-shot listener for the JIT config (board 322 ruled A). Accepts exactly one connection, closes the listener, refuses a second or later one, exits after one. Stdin mode unchanged. Tested on loopback with controls; **not run in a VM until board 321 is settled**. Version number provisional (PM allocates).
