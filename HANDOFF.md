@@ -44,7 +44,7 @@ runs: `%TEMP%\antspawn-proof\adapter.toml`. Runner v2.338.1 pinned, fetched, unp
 Primary checkout: untracked `supertool` (origin unknown, not ours to delete).
 
 ## Next
-1. 260 runner slice, remaining (PM order; SAC switch-off is in 0.0.31 per ruling A, conditions in DESIGN): the runner + shim INSIDE the sandbox (JIT
+1. 260 runner slice, remaining (PM order; SAC switch-off is in 0.0.32 per ruling A, conditions in DESIGN): the runner + shim INSIDE the sandbox (JIT
    config delivery without a file or argument: `wsb exec` has no stdin as far as measured, find out), a real `Dispatch` against `antspawn-proof`, network
    only inside the sandbox. A FULL runner job (not `--version`) in 3 consecutive VMs before it is called working. Stop and tell the PM if anything touches
    host policy. Then tell the commy lane (R14) a runner exists.

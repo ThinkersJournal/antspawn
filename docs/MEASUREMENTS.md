@@ -212,7 +212,7 @@ Replaces the earlier "host health" note, whose "cause UNKNOWN / suspect launch c
 - Known-bad control: the same `probe.cmd` on the host answers 0 for read, write, exists and connect (and 10 for a missing file), so the
   VM's "no" answers could have been "yes". Fork probe: a signed `ping` started by PowerShell, then `destroy`, then `wsb list` empty within 30 s.
 
-## Smart App Control switched off inside the guest (2026-10-24, 0.0.31 on main 0325da0)
+## Smart App Control switched off inside the guest (2026-10-24, 0.0.32 on main 0325da0)
 
 - `Runner.Listener.exe --version` in a VM (runner v2.338.1 mapped read-only): first start `FileLoadException Runner.Listener.dll ... An
   Application Control policy has blocked this file (0x800711C7)`, later starts "blocked by your organization's Device Guard policy"

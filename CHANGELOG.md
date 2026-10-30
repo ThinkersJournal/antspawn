@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.0.31
+## 0.0.32
 
 - `windows-sandbox`: `job.cmd` switches Smart App Control off INSIDE the guest first (SYSTEM, repeated until `0x0`), so the runner's unsigned
   binaries and repeated unsigned starts work (board 260, PM ruling A). Host policy is never touched: the commands exist only in the guest
