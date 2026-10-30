@@ -25,30 +25,31 @@ Run on Sonnet, never Opus. You cannot push here: send the PM the SHA of each PR 
 10. `secrets[]` = names only, resolved at run time, never logged or written to env/files; none implemented (spec refused).
 
 ## State (2026-10-30)
-main d758d10 (0.0.33, capant 0.1.0). `account` live and certified (`cargo test --test account -- --test-threads=1` 5/5). `windows-sandbox`
-works from a tool shell (drives package `wsb.exe`: start / exec -r System / stop), 5 matrix `yes`; `job.cmd` switches Smart App Control off INSIDE
-the guest only (0.0.32, DESIGN; never on the host, stop and tell the PM if anything touches host policy). Detail and numbers: MEASUREMENTS, DESIGN.
-260 (CireSnave "A: 1 B: 1"): `spawn-jit-shim` + `adapter::handoff::start_shim` built and tested. Built, not run live: `runner_wsb_config` + `runner_job_script` (network on,
-runner copied in the guest); the real `JobSource` is `HttpGithub::queued`. NOT built: the JIT-config channel into the guest (`wsb exec`
-forwards NO stdin, measured 0.0.35; board 322 decides, PM recommends a one-shot guest listener), the shim in the sandbox, a real `Dispatch`.
+main 00080a8 (0.0.39). `account` live and certified (`cargo test --test account -- --test-threads=1` 5/5). `windows-sandbox` drives package `wsb.exe`
+(start / exec -r System / stop), 5 matrix `yes`; one VM at a time (CO_E_APPSINGLEUSE). `job.cmd` switches Smart App Control off INSIDE the guest only
+(never on the host: stop and tell the PM if anything touches host policy).
+**The claim "the guest blocks unsigned exes" is WITHDRAWN (0.0.39):** the raw-guest control of `unsigned_exes_*` fails on main (guest in SAC evaluation 0x2,
+every start allowed; sandbox layer replaced 10-28). Cause partly open (old layer unreadable); evidence in MEASUREMENTS "Stale control". Matrix rows don't rest on it.
+260 (CireSnave "A: 1 B: 1"): built and tested, not run live: `spawn-jit-shim`, `adapter::handoff::start_shim`, `runner_wsb_config`, `runner_job_script`,
+`adapter::dispatch::SandboxDispatch` (+ `RunnerBackend`, `WsbBackend`, `RunnerVm`, trait `JitTransport`); the real `JobSource` is `HttpGithub::queued`.
+NOT built: any real `JitTransport` (`wsb exec` forwards NO stdin; board 322 asks CireSnave to allow a one-shot guest listener, UNANSWERED), the shim inside the sandbox.
 Matrix: `--check` drops `inherited_from` from the generated side on purpose (PM ruling A). Do not remove the strip.
 **CireSnave is never asked to run a command**: run everything from your own shell; ask him only for UAC/elevation or a physical action.
-Never kill another lane's sandbox processes. No admin changes, no account creation (board item 321 awaits him: runner for the runner-only tests).
-`gh-runner` exists but cannot be acted as from here: wsb-as-gh-runner is UNMEASURED.
-Waiting on the PM: CodeRipper baseline findings (add ONE row per failing rule).
+Never kill another lane's sandbox processes. No admin changes, no account creation (board 321 awaits him: runner for the runner-only tests).
+Waiting on the PM: CodeRipper baseline findings (add ONE row per failing rule). `gh-runner` exists but cannot be acted as from here: wsb-as-gh-runner is UNMEASURED.
 GitHub App `antspawn-runner` (id 5441608, install 174476958), group `antspawn-account` (id 3), repo `antspawn-proof`: PM-made, leave in place.
 Key = DPAPI file in `%LOCALAPPDATA%\antspawn\github-app\`: never print or copy it. Adapter config for live runs: `%TEMP%\antspawn-proof\adapter.toml`.
-Runner v2.338.1 pinned, fetched, unpacked; never started. Lanes CAN push their own branches now (as ciresnave-bot) when the PM tasks it; never merge.
+Runner v2.338.1 pinned, fetched, unpacked; never started. Lanes push their own branches only when the PM tasks it; never merge.
 Primary checkout: untracked `supertool` (origin unknown, not ours to delete).
 
 ## Next
-0. Stale SAC control (PM, 2026-10-29): re-run `cargo test --test windows_sandbox -- --test-threads=1` after the NEXT Windows update and record the date and result in
-   MEASUREMENTS "Stale control"; keep the guest-blocks-unsigned-exes claim withdrawn until the control bites again. Never touch host policy.
-1. 260 runner slice (PM order): runner + shim INSIDE the sandbox (JIT config delivery without a file or argument: `wsb exec` has no stdin as far
-   as measured, find out), a real `Dispatch` against `antspawn-proof`, network only inside the sandbox. A FULL runner job (not `--version`) in 3
-   consecutive VMs before it is called working. Then tell the commy lane (R14) a runner exists.
-2. Self-hosted runner for `windows_sandbox`/`account` tests (rule 5.1g/h): waits on board 321; until then named "runner-only, not run by CI".
+0. Stale SAC control: re-run `cargo test --test windows_sandbox -- --test-threads=1` after the NEXT Windows update, record date and result in MEASUREMENTS
+   "Stale control"; the claim stays withdrawn until the control bites again.
+1. 260 runner slice, blocked on board 322 (JIT transport): then the guest-side listener + shim, a real `JitTransport`, a real run against `antspawn-proof`,
+   a FULL runner job in 3 consecutive VMs before it is called working, then tell the commy lane (R14).
+2. Self-hosted runner for `windows_sandbox`/`account` tests (5.1g/h): blocked on board 321; until then "runner-only, not run by CI".
 3. Needs elevation: `schtasks /Run` non-admin vs named pipe.
+If 321/322 are still unanswered at session start: idle is fine (PM said so 2026-10-30); check `CIRESNAVE-DECISIONS.md` for them.
 Work from a worktree off origin/main; the primary checkout stays on `main`.
 
 ## Unknowns to measure, not guess
