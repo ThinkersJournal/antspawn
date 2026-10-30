@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.35
+
+- docs: measured that `wsb exec` forwards no stdin (board 260 hand-off needs another channel into the guest).
+
 ## 0.0.34
 
 - docs: HANDOFF rewritten to current state.
