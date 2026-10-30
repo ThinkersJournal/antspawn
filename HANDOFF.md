@@ -31,7 +31,7 @@ main bba0da5 (0.0.28); branch `pr29-sandbox-failfast` (0.0.29) is the PM's to ga
 client; the launcher now drives the package's `wsb.exe` (start / exec -r System / stop). slangc proof passes, isolation probes pass
 (`cargo test --test windows_sandbox -- --test-threads=1`), orphan VMs are reaped. Detail and numbers: MEASUREMENTS, DESIGN.
 Matrix: `windows-sandbox` has 5 `yes` (0.0.30, probes = `cmd` scripts of signed tools: the guest's Smart App Control blocks an unsigned exe after its first start,
-so never run your own unsigned exe twice in a VM; MEASUREMENTS). `spawn-probe` answers "no" with exit 10.
+job.cmd now switches it off in the guest, see DESIGN). `spawn-probe` answers "no" with exit 10.
 260 (CireSnave "A: 1 B: 1"): `spawn-jit-shim` + `adapter::handoff::start_shim` built and tested (PR27). NOT built: the shim INSIDE
 Windows Sandbox (the only place the runner gets network; `wsb exec`/`share` make it possible now) and a real `Dispatch`.
 Matrix: `--check` drops `inherited_from` from the generated side on purpose (PM ruling A). Do not remove the strip.
@@ -44,9 +44,14 @@ runs: `%TEMP%\antspawn-proof\adapter.toml`. Runner v2.338.1 pinned, fetched, unp
 Primary checkout: untracked `supertool` (origin unknown, not ours to delete).
 
 ## Next
-1. 260 runner slice (PM order): the shim inside the sandbox via `wsb exec`/`share` (it is unsigned: ONE start per VM, or stage it signed), then a real
-   `Dispatch` against `antspawn-proof` (App perms VERIFIED), network only inside the sandbox. Then tell the commy lane (R14) a runner exists.
-2. Needs elevation: `schtasks /Run` non-admin vs named pipe.
+1. 260 runner slice, remaining (PM order; SAC switch-off is in 0.0.32 per ruling A, conditions in DESIGN): the runner + shim INSIDE the sandbox (JIT
+   config delivery without a file or argument: `wsb exec` has no stdin as far as measured, find out), a real `Dispatch` against `antspawn-proof`, network
+   only inside the sandbox. A FULL runner job (not `--version`) in 3 consecutive VMs before it is called working. Stop and tell the PM if anything touches
+   host policy. Then tell the commy lane (R14) a runner exists.
+2. Self-hosted runner job for the runner-only tests (PM 2026-10-30, rule 5.1g/h): `cargo test --test windows_sandbox -- --test-threads=1` and `--test account`
+   on a Windows 11 Pro/Enterprise runner with Windows Sandbox enabled (needs virtualization in the CPU/firmware). Whether the restricted `gh-runner` account can
+   start `wsb.exe` is UNMEASURED: measure before asking. Until it exists these stay named UNVERIFIED, never `#[ignore]`.
+3. Needs elevation: `schtasks /Run` non-admin vs named pipe.
 Work from a worktree off origin/main; the primary checkout stays on `main`.
 
 ## Unknowns to measure, not guess

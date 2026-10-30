@@ -287,3 +287,156 @@ fn the_matrix_probe_script_finds_every_leak_on_the_host() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ---- Smart App Control (board 260, PM ruling A) ----
+
+const BLOCKED: &str = "1073751882";
+const SAC_VALUE: &str = r"HKLM\SYSTEM\CurrentControlSet\Control\CI\Policy";
+
+/// What the host's code-integrity policy looks like, read-only: the Smart App Control state and the
+/// name and hash of every active policy file. (`CiTool --list-policies` needs elevation on the host,
+/// which this never uses.)
+fn host_policy_snapshot() -> String {
+    let ps = format!(
+        r"(reg query '{SAC_VALUE}' /v VerifiedAndReputablePolicyState) -join '|'; Get-ChildItem 'C:\Windows\System32\CodeIntegrity\CiPolicies\Active' -ErrorAction SilentlyContinue | Sort-Object Name | ForEach-Object {{ $_.Name + ' ' + (Get-FileHash $_.FullName).Hash }}"
+    );
+    let out = Command::new("powershell")
+        .args(["-NoProfile", "-Command", &ps])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(
+        text.contains("VerifiedAndReputablePolicyState"),
+        "could not read the host policy state: {text} {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    text
+}
+
+/// A folder with an unsigned exe (and the Visual C++ runtime a clean VM lacks) and `twice.cmd`,
+/// which starts that exe three times and records each exit code in `C:\res.txt`.
+fn unsigned_exe_dir(tag: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("antspawn-sac-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::copy(
+        env!("CARGO_BIN_EXE_spawn-probe"),
+        dir.join("spawn-probe.exe"),
+    )
+    .unwrap();
+    let sys = Path::new(&std::env::var("SystemRoot").unwrap()).join("System32");
+    for n in ["vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll"] {
+        let _ = std::fs::copy(sys.join(n), dir.join(n));
+    }
+    let mut s = String::from("@echo off\r\n");
+    for i in 1..=3 {
+        s += &format!(
+            "C:\\probe\\spawn-probe.exe sleep 0 >nul 2>&1\r\n>>C:\\res.txt echo start{i}=%errorlevel%\r\n"
+        );
+    }
+    std::fs::write(dir.join("twice.cmd"), s).unwrap();
+    dir
+}
+
+fn twice_spec(dir: &Path) -> JobSpec {
+    JobSpec::from_toml(&format!(
+        "[job]\nname = \"twice\"\ncmd = ['cmd', '/c', 'C:\\probe\\twice.cmd']\n[limits]\ntime_s = 240\n\
+         [[mount]]\nhost = '{}'\nguest = 'C:\\probe'\nmode = \"ro\"\n\
+         [[output]]\nguest = 'C:\\res.txt'\nname = \"res.txt\"\n",
+        dir.display()
+    ))
+    .unwrap()
+}
+
+#[test]
+fn unsigned_exes_start_repeatedly_in_three_consecutive_sandboxes_and_host_policy_is_untouched() {
+    if !available() {
+        return;
+    }
+    let _g = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+    let before = host_policy_snapshot();
+
+    // Control, with no switch-off at all (raw `wsb`, never the launcher): the unsigned exe starts
+    // once and is then blocked, so the passes below could have failed.
+    let dir = unsigned_exe_dir("control");
+    let out = dir.join("out");
+    std::fs::create_dir_all(&out).unwrap();
+    let cfg = format!(
+        "<Configuration><Networking>Disable</Networking><MappedFolders>\
+         <MappedFolder><HostFolder>{}</HostFolder><SandboxFolder>C:\\probe</SandboxFolder><ReadOnly>true</ReadOnly></MappedFolder>\
+         <MappedFolder><HostFolder>{}</HostFolder><SandboxFolder>C:\\o</SandboxFolder><ReadOnly>false</ReadOnly></MappedFolder>\
+         </MappedFolders></Configuration>",
+        dir.display(),
+        out.display()
+    );
+    let started = Command::new(wsb())
+        .args(["start", "-c", &cfg])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&started.stdout).into_owned();
+    let id = text
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("Id:"))
+        .map(|v| v.trim().to_string())
+        .unwrap_or_else(|| panic!("no sandbox id: {text}"));
+    let ran = Command::new(wsb())
+        .args(["exec", "--id", &id, "-r", "System", "-c"])
+        .arg(r"cmd.exe /c C:\probe\twice.cmd & copy /y C:\res.txt C:\o\res.txt")
+        .output();
+    let _ = Command::new(wsb()).args(["stop", "--id", &id]).output();
+    ran.unwrap();
+    let control = std::fs::read_to_string(out.join("res.txt")).unwrap_or_default();
+    println!("CONTROL (no switch-off):\n{control}");
+    assert!(
+        control.contains("start1=0") && control.contains(&format!("start2={BLOCKED}")),
+        "an unsigned exe must start once and then be blocked without the switch-off: {control}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    wait_until(
+        "the control sandbox to be gone",
+        Duration::from_secs(60),
+        || listed().is_empty(),
+    );
+
+    // Three consecutive VMs through the launcher: every start works, and the guest's own trace
+    // shows the state going 1 -> 0 (the switch-off took effect, in the guest).
+    for n in 1..=3 {
+        let dir = unsigned_exe_dir(&format!("vm{n}"));
+        let results = dir.join("results");
+        let s = twice_spec(&dir);
+        let mut env = WindowsSandbox.provision(&s).unwrap();
+        let exit = env.run(&s).unwrap();
+        env.collect(&s, &results).unwrap();
+        env.destroy().unwrap();
+        let res = results_of(&results);
+        let trace =
+            std::fs::read_to_string(results.join("windows-sandbox.trace.log")).unwrap_or_default();
+        println!("VM {n}: exit={exit:?}\n{res}\n{trace}");
+        assert_eq!(exit, Exit::Code(0), "VM {n}");
+        for i in 1..=3 {
+            assert!(
+                res.contains(&format!("start{i}=0")),
+                "VM {n} start {i}: {res}"
+            );
+        }
+        let (b, a) = trace
+            .split_once("[sac-after")
+            .expect("trace names sac-after");
+        // 1 = enforce, 2 = evaluation (both seen on fresh guests); either way not off.
+        assert!(
+            b.contains("0x1") || b.contains("0x2"),
+            "guest state before: {trace}"
+        );
+        assert!(a.contains("0x0"), "guest state after: {trace}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    wait_until("no sandbox left", Duration::from_secs(60), || {
+        listed().is_empty()
+    });
+
+    assert_eq!(
+        host_policy_snapshot(),
+        before,
+        "the host's code-integrity state changed"
+    );
+}
