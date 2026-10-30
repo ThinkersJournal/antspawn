@@ -50,7 +50,7 @@ Primary checkout: untracked `supertool` (origin unknown, not ours to delete).
 Work from a worktree off origin/main; the primary checkout stays on `main`.
 
 ## Unknowns to measure, not guess
-Windows Sandbox concurrency on this build; GPU in Windows Sandbox / Hyper-V GPU-P; Sandboxie-Plus with named pipes;
+GPU in Windows Sandbox / Hyper-V GPU-P; Sandboxie-Plus with named pipes;
 toolchain loading cost per job (golden image vs mapped cache).
 
 ## Toolchain gotchas (this box)

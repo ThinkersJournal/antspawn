@@ -31,6 +31,9 @@ fn probe() -> PathBuf {
 }
 
 fn spec(id: &str, arg: &[&str]) -> JobSpec {
+    if id == "windows-sandbox" {
+        return sandbox_spec(arg);
+    }
     let host = probe();
     let guest = "spawn-probe.exe";
     // The naive launcher ignores mounts and runs the command on the host, so it needs the real
@@ -48,6 +51,30 @@ fn spec(id: &str, arg: &[&str]) -> JobSpec {
         "[job]\nname = \"measure\"\ncmd = [{}]\n[limits]\ntime_s = 60\n[[mount]]\nhost = '{}'\nguest = \"{guest}\"\nmode = \"ro\"\n",
         cmd.join(", "),
         host.display()
+    ))
+    .expect("measure spec")
+}
+
+/// Windows Sandbox maps folders, not files, at absolute guest paths: map a temp folder holding a
+/// copy of the probe (the target folder holds far more than the job needs).
+fn sandbox_spec(arg: &[&str]) -> JobSpec {
+    let dir = std::env::temp_dir().join(format!("antspawn-measure-probe-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("probe dir");
+    std::fs::copy(probe(), dir.join("spawn-probe.exe")).expect("copy probe");
+    // A clean VM lacks the Visual C++ runtime the probe links dynamically.
+    let sys =
+        std::path::Path::new(&std::env::var("SystemRoot").expect("SystemRoot")).join("System32");
+    for n in ["vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll"] {
+        let _ = std::fs::copy(sys.join(n), dir.join(n));
+    }
+    let cmd: Vec<String> = std::iter::once(r"C:\probe\spawn-probe.exe".to_owned())
+        .chain(arg.iter().map(|a| a.to_string()))
+        .map(|a| format!("'{a}'"))
+        .collect();
+    JobSpec::from_toml(&format!(
+        "[job]\nname = \"measure\"\ncmd = [{}]\n[limits]\ntime_s = 120\n[[mount]]\nhost = '{}'\nguest = 'C:\\probe'\nmode = \"ro\"\n",
+        cmd.join(", "),
+        dir.display()
     ))
     .expect("measure spec")
 }
@@ -145,7 +172,13 @@ fn main() -> ExitCode {
         let hs: Vec<_> = (0..n)
             .map(|i| {
                 let (l, sleeper, results) = (&l, &sleeper, &results);
-                sc.spawn(move || one(l.as_ref(), sleeper, &results.join(format!("par{i}"))).is_ok())
+                sc.spawn(move || {
+                    let r = one(l.as_ref(), sleeper, &results.join(format!("par{i}")));
+                    if let Err(e) = &r {
+                        println!("MEASURE concurrent job {i} failed: {e}");
+                    }
+                    r.is_ok()
+                })
             })
             .collect();
         hs.into_iter().map(|h| h.join().unwrap_or(false)).collect()

@@ -240,7 +240,15 @@ Replaces the earlier "host health" note, whose "cause UNKNOWN / suspect launch c
   file, argument or variable (proposal to the PM, not built). One VM, one run: a single measurement, no control that stdin works elsewhere
   (host `findstr` reads piped stdin by definition).
 
+## Windows Sandbox: latency and concurrency (2026-10-29, main 55221cc, 0.0.36)
+
+- `cargo run --example measure -- windows-sandbox 2` on this host, debug build, probe plus VC++ runtime DLLs in a mapped folder (the example
+  could not run this launcher before: it mapped a file at a relative guest path; fixed). Sequential, 2 rounds, no-op job: median
+  provision 2 to 4 ms, **run 5.5 to 6.9 s** (VM start to `exit.code`), collect 4 to 5 ms, **destroy 3.0 s**. Two runs, not a distribution.
+- **Concurrency: not available.** Two jobs started at once: one ran, the other failed at `wsb start` with `0x800401F6
+  CO_E_APPSINGLEUSE` ("Application cannot be run more than once"); wall 9.8 s (about serial). So Windows Sandbox runs one VM at a time on
+  this build, and the launcher must never claim `concurrent`. Control: the same example runs 2 sequential rounds fine. `wsb list` empty after.
+
 ## Pending (needs the elevated setup, CireSnave)
 
 - `schtasks /Run` by a non-admin through the task security descriptor vs ACL'd named pipe.
-- `cargo run --example measure -- windows-sandbox`: start latency, cleanup, concurrency; negative tests for it.
