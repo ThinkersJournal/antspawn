@@ -1,8 +1,24 @@
 # Changelog
 
-## 0.0.41
+## 0.0.45
 
 - docs: ROADMAP.md, the work source (HANDOFF is state, not a queue); one row per failing CodeRipper rule.
+
+## 0.0.44
+
+- ci: CodeRipper portfolio workflow pin moved from 30e012b7 (v0.9.x era) to 74996d75, the commit v0.15.0 points to (`git rev-parse v0.15.0^{commit}` on a clone; the tag object is 0cac390d). Findings may change; listed in the PR. Version provisional (PM allocates).
+
+## 0.0.43
+
+- `adapter::jit_host::ListenerTransport`: the real `JitTransport` (`wsb ip`, then one connection to the shim's listener). Piece 3 of board 322; **not run against a VM until board 321 is settled**. Version provisional (PM allocates).
+
+## 0.0.42
+
+- `adapter::jit_host`: the host end of the board 322 transport: `guest_ip` (`wsb ip --id`, accepts only one unambiguous IPv4), `send_once` (connect with retry until the guest listener is up, write the config once, close; errors never contain it), `deliver_to_sandbox`. Loopback-tested with controls; **not run against a VM until board 321 is settled**; the `wsb ip` output format is unmeasured. Version number provisional (PM allocates); branches off main, independent of #43.
+
+## 0.0.41
+
+- `spawn-jit-shim --listen <addr:port>`: guest-side one-shot listener for the JIT config (board 322 ruled A). Accepts exactly one connection, closes the listener, refuses a second or later one, exits after one. Stdin mode unchanged. Tested on loopback with controls; **not run in a VM until board 321 is settled**. Version number provisional (PM allocates).
 
 ## 0.0.40
 
