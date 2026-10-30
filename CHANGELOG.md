@@ -8,6 +8,10 @@
   control that is blocked. `docs/DESIGN.md` states the hypervisor is the isolation boundary.
   The new test is runner-only, not run by CI (it needs Windows Sandbox); it was run locally (MEASUREMENTS). A self-hosted runner for it awaits board item 321.
 
+## 0.0.31
+
+- Dependency: `capant` 0.0.7 -> 0.0.16 (newest on crates.io). No API change needed; `matrix --check` still up to date.
+
 ## 0.0.30
 
 - `windows-sandbox` matrix probes (`probes::sandbox`), run as `cmd` scripts of signed tools: the guest runs Smart App Control, which blocks an
