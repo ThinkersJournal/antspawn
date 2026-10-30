@@ -24,7 +24,7 @@ State is `open`, `held(by what)` or `done(PR)`. Add rows here, not to HANDOFF.
 | 17 | CodeRipper `SEC-002` (gitleaks `private-key`, High) at `src/adapter/github_client.rs:591` in the CI sweep. Not reproduced locally: line 591 of the blob is a doc comment, and the `BEGIN RSA PRIVATE KEY` literals are test fixtures (lines 726, 727, 810; payload `QUJD`, i.e. `ABC`). Find what gitleaks matched, then fix or record a disposition. Never silence the rule | open |
 | 18 | GPU in Windows Sandbox / Hyper-V GPU-P: unmeasured | open |
 | 19 | Sandboxie-Plus with named pipes: unmeasured | open |
-| 20 | CodeRipper `patent-sweep-record` (Medium/High): any version change fails it until `docs/PATENT-SWEEP.md` exists (first seen with the v0.15.0 pin, #46). Take the required content from CodeRipper's rule docs, not guessed | open |
+| 20 | Patent sweep, `docs/PATENT-SWEEP.md` (CireSnave, board 286: before any release; PM's `PATENT-SWEEP-PROCESS.md`; CodeRipper `patent-sweep-record`, Medium/High, fires on every version change until it exists and names the manifest's version line). Not a stub: the rule wants headings for ideas, queries and hits, and a file that exists is not a sweep. The lane lists 5 to 25 ideas, searches with dated queries, reads the closest independent claims with `C:/Projects/tools/patent-claims.py`, records a verdict per hit (`unread` is not `clear`). antspawn is unreleased, so released projects are swept first; required before the first crates.io publish or tag | open, pre-release |
 
 Sweep source for 14 to 17: `coderipper sweep --profile portfolio` on `f08a257` (CI run 41015493600, coderipper 0.9.6); a local run
 (0.8.19) reproduces rows 14 to 16 exactly and cannot run gitleaks.

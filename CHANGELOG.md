@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.47
+
+- docs: ROADMAP row 20 scheduled as a pre-release requirement (patent sweep per `PATENT-SWEEP-PROCESS.md`); no sweep record is written yet. Version provisional (PM allocates).
+
 ## 0.0.45
 
 - docs: ROADMAP.md, the work source (HANDOFF is state, not a queue); one row per failing CodeRipper rule.
