@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.0.37
 
 - `examples/measure.rs` runs the `windows-sandbox` launcher (mapped folder + VC++ runtime) and prints each concurrent job's error. Measured: run 5.5 to 6.9 s, destroy 3 s, one VM at a time (`CO_E_APPSINGLEUSE`); see MEASUREMENTS.
 
