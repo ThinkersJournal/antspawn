@@ -17,7 +17,7 @@ State is `open`, `held(by what)` or `done(PR)`. Add rows here, not to HANDOFF.
 | 10 | 260 runner slice: shim inside the sandbox (guest listener `spawn-jit-shim --listen` and the real `JitTransport`, `ListenerTransport`, are done: #43, #44, #45), a real run against `antspawn-proof`, a FULL runner job in 3 consecutive VMs, then tell the commy lane (R14) | held(board 322) |
 | 11 | Self-hosted runner for `windows_sandbox` / `account` tests (rule 5.1g/h); until then named "runner-only, not run by CI" | held(board 321) |
 | 12 | `schtasks /Run` by a non-admin vs a named pipe | held(elevation, CireSnave) |
-| 13 | Measure toolchain loading cost per job: golden image vs mapped cache | open |
+| 13 | Measure toolchain loading cost per job: mapped vs copied vs bare VM measured (#42); a golden image is still unmeasured | open |
 | 14 | CodeRipper `reachability`: 11 findings, `adapter::{dispatch,github,runner_pin,watcher}` and `launchers::windows_sandbox` items with no caller in this crate | open |
 | 15 | CodeRipper `unused-return-values`: `watcher::tick` return value discarded at 5 of 18 call sites | open |
 | 16 | CodeRipper `lint-suppression`: `allow(dead_code)` without a reason at `examples/matrix.rs:66` | open |
