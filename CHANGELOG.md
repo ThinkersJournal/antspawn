@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.39
+
+- docs: the 0.0.32 / 0.0.30 statements that the Windows Sandbox guest blocks unsigned executables (and that `job.cmd`'s Smart App Control switch-off is needed) are
+  **withdrawn until re-proven**: on 2026-10-29 the raw-guest control of `unsigned_exes_start_repeatedly_*` fails on unmodified main (guest in
+  evaluation, 0x2, every start allowed). Evidence and the open mechanism question: MEASUREMENTS "Stale control". The isolation matrix rows do not rest on it.
+
 ## 0.0.37
 
 - `examples/measure.rs` runs the `windows-sandbox` launcher (mapped folder + VC++ runtime) and prints each concurrent job's error. Measured: run 5.5 to 6.9 s, destroy 3 s, one VM at a time (`CO_E_APPSINGLEUSE`); see MEASUREMENTS.

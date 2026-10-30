@@ -225,6 +225,26 @@ Replaces the earlier "host health" note, whose "cause UNKNOWN / suspect launch c
   starts of an unsigned exe exit 0, `[sac-after tries=1]` in 7 and `tries=2` in 2; the host's state value and the SHA-256 of every active
   policy file identical before and after each run. Not measured: a full runner job (needs the live adapter, next PR).
 
+## Stale control: the raw guest no longer blocks unsigned exes (2026-10-29, main 033823a, wsb package 0.8.107.0)
+
+- **Symptom.** `cargo test --test windows_sandbox -- --test-threads=1` fails its raw-`wsb` control (`start1=start2=start3=0`, expected 0 then 1073751882) on
+  unmodified main 033823a and on PR #38; the other 4 tests pass. Last recorded green run of it: 2026-10-24 (layer below). Matrix probes do not use this control.
+- **Measured today (10:38-10:45 PM local, raw `wsb`, no launcher code, no switch-off):** 7 fresh VMs read `VerifiedAndReputablePolicyState = 0x2` at start;
+  an unsigned exe started 24/24 times in one VM over 2 minutes (every 5 s, state stayed `0x2`) and 3/3 in each of 3 more VMs. The guest's active SAC policy is
+  `{1283ac0f...} VerifiedAndReputableDesktopEvaluation` (event 3096), not the enforcing `VerifiedAndReputableDesktop` named on 2026-10-24. Guest OS 10.0.26100.9818.
+  Guest `CI\Policy` carries `SAC_PreviousState=0xffffffff` and `OOBESafetyTimer` = 2026-10-30T03:10:31Z (76 s after the host's boot).
+- **What changed on the host since 2026-10-24** (read, not guessed): the Sandbox layer `1ef1ee21` (created 10-22 09:33) was superseded by layer `adff5482`
+  (created 10-28 16:57, last written 10-29 20:09:37); a new snapshot `583c85a8` was created 10-29 20:12:34; KB5132402 installed 10-28; Endpoint Security policy
+  `{60fd87f8}` rewritten 10-28 16:09; two reboots 10-29 20:07 and 20:09; KB5127936 (2026-10 preview) installed 10-29 20:12. The package is the same 0.8.107.0.
+  Host SAC state is `0` with `SAC_PreviousState=1`, key last written **2026-07-30 16:07**, so the host's own setting did not change and is not the cause.
+- **Working hypothesis, not established:** the guest image was rebuilt on 10-28/10-29 and its SAC evaluation restarted, so the guest audits instead of enforcing.
+  Nothing here separates the 10-28 layer from the 10-29 update, and no way was found to boot the old layer for a before/after.
+- **Positive control failed to bite.** Forcing `VerifiedAndReputablePolicyState=1` plus `CiTool --refresh` inside one fresh guest read back `0x1` but the
+  exe still started 3/3, so this probe has not yet been shown able to see a block in today's image. One VM; not conclusive either way.
+- **Consequence.** Documents that said the guest blocks unsigned exes are annotated (DESIGN) and withdrawn (CHANGELOG 0.0.39) until re-proven. The 3-consecutive-VM
+  pass in "Smart App Control switched off inside the guest" is vacuous today (it would pass without the switch-off). Not measured: whether the runner's unsigned DLLs
+  load without the switch-off in this image; whether enforcement returns later (evaluation periods end).
+
 ## Matrix regeneration (2026-10-24, main 767b614, capant 0.0.7)
 
 - `cargo run --example matrix` on this host, `account` set up: its probes ran (read, write, write+exists, fork, connect) and

@@ -53,6 +53,11 @@ naming the event, when the Application log shows a `WindowsSandbox*.exe` crash a
 
 ### Smart App Control inside the guest (board 260, PM ruling A, 2026-10-24)
 
+> **Status 2026-10-29: the claim below is NOT currently re-proven.** It was measured on 2026-10-24 against sandbox layer `1ef1ee21` (created
+> 2026-10-22). Since the layer was replaced on 2026-10-28 the raw-guest control no longer holds: a fresh guest reads
+> `VerifiedAndReputablePolicyState = 0x2` with the *Evaluation* policy active and an unsigned exe starts every time (see MEASUREMENTS,
+> "Stale control"). Read the paragraph as what was true on 2026-10-24. The switch-off is harmless but its need is unproven today.
+
 The Windows Sandbox image enforces Smart App Control (`VerifiedAndReputableDesktop`). It lets an unsigned executable
 start once and then blocks it, and it blocks unsigned managed DLLs outright, so the GitHub runner (14 unsigned files
 in v2.338.1, among them `Runner.Listener.dll`) cannot run in it. The first thing `job.cmd` does, as SYSTEM inside the
