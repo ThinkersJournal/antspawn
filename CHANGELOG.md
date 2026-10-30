@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.31
+
+- Dependency: `capant` 0.0.7 -> 0.0.16 (newest on crates.io). No API change needed; `matrix --check` still up to date.
+
 ## 0.0.30
 
 - `windows-sandbox` matrix probes (`probes::sandbox`), run as `cmd` scripts of signed tools: the guest runs Smart App Control, which blocks an

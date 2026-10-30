@@ -1,6 +1,6 @@
 [package]
 name = "antspawn"
-version = "0.0.30"
+version = "0.0.31"
 edition = "2024"
 rust-version = "1.94"
 description = "A sandboxed job runner: one clean environment per job, only what the job declares, outputs collected, environment destroyed. Launchers are certified by tests, never asserted."
@@ -20,7 +20,7 @@ path = "src/bin/spawn-runner.rs"
 
 [dependencies]
 base64 = "0.23.1"
-capant = "0.0.7"
+capant = "0.0.16"
 clap = { version = "4.6.7", features = ["derive"] }
 ring = "0.17.14"
 serde = { version = "1.0.229", features = ["derive"] }
