@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.0.36
 
-- `windows-sandbox`: `runner_wsb_config` (network on, only `in`, `out` and the pinned runner mapped) and `runner_job_script` (SAC off in the guest, copy the runner, start line, `exit.code` last). Transport of the JIT config is not built (board 322).
+- `windows-sandbox`: `runner_wsb_config` (network on, only `in`, `out` and the pinned runner mapped) and `runner_job_script` (SAC off in the guest, copy the runner, start line, `exit.code` last). Unit-tested, not run in a VM; waits on board 321/322 (the JIT-config transport is not built).
 
 ## 0.0.35
 
