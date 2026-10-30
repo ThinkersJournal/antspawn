@@ -75,3 +75,14 @@ recording `[sac-before]` / `[sac-after tries=N]` in the guest `trace.log`.
   run: the `VerifiedAndReputablePolicyState` value and the name and SHA-256 of every file in
   `CodeIntegrity\CiPolicies\Active` (`CiTool --list-policies` needs elevation on the host, which nothing here uses).
 - The control for the test is a raw `wsb` VM with no switch-off, where the unsigned exe's second start exits 1073751882.
+
+### JIT config transport into the sandbox (board 322, CireSnave 2026-10-30, "A: one-shot listener in the sandbox")
+
+`wsb exec` forwards no stdin, so the anonymous pipe of board 260 cannot cross into the guest. `spawn-jit-shim --listen <addr:port> <runner>` binds inside
+the guest, accepts EXACTLY ONE connection and drops the listener before reading a byte, so a second connection, or one after the first, is refused and the
+process exits after one. The host finds the guest address with `wsb ip` and sends the config once. The value stays in memory, never a file, never an argument,
+set only in the runner child's environment, never logged. Network is only inside the sandbox (board 260 ruling b).
+
+**Residue:** another process in the guest could connect before the host does and so supply (not read) the config. Argument for accepting it: the sandbox is
+fresh per job and runs only our code until the runner starts; the listener binds only after boot; a wrong config makes the runner fail to register rather than
+leak anything. Not run live until board 321 is settled.
