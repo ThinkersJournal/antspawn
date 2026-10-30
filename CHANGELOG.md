@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.44
+
+- ci: CodeRipper portfolio workflow pin moved from 30e012b7 (v0.9.x era) to 74996d75, the commit v0.15.0 points to (`git rev-parse v0.15.0^{commit}` on a clone; the tag object is 0cac390d). Findings may change; listed in the PR. Version provisional (PM allocates).
+
 ## 0.0.43
 
 - `adapter::jit_host::ListenerTransport`: the real `JitTransport` (`wsb ip`, then one connection to the shim's listener). Piece 3 of board 322; **not run against a VM until board 321 is settled**. Version provisional (PM allocates).
