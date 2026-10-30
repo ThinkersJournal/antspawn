@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.41
+
+- `spawn-jit-shim --listen <addr:port>`: guest-side one-shot listener for the JIT config (board 322 ruled A). Accepts exactly one connection, closes the listener, refuses a second or later one, exits after one. Stdin mode unchanged. Tested on loopback with controls; **not run in a VM until board 321 is settled**. Version number provisional (PM allocates).
+
 ## 0.0.40
 
 - docs: HANDOFF rewritten to current state.
