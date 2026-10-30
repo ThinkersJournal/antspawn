@@ -40,6 +40,10 @@ pub enum LaunchError {
 pub trait Environment {
     /// Run the job's command to completion (or until the time limit).
     fn run(&mut self, spec: &JobSpec) -> Result<Exit, LaunchError>;
+    /// What the environment captured of the job's stdout and stderr (nothing, by default).
+    fn streams(&mut self) -> crate::streams::Streams {
+        crate::streams::Streams::default()
+    }
     /// Copy the declared outputs into `results` on the host.
     fn collect(&mut self, spec: &JobSpec, results: &Path) -> Result<(), LaunchError>;
     /// Disband the environment. Implementations must also disband on `Drop` (panic, ctrl-c).

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.49
+
+- **Breaking for callers of `spawn run`:** a refusal exits **125** (was 2) and another spawn-side failure **126** (was 2); job exit codes, 124 (timeout) and 137 (killed) are unchanged. New `<results>/spawn-result.json` (authoritative status), `stdout.tail` and `stderr.tail` (last 64 KiB; `windows-sandbox` combined). Output names `stdout.tail`, `stderr.tail`, `spawn-result.json` are reserved. `naive` now gives its job a null stdin and captures output instead of inheriting it. `account` streams need a redeployed `spawn-runner` (UNVERIFIED). MEASUREMENTS: the "sandbox never starts from a tool shell" statements are marked superseded (0.0.29). Version provisional (PM allocates).
+
 ## 0.0.46
 
 - measure: `examples/toolchain.rs` and the toolchain-loading-cost numbers (MEASUREMENTS): mapped vs copied vs bare VM.

@@ -3,6 +3,11 @@
 Each entry: what was measured, over what, on which ref, on which date. Nothing here certifies a
 launcher; only a `yes` row in `matrix/launchers.tsv` does.
 
+> **Superseded statements (corrected 2026-10-30):** the lines below that say the Windows Sandbox "never starts" or "cannot run" from a tool shell (the 2026-10-22 entry's
+> "which a tool shell lacks", the 2026-10-23 entry's "cannot run from a tool shell", and the 2026-10-24 slangc entry's "from this lane's tool shell the sandbox never starts") describe the
+> `WindowsSandbox.exe <file>.wsb` stub. Since 0.0.29 the launcher drives `wsb.exe`, and the `windows-sandbox` tests run from a tool shell without elevation (see "Windows
+> Sandbox crash: cause found" below, the 2/2 run). The older entries stay as history.
+
 ## 2026-10-22: runner mechanics without the restricted account (ref: PR2b branch, 0.0.4)
 
 `spawn-runner serve` run as the invoking user against a throwaway root (`tests/runner.rs`, Windows,

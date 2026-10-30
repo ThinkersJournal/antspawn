@@ -25,6 +25,7 @@ State is `open`, `held(by what)` or `done(PR)`. Add rows here, not to HANDOFF.
 | 18 | GPU in Windows Sandbox / Hyper-V GPU-P: unmeasured | open |
 | 19 | Sandboxie-Plus with named pipes: unmeasured | open |
 | 20 | CodeRipper `patent-sweep-record` (Medium/High): any version change fails it until `docs/PATENT-SWEEP.md` exists (first seen with the v0.15.0 pin, #46). Take the required content from CodeRipper's rule docs, not guessed | open |
+| 22 | `spawn run` result contract for OverMind's seam. (a) Refusal (no certified/provisioned launcher, unmet need) exits **125**, any other spawn-side failure (bad spec, copy/cleanup) **126**; a job's own code passes through untouched (0..255, else 1), timeout 124, kill 137; the old shared code 2 is gone from `run`. Job codes 125/126 look the same, so (b) `--results/spawn-result.json` is authoritative: `{schema, status: exited|timed_out|killed|refused|error, exit_code, launcher, message, streams}`. (c) `--results/stdout.tail` + `stderr.tail` (last 64 KiB; `windows-sandbox` gives one combined `stdout.tail`, `combined: true`). Names reserved: an `[[output]]` called one of them is refused. Tests: refusal 125 vs job exit 2 (negative control), bad spec 126, naive streams; `account` streams need the redeployed `spawn-runner` and a runner-only run (UNVERIFIED) | done(#pending), account/sandbox stream runs open |
 
 Sweep source for 14 to 17: `coderipper sweep --profile portfolio` on `f08a257` (CI run 41015493600, coderipper 0.9.6); a local run
 (0.8.19) reproduces rows 14 to 16 exactly and cannot run gitleaks.

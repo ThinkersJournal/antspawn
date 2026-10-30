@@ -86,3 +86,15 @@ set only in the runner child's environment, never logged. Network is only inside
 **Residue:** another process in the guest could connect before the host does and so supply (not read) the config. Argument for accepting it: the sandbox is
 fresh per job and runs only our code until the runner starts; the listener binds only after boot; a wrong config makes the runner fail to register rather than
 leak anything. Not run live until board 321 is settled.
+
+## `spawn run` result contract (ROADMAP row 22)
+
+Exit code of `spawn run`: the job's own code passes through (0 to 255; anything else becomes 1), **124** the time limit, **137** killed, **125** refused (no launcher
+certified or provisioned for the needs, an unmet need on a named launcher), **126** any other spawn-side failure (unreadable or invalid spec, copy or cleanup failure).
+Job codes share the number space, so a job that itself exits 125 or 126 looks the same by code: **`<results>/spawn-result.json` is authoritative**
+(`status` is `exited`, `timed_out`, `killed`, `refused` or `error`; `exit_code` is the job's real code; `launcher`; `message`; `streams`). `<results>/stdout.tail` and
+`stderr.tail` hold the last 64 KiB of each stream where the launcher captures them (`naive`, `account`); `windows-sandbox` redirects both into one file, so it returns that as
+`stdout.tail` with `combined: true` (and still copies the guest's `cmd.log`/`trace.log` as `windows-sandbox.*.log`). `spawn-result.json`, `stdout.tail` and `stderr.tail` are
+reserved result names (a spec output with one is refused). `spawn providers` / `spawn check` tell a refusal from a bad spec without a VM. The account runner on the box must be
+redeployed to return `account` streams.
+

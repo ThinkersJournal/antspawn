@@ -11,11 +11,12 @@
 //!   `isolation.*` capabilities).
 
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command};
+use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use crate::launcher::{Environment, Exit, LaunchError, Launcher};
 use crate::spec::JobSpec;
+use crate::streams::{Streams, Tail, settle};
 
 /// The unisolated launcher.
 #[derive(Debug, Default)]
@@ -36,12 +37,20 @@ impl Launcher for Naive {
     fn provision(&self, _spec: &JobSpec) -> Result<Box<dyn Environment>, LaunchError> {
         let dir = Naive::work_dir();
         std::fs::create_dir_all(&dir)?;
-        Ok(Box::new(NaiveEnv { dir }))
+        Ok(Box::new(NaiveEnv {
+            dir,
+            out: Tail::new(),
+            err: Tail::new(),
+            readers: Vec::new(),
+        }))
     }
 }
 
 struct NaiveEnv {
     dir: PathBuf,
+    out: Tail,
+    err: Tail,
+    readers: Vec<std::thread::JoinHandle<()>>,
 }
 
 impl NaiveEnv {
@@ -59,9 +68,28 @@ impl Environment for NaiveEnv {
         let mut cmd = Command::new(&spec.job.cmd[0]);
         cmd.args(&spec.job.cmd[1..])
             .current_dir(cwd)
-            .envs(&spec.job.env);
+            .envs(&spec.job.env)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
         let mut child = cmd.spawn()?;
+        // Detached readers: a descendant that keeps a pipe open must not stall the run.
+        if let Some(p) = child.stdout.take() {
+            self.readers.push(self.out.capture(p));
+        }
+        if let Some(p) = child.stderr.take() {
+            self.readers.push(self.err.capture(p));
+        }
         wait(&mut child, spec.limits.time_s.map(Duration::from_secs))
+    }
+
+    fn streams(&mut self) -> Streams {
+        settle(&mut self.readers, Duration::from_millis(500));
+        Streams {
+            stdout: Some(self.out.snapshot()),
+            stderr: Some(self.err.snapshot()),
+            combined: false,
+        }
     }
 
     fn collect(&mut self, spec: &JobSpec, results: &Path) -> Result<(), LaunchError> {
