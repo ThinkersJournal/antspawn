@@ -272,6 +272,17 @@ Replaces the earlier "host health" note, whose "cause UNKNOWN / suspect launch c
   CO_E_APPSINGLEUSE` ("Application cannot be run more than once"); wall 9.8 s (about serial). So Windows Sandbox runs one VM at a time on
   this build, and the launcher must never claim `concurrent`. Control: the same example runs 2 sequential rounds fine. `wsb list` empty after.
 
+## Toolchain loading cost per job (2026-10-30, main f08a257 + examples/toolchain.rs, 0.0.42)
+
+- `cargo run --example toolchain 3` on this host, debug build, Windows Sandbox, sequential, variants round-robined, median of 3. Toolchain =
+  `slangc.exe` + `slang*`/`glslang*` DLLs + VC++ runtime = **54.2 MiB** (VulkanSDK 1.4.350.0). Job compiles a trivial compute shader to SPIR-V.
+- Run phase (VM start to `exit.code`): `none` (hostname.exe, the VM alone) **4354 ms**; `mapped` (slangc straight from the read-only mapped folder)
+  **5780 ms**; `copied` (xcopy the folder to the guest disk, then run from there) **5483 ms**. Total with provision, collect and destroy: 6842 / 8297 / 7287 ms.
+- So the toolchain costs about **1.1 to 1.4 s per job** over the bare VM, and copying it in first is **not slower** than running from the
+  mapping (within noise: 3 rounds, no spread reported). There is no "golden image" to compare: Windows Sandbox boots a fresh image every
+  job, so the only choices are a mapped cache or a copy. Not measured: a larger toolchain (the 54 MiB set is small), a cold host file cache, `account`.
+- Control: the `none` variant uses the same launcher, folders mapped and VM lifecycle; a launcher or mount problem would fail it, and it ran.
+
 ## Pending (needs the elevated setup, CireSnave)
 
 - `schtasks /Run` by a non-admin through the task security descriptor vs ACL'd named pipe.

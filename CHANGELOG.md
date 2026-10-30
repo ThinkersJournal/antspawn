@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.46
+
+- measure: `examples/toolchain.rs` and the toolchain-loading-cost numbers (MEASUREMENTS): mapped vs copied vs bare VM.
+
 ## 0.0.45
 
 - docs: ROADMAP.md, the work source (HANDOFF is state, not a queue); one row per failing CodeRipper rule.
