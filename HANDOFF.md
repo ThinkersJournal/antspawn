@@ -48,7 +48,10 @@ Primary checkout: untracked `supertool` (origin unknown, not ours to delete).
    config delivery without a file or argument: `wsb exec` has no stdin as far as measured, find out), a real `Dispatch` against `antspawn-proof`, network
    only inside the sandbox. A FULL runner job (not `--version`) in 3 consecutive VMs before it is called working. Stop and tell the PM if anything touches
    host policy. Then tell the commy lane (R14) a runner exists.
-2. Needs elevation: `schtasks /Run` non-admin vs named pipe.
+2. Self-hosted runner job for the runner-only tests (PM 2026-10-30, rule 5.1g/h): `cargo test --test windows_sandbox -- --test-threads=1` and `--test account`
+   on a Windows 11 Pro/Enterprise runner with Windows Sandbox enabled (needs virtualization in the CPU/firmware). Whether the restricted `gh-runner` account can
+   start `wsb.exe` is UNMEASURED: measure before asking. Until it exists these stay named UNVERIFIED, never `#[ignore]`.
+3. Needs elevation: `schtasks /Run` non-admin vs named pipe.
 Work from a worktree off origin/main; the primary checkout stays on `main`.
 
 ## Unknowns to measure, not guess
