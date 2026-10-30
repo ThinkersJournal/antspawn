@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.39
+
+- docs: the 0.0.32 / 0.0.30 statements that the Windows Sandbox guest blocks unsigned executables (and that `job.cmd`'s Smart App Control switch-off is needed) are
+  **withdrawn until re-proven**: on 2026-10-29 the raw-guest control of `unsigned_exes_start_repeatedly_*` fails on unmodified main (guest in
+  evaluation, 0x2, every start allowed). Evidence and the open mechanism question: MEASUREMENTS "Stale control". The isolation matrix rows do not rest on it.
+
 ## 0.0.38
 
 - `adapter::dispatch`: the real `Dispatch` (`SandboxDispatch`), one runner VM per minted JIT config on a background thread, `busy()` until it ends, outcomes without the secret. Two seams: `RunnerBackend` (real one `WsbBackend`, built on the new `windows_sandbox::RunnerVm`) and `JitTransport`. **No real transport yet**: it waits on board 322. Unit-tested with fakes; not run in a VM.
