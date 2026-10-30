@@ -28,8 +28,9 @@ Run on Sonnet, never Opus. You cannot push here: send the PM the SHA of each PR 
 main d758d10 (0.0.33, capant 0.1.0). `account` live and certified (`cargo test --test account -- --test-threads=1` 5/5). `windows-sandbox`
 works from a tool shell (drives package `wsb.exe`: start / exec -r System / stop), 5 matrix `yes`; `job.cmd` switches Smart App Control off INSIDE
 the guest only (0.0.32, DESIGN; never on the host, stop and tell the PM if anything touches host policy). Detail and numbers: MEASUREMENTS, DESIGN.
-260 (CireSnave "A: 1 B: 1"): `spawn-jit-shim` + `adapter::handoff::start_shim` built and tested. NOT built: runner + shim INSIDE Windows Sandbox
-(the only place the runner gets network) and a real `Dispatch`.
+260 (CireSnave "A: 1 B: 1"): `spawn-jit-shim` + `adapter::handoff::start_shim` built and tested. Built, not run live: `runner_wsb_config` + `runner_job_script` (network on,
+runner copied in the guest); the real `JobSource` is `HttpGithub::queued`. NOT built: the JIT-config channel into the guest (`wsb exec`
+forwards NO stdin, measured 0.0.35; board 322 decides, PM recommends a one-shot guest listener), the shim in the sandbox, a real `Dispatch`.
 Matrix: `--check` drops `inherited_from` from the generated side on purpose (PM ruling A). Do not remove the strip.
 **CireSnave is never asked to run a command**: run everything from your own shell; ask him only for UAC/elevation or a physical action.
 Never kill another lane's sandbox processes. No admin changes, no account creation (board item 321 awaits him: runner for the runner-only tests).
