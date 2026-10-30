@@ -6,6 +6,11 @@
   **withdrawn until re-proven**: on 2026-10-29 the raw-guest control of `unsigned_exes_start_repeatedly_*` fails on unmodified main (guest in
   evaluation, 0x2, every start allowed). Evidence and the open mechanism question: MEASUREMENTS "Stale control". The isolation matrix rows do not rest on it.
 
+## 0.0.38
+
+- `adapter::dispatch`: the real `Dispatch` (`SandboxDispatch`), one runner VM per minted JIT config on a background thread, `busy()` until it ends, outcomes without the secret. Two seams: `RunnerBackend` (real one `WsbBackend`, built on the new `windows_sandbox::RunnerVm`) and `JitTransport`. **No real transport yet**: it waits on board 322. Unit-tested with fakes; not run in a VM.
+- `windows-sandbox`: `WsbEnv::run` split into `run_hooked` (calls a hook with the sandbox id once the VM is up); behaviour for ordinary jobs unchanged.
+
 ## 0.0.37
 
 - `examples/measure.rs` runs the `windows-sandbox` launcher (mapped folder + VC++ runtime) and prints each concurrent job's error. Measured: run 5.5 to 6.9 s, destroy 3 s, one VM at a time (`CO_E_APPSINGLEUSE`); see MEASUREMENTS.
