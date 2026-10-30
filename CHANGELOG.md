@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.33
+
+- Dependency: `capant` 0.0.16 -> 0.1.0 (breaking upstream: result types, `Role` and `Outcome` are `#[non_exhaustive]`). `cargo check --all-targets` needed no change here; `matrix --check` still up to date.
+
 ## 0.0.32
 
 - `windows-sandbox`: `job.cmd` switches Smart App Control off INSIDE the guest first (SYSTEM, repeated until `0x0`), so the runner's unsigned
