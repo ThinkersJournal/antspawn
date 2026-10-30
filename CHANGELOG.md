@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.48
+
+- docs: `docs/ACCOUNT-DISPATCH.md`, the design note for an account-backed Dispatch (ROADMAP row 21); docs only, nothing run. Version provisional (PM allocates).
+
 ## 0.0.46
 
 - measure: `examples/toolchain.rs` and the toolchain-loading-cost numbers (MEASUREMENTS): mapped vs copied vs bare VM.
