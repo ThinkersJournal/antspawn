@@ -390,9 +390,36 @@ fn plain(what: &str, s: &str) -> Result<(), LaunchError> {
 
 /// The batch file the VM runs at logon: environment, scratch dirs, the command, output copies,
 /// then `exit.code` last, so its presence means everything else is already in `out`.
-pub fn job_script(spec: &JobSpec) -> Result<String, LaunchError> {
-    job_script_in(spec, GUEST_OUT, false)
+fn job_script(spec: &JobSpec) -> Result<String, LaunchError> {
+    job_script_with(spec, GUEST_OUT, false, GUEST_SAC_OFF)
 }
+
+/// Switches Smart App Control off INSIDE the guest, as its first act (board 260, PM ruling A,
+/// 2026-10-24). The Windows Sandbox image enforces `VerifiedAndReputableDesktop`, which blocks the
+/// GitHub runner's unsigned binaries (`Runner.Listener.dll`: 0x800711C7) and any unsigned exe after
+/// its first start. The VM is disposable and the hypervisor, not Smart App Control, is what keeps a
+/// job off the host. These commands must never run on the host: this text exists only in the `job.cmd`
+/// that `job_script` writes into the mapped `in` folder and `wsb exec` runs in the guest; every
+/// host-side use of the script builder passes no prelude (`job_script_in`), and a test counts the uses.
+const GUEST_SAC_OFF: &str = concat!(
+    "set \"CIKEY=HKLM\\SYSTEM\\CurrentControlSet\\Control\\CI\\Policy\"\r\n",
+    ">> \"%OUT%\\trace.log\" echo [sac-before]\r\n",
+    "reg query \"%CIKEY%\" /v VerifiedAndReputablePolicyState >> \"%OUT%\\trace.log\" 2>&1\r\n",
+    // The guest's own evaluation can rewrite the state while it is still settling after boot
+    // (measured: a single write was lost once in four fresh VMs), so write until it reads 0x0.
+    "set SACTRIES=0\r\n",
+    ":sacloop\r\n",
+    "set /a SACTRIES+=1\r\n",
+    "reg add \"%CIKEY%\" /v VerifiedAndReputablePolicyState /t REG_DWORD /d 0 /f >nul 2>&1\r\n",
+    "CiTool.exe --refresh < nul >nul 2>&1\r\n",
+    "reg query \"%CIKEY%\" /v VerifiedAndReputablePolicyState | findstr /c:\"0x0\" >nul 2>&1\r\n",
+    "if not errorlevel 1 goto sacdone\r\n",
+    "if %SACTRIES% lss 8 (ping -n 3 127.0.0.1 >nul & goto sacloop)\r\n",
+    ">> \"%OUT%\\trace.log\" echo [sac-failed after %SACTRIES% tries]\r\n",
+    ":sacdone\r\n",
+    ">> \"%OUT%\\trace.log\" echo [sac-after tries=%SACTRIES%]\r\n",
+    "reg query \"%CIKEY%\" /v VerifiedAndReputablePolicyState >> \"%OUT%\\trace.log\" 2>&1\r\n",
+);
 
 /// `job_script` with the output folder and the final `shutdown` as parameters, so a test can run
 /// the very same script on the host (a temp folder, no shutdown).
@@ -402,7 +429,19 @@ pub fn job_script(spec: &JobSpec) -> Result<String, LaunchError> {
 /// `echo %RC%> file` a one-digit `RC` is read as a handle number (`0>`), the file stays empty and
 /// the host waits for an exit code that never comes (measured 2026-10-24, decision 253).
 pub fn job_script_in(spec: &JobSpec, out: &str, shutdown: bool) -> Result<String, LaunchError> {
-    let mut s = format!("@echo off\r\n>> \"{out}\\trace.log\" echo [start] %DATE% %TIME%\r\n");
+    job_script_with(spec, out, shutdown, "")
+}
+
+fn job_script_with(
+    spec: &JobSpec,
+    out: &str,
+    shutdown: bool,
+    prelude: &str,
+) -> Result<String, LaunchError> {
+    let mut s = format!(
+        "@echo off\r\nset \"OUT={out}\"\r\n>> \"{out}\\trace.log\" echo [start] %DATE% %TIME%\r\n"
+    );
+    s += prelude;
     for (k, v) in &spec.job.env {
         plain("env name", k)?;
         plain("env value", v)?;
@@ -601,6 +640,36 @@ mod tests {
             let e = WindowsSandbox.provision(&spec("")).err().unwrap();
             assert!(matches!(e, LaunchError::NotProvisioned { .. }), "{e}");
         }
+    }
+
+    #[test]
+    fn only_the_guest_script_switches_smart_app_control_off() {
+        let s = spec("");
+        let guest = job_script(&s).unwrap();
+        assert!(guest.contains("VerifiedAndReputablePolicyState /t REG_DWORD /d 0"));
+        assert!(guest.contains("CiTool.exe --refresh"));
+        // The script builder the host-run tests use passes no prelude.
+        let host = job_script_in(&s, "C:\\h\\out", false).unwrap();
+        assert!(
+            !host.contains("VerifiedAndReputable") && !host.contains("CiTool"),
+            "{host}"
+        );
+        // The switch is named in exactly one use: `job_script`. (This file's own text, minus this test.)
+        let src = include_str!("windows_sandbox.rs");
+        let code = &src[..src.find("#[cfg(test)]").unwrap()];
+        assert_eq!(
+            code.matches("GUEST_SAC_OFF").count(),
+            2,
+            "the definition and one use"
+        );
+        assert_eq!(
+            code.matches("job_script_with(").count(),
+            3,
+            "two callers and the definition"
+        );
+        // `job_script` is private and only `provision` calls it; `job.cmd` is only ever run by `wsb exec`.
+        assert_eq!(code.matches("job_script(spec)").count(), 1);
+        assert!(!code.contains("pub fn job_script("));
     }
 
     #[test]

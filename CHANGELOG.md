@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.31
+
+- `windows-sandbox`: `job.cmd` switches Smart App Control off INSIDE the guest first (SYSTEM, repeated until `0x0`), so the runner's unsigned
+  binaries and repeated unsigned starts work (board 260, PM ruling A). Host policy is never touched: the commands exist only in the guest
+  script, a unit test counts their uses, and the new test compares the host's state before and after 3 consecutive VMs, with a raw-`wsb`
+  control that is blocked. `docs/DESIGN.md` states the hypervisor is the isolation boundary.
+
 ## 0.0.30
 
 - `windows-sandbox` matrix probes (`probes::sandbox`), run as `cmd` scripts of signed tools: the guest runs Smart App Control, which blocks an

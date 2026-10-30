@@ -212,6 +212,19 @@ Replaces the earlier "host health" note, whose "cause UNKNOWN / suspect launch c
 - Known-bad control: the same `probe.cmd` on the host answers 0 for read, write, exists and connect (and 10 for a missing file), so the
   VM's "no" answers could have been "yes". Fork probe: a signed `ping` started by PowerShell, then `destroy`, then `wsb list` empty within 30 s.
 
+## Smart App Control switched off inside the guest (2026-10-24, 0.0.31 on main 0325da0)
+
+- `Runner.Listener.exe --version` in a VM (runner v2.338.1 mapped read-only): first start `FileLoadException Runner.Listener.dll ... An
+  Application Control policy has blocked this file (0x800711C7)`, later starts "blocked by your organization's Device Guard policy"
+  (rc 1073751882); the same with `Networking` enabled. 14 files of that runner are `NotSigned` on the host (233 `Valid`).
+- In the guest as SYSTEM, `reg add ...\CI\Policy /v VerifiedAndReputablePolicyState /d 0` plus `CiTool --refresh` took the state from 0x2
+  to 0x0, after which `Runner.Listener.exe` started (and stopped at a read-only `C:\runner\_diag`, a mapping choice, not a block).
+- A fresh guest reads 0x2 (evaluation) or 0x1 at job start. One write was lost once in four fresh VMs (the state came back as 0x1), so
+  `job.cmd` repeats the write until it reads 0x0. `unsigned_exes_start_repeatedly_in_three_consecutive_sandboxes_and_host_policy_is_untouched`:
+  control (raw `wsb`, no switch-off) start1=0, start2=start3=1073751882; through the launcher 9 consecutive VMs (3 runs x 3), every one of 3
+  starts of an unsigned exe exit 0, `[sac-after tries=1]` in 7 and `tries=2` in 2; the host's state value and the SHA-256 of every active
+  policy file identical before and after each run. Not measured: a full runner job (needs the live adapter, next PR).
+
 ## Matrix regeneration (2026-10-24, main 767b614, capant 0.0.7)
 
 - `cargo run --example matrix` on this host, `account` set up: its probes ran (read, write, write+exists, fork, connect) and

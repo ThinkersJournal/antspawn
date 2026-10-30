@@ -50,3 +50,23 @@ nothing the job does as SYSTEM outlives the VM or reaches the host except throug
 declared `rw` mounts. A launcher that is killed outright leaves its VM; every run first stops the sandboxes recorded in
 `%TEMP%\antspawn-wsb-<id>.owner` whose owning process is gone (only its own, by id). `run` also fails within about 2 s,
 naming the event, when the Application log shows a `WindowsSandbox*.exe` crash after the request.
+
+### Smart App Control inside the guest (board 260, PM ruling A, 2026-10-24)
+
+The Windows Sandbox image enforces Smart App Control (`VerifiedAndReputableDesktop`). It lets an unsigned executable
+start once and then blocks it, and it blocks unsigned managed DLLs outright, so the GitHub runner (14 unsigned files
+in v2.338.1, among them `Runner.Listener.dll`) cannot run in it. The first thing `job.cmd` does, as SYSTEM inside the
+guest, is write `VerifiedAndReputablePolicyState = 0` under the guest's `CI\Policy` key and run `CiTool --refresh`,
+repeating until it reads back `0x0` (the guest's own evaluation can undo one write while it settles after boot) and
+recording `[sac-before]` / `[sac-after tries=N]` in the guest `trace.log`.
+
+- **The hypervisor, not Smart App Control, is the isolation boundary for jobs.** The control that is relaxed is
+  defence in depth inside a disposable VM that already runs untrusted jobs; reads of host paths, writes outside the
+  mapped folders and (except where the 260 ruling allows it) the network stay off, and the probes that certify the
+  launcher run with the switch-off in place.
+- **Never on the host.** The commands exist only in the text `job_script` puts into the mapped `in` folder as `job.cmd`,
+  and only `wsb exec` runs that file. Every host-side use of the script builder passes no prelude, `job_script` is
+  private, and a unit test counts the uses. `tests/windows_sandbox.rs` compares the host's state before and after a full
+  run: the `VerifiedAndReputablePolicyState` value and the name and SHA-256 of every file in
+  `CodeIntegrity\CiPolicies\Active` (`CiTool --list-policies` needs elevation on the host, which nothing here uses).
+- The control for the test is a raw `wsb` VM with no switch-off, where the unsigned exe's second start exits 1073751882.
