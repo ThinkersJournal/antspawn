@@ -6,6 +6,7 @@
   binaries and repeated unsigned starts work (board 260, PM ruling A). Host policy is never touched: the commands exist only in the guest
   script, a unit test counts their uses, and the new test compares the host's state before and after 3 consecutive VMs, with a raw-`wsb`
   control that is blocked. `docs/DESIGN.md` states the hypervisor is the isolation boundary.
+  The new test is runner-only, not run by CI (it needs Windows Sandbox); it was run locally (MEASUREMENTS). A self-hosted runner for it awaits board item 321.
 
 ## 0.0.30
 
