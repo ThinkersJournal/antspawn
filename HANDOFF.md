@@ -42,7 +42,7 @@ Key = DPAPI file in `%LOCALAPPDATA%\antspawn\github-app\`: never print or copy i
 Runner v2.338.1 pinned, fetched, unpacked; never started. Lanes push their own branches only when the PM tasks it; never merge.
 Primary checkout: untracked `supertool` (origin unknown, not ours to delete).
 
-## Next
+## Next (the queue is `ROADMAP.md`; this list is a snapshot)
 0. Stale SAC control: re-run `cargo test --test windows_sandbox -- --test-threads=1` after the NEXT Windows update, record date and result in MEASUREMENTS
    "Stale control"; the claim stays withdrawn until the control bites again.
 1. 260 runner slice, blocked on board 322 (JIT transport): then the guest-side listener + shim, a real `JitTransport`, a real run against `antspawn-proof`,

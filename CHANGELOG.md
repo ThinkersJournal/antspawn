@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.41
+
+- docs: ROADMAP.md, the work source (HANDOFF is state, not a queue); one row per failing CodeRipper rule.
+
 ## 0.0.40
 
 - docs: HANDOFF rewritten to current state.
