@@ -378,6 +378,54 @@ pub fn wsb_config(spec: &JobSpec, inp: &Path, out: &Path) -> String {
     )
 }
 
+/// The guest folder the pinned runner is mapped read-only at; the script copies it to `GUEST_RUNNER` so the
+/// runner can write its `_diag` and `_work` (a read-only `_diag` stopped it in the 0.0.32 measurement).
+pub const GUEST_RUNNER_SRC: &str = r"C:\antspawn\runner";
+const GUEST_RUNNER: &str = r"C:\runner";
+
+/// The configuration for a runner VM (board 260): the one place the runner gets network. Same as
+/// [`wsb_config`] with `Networking` enabled and no job mounts, plus the unpacked runner mapped read-only.
+/// Nothing of the host except `in`, `out` and the runner is visible.
+pub fn runner_wsb_config(inp: &Path, out: &Path, runner_dir: &Path) -> String {
+    let spec =
+        JobSpec::from_toml("[job]\nname = \"runner\"\ncmd = [\"runner\"]\n").expect("static spec");
+    let base = wsb_config(&spec, inp, out).replace(
+        "<Networking>Disable</Networking>",
+        "<Networking>Enable</Networking>",
+    );
+    let folder = format!(
+        "    <MappedFolder>\n      <HostFolder>{}</HostFolder>\n      \
+         <SandboxFolder>{GUEST_RUNNER_SRC}</SandboxFolder>\n      <ReadOnly>true</ReadOnly>\n    </MappedFolder>\n",
+        xml(&runner_dir.display().to_string())
+    );
+    base.replace("  </MappedFolders>", &format!("{folder}  </MappedFolders>"))
+}
+
+/// The `job.cmd` of a runner VM: Smart App Control off (guest only), copy the runner out of the read-only
+/// mapping, then `start` (the line that starts the runner, whose JIT-config transport is decided by board
+/// item 322), then `exit.code`. The JIT config is never part of this text: `start` is a plain command line,
+/// and `plain` plus the metacharacter check refuse anything that is not.
+pub fn runner_job_script(start: &str) -> Result<String, LaunchError> {
+    plain("runner start line", start)?;
+    if start.contains(['&', '|', '<', '>', '^']) {
+        return Err(LaunchError::Other(
+            "the runner start line has a cmd.exe metacharacter".into(),
+        ));
+    }
+    let out = GUEST_OUT;
+    let mut s = format!(
+        "@echo off\r\nset \"OUT={out}\"\r\n>> \"{out}\\trace.log\" echo [start] %DATE% %TIME%\r\n"
+    );
+    s += GUEST_SAC_OFF;
+    s += &format!(
+        "xcopy \"{GUEST_RUNNER_SRC}\" \"{GUEST_RUNNER}\\\" /E /I /Q /Y >nul 2>> \"{out}\\trace.log\"\r\n\
+         cd /d \"{GUEST_RUNNER}\"\r\n\
+         {start} >> \"{out}\\cmd.log\" 2>&1\r\nset RC=%ERRORLEVEL%\r\n\
+         >> \"{out}\\trace.log\" echo [command-exit] %RC%\r\n>\"{out}\\exit.code\" echo %RC%\r\n"
+    );
+    Ok(s)
+}
+
 fn plain(what: &str, s: &str) -> Result<(), LaunchError> {
     if s.contains(['"', '%', '\r', '\n', '\0']) {
         return Err(LaunchError::Other(format!(
@@ -659,8 +707,8 @@ mod tests {
         let code = &src[..src.find("#[cfg(test)]").unwrap()];
         assert_eq!(
             code.matches("GUEST_SAC_OFF").count(),
-            2,
-            "the definition and one use"
+            3,
+            "the definition and two uses: `job_script` and `runner_job_script`, both guest-only"
         );
         assert_eq!(
             code.matches("job_script_with(").count(),
@@ -670,6 +718,38 @@ mod tests {
         // `job_script` is private and only `provision` calls it; `job.cmd` is only ever run by `wsb exec`.
         assert_eq!(code.matches("job_script(spec)").count(), 1);
         assert!(!code.contains("pub fn job_script("));
+    }
+
+    #[test]
+    fn runner_config_has_network_and_exactly_in_out_and_the_runner() {
+        let c = runner_wsb_config(
+            Path::new("C:/h/in"),
+            Path::new("C:/h/out"),
+            Path::new("C:/h/runner"),
+        );
+        assert!(c.contains("<Networking>Enable</Networking>"));
+        assert!(!c.contains("<Networking>Disable</Networking>"));
+        assert!(c.contains("<VGpu>Disable</VGpu>"));
+        assert_eq!(c.matches("<MappedFolder>").count(), 3);
+        assert!(c.contains(GUEST_RUNNER_SRC) && c.contains("C:/h/runner"));
+        // Control: the job config of the same builders still has no network.
+        let job = wsb_config(&spec(""), Path::new("C:/h/in"), Path::new("C:/h/out"));
+        assert!(job.contains("<Networking>Disable</Networking>"));
+    }
+
+    #[test]
+    fn runner_script_copies_the_runner_then_starts_it_then_writes_exit_code_last() {
+        let t = runner_job_script(r"C:\antspawn\in\shim.exe run.cmd").unwrap();
+        let (sac, copy, start, code) = (
+            t.find("VerifiedAndReputablePolicyState /t REG_DWORD")
+                .unwrap(),
+            t.find("xcopy").unwrap(),
+            t.find("shim.exe").unwrap(),
+            t.find("exit.code").unwrap(),
+        );
+        assert!(sac < copy && copy < start && start < code);
+        assert!(runner_job_script("a & b").is_err());
+        assert!(runner_job_script("echo %JIT%").is_err());
     }
 
     #[test]

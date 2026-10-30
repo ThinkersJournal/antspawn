@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `windows-sandbox`: `runner_wsb_config` (network on, only `in`, `out` and the pinned runner mapped) and `runner_job_script` (SAC off in the guest, copy the runner, start line, `exit.code` last). Transport of the JIT config is not built (board 322).
+
 ## 0.0.35
 
 - docs: measured that `wsb exec` forwards no stdin (board 260 hand-off needs another channel into the guest).
