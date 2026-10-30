@@ -46,36 +46,9 @@ impl Launcher for WindowsSandbox {
     }
 
     fn provision(&self, spec: &JobSpec) -> Result<Box<dyn Environment>, LaunchError> {
-        if !Path::new(SANDBOX_EXE).exists() {
-            return Err(LaunchError::NotProvisioned {
-                launcher: self.id().into(),
-                what: format!(
-                    "{SANDBOX_EXE} not found; enable the Windows Sandbox feature (one-time, \
-                     elevated, by the machine owner). This launcher never does that."
-                ),
-            });
-        }
-        if !wsb_exe().exists() {
-            return Err(LaunchError::NotProvisioned {
-                launcher: self.id().into(),
-                what: format!(
-                    "{} not found; the Windows Sandbox app (package MicrosoftWindows.WindowsSandbox) \
-                     must be installed. This launcher never installs it.",
-                    wsb_exe().display()
-                ),
-            });
-        }
+        require_installed(self.id())?;
         let script = job_script(spec)?;
-        let root = std::env::temp_dir().join(format!(
-            "antspawn-wsb-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_nanos())
-        ));
-        let (inp, out) = (root.join("in"), root.join("out"));
-        std::fs::create_dir_all(&inp)?;
-        std::fs::create_dir_all(&out)?;
+        let (root, inp, out) = new_root()?;
         // Everything below is under `root`; the guard removes it on any early return or drop.
         let env = WsbEnv {
             root,
@@ -86,6 +59,86 @@ impl Launcher for WindowsSandbox {
         };
         std::fs::write(inp.join("job.cmd"), script)?;
         Ok(Box::new(env))
+    }
+}
+
+fn require_installed(launcher: &str) -> Result<(), LaunchError> {
+    if !Path::new(SANDBOX_EXE).exists() {
+        return Err(LaunchError::NotProvisioned {
+            launcher: launcher.into(),
+            what: format!(
+                "{SANDBOX_EXE} not found; enable the Windows Sandbox feature (one-time, \
+                 elevated, by the machine owner). This launcher never does that."
+            ),
+        });
+    }
+    if !wsb_exe().exists() {
+        return Err(LaunchError::NotProvisioned {
+            launcher: launcher.into(),
+            what: format!(
+                "{} not found; the Windows Sandbox app (package MicrosoftWindows.WindowsSandbox) \
+                 must be installed. This launcher never installs it.",
+                wsb_exe().display()
+            ),
+        });
+    }
+    Ok(())
+}
+
+/// A fresh host folder with `in` and `out` under it, returned as `(root, in, out)`.
+fn new_root() -> Result<(PathBuf, PathBuf, PathBuf), LaunchError> {
+    let root = std::env::temp_dir().join(format!(
+        "antspawn-wsb-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos())
+    ));
+    let (inp, out) = (root.join("in"), root.join("out"));
+    std::fs::create_dir_all(&inp)?;
+    std::fs::create_dir_all(&out)?;
+    Ok((root, inp, out))
+}
+
+/// One runner VM (board 260): networking on, the pinned runner mapped read-only, `start` as its command.
+/// What reaches the runner's JIT config is the caller's `started` hook, called with the sandbox id; this
+/// type holds no secret and never sees one.
+pub struct RunnerVm(WsbEnv);
+
+impl RunnerVm {
+    pub fn provision(runner_dir: &Path, start: &str) -> Result<Self, LaunchError> {
+        require_installed("windows-sandbox")?;
+        let script = runner_job_script(start)?;
+        let (root, inp, out) = new_root()?;
+        let env = WsbEnv {
+            root,
+            config: runner_wsb_config(&inp, &out, runner_dir),
+            out,
+            id: None,
+            wsb: None,
+        };
+        std::fs::write(inp.join("job.cmd"), script)?;
+        Ok(RunnerVm(env))
+    }
+
+    /// Start the VM, call `started(sandbox id)`, wait for the runner to exit or `limit` to pass.
+    pub fn run(
+        &mut self,
+        limit: Option<Duration>,
+        started: &mut dyn FnMut(&str) -> Result<(), LaunchError>,
+    ) -> Result<Exit, LaunchError> {
+        self.0.run_hooked(limit, started)
+    }
+
+    /// Copy the guest's `trace.log` and `cmd.log` into `results`.
+    pub fn collect_logs(&mut self, results: &Path) -> Result<(), LaunchError> {
+        let spec = JobSpec::from_toml("[job]\nname = \"runner\"\ncmd = [\"runner\"]\n")
+            .expect("static spec");
+        Environment::collect(&mut self.0, &spec, results)
+    }
+
+    pub fn destroy(self) -> Result<(), LaunchError> {
+        Box::new(self.0).destroy()
     }
 }
 
@@ -113,18 +166,24 @@ impl WsbEnv {
     }
 }
 
-impl Environment for WsbEnv {
-    fn run(&mut self, spec: &JobSpec) -> Result<Exit, LaunchError> {
+impl WsbEnv {
+    /// Start the VM and the job, call `started` with the sandbox id once `wsb exec` is running (the runner
+    /// hand-off uses it to reach the guest), then wait for `exit.code`.
+    fn run_hooked(
+        &mut self,
+        limit: Option<Duration>,
+        started: &mut dyn FnMut(&str) -> Result<(), LaunchError>,
+    ) -> Result<Exit, LaunchError> {
         reap_orphans();
-        let started = Command::new(wsb_exe())
+        let begun = Command::new(wsb_exe())
             .args(["start", "-c", &self.config])
             .output()?;
-        let said = String::from_utf8_lossy(&started.stdout).into_owned();
+        let said = String::from_utf8_lossy(&begun.stdout).into_owned();
         let Some(id) = sandbox_id_in(&said) else {
             return Err(LaunchError::Other(format!(
                 "wsb start gave no sandbox id (exit {}): {said} {}",
-                started.status,
-                String::from_utf8_lossy(&started.stderr)
+                begun.status,
+                String::from_utf8_lossy(&begun.stderr)
             )));
         };
         self.id = Some(id.clone());
@@ -138,7 +197,10 @@ impl Environment for WsbEnv {
                 .stderr(std::process::Stdio::null())
                 .spawn()?,
         );
-        let limit = spec.limits.time_s.map(Duration::from_secs);
+        if let Err(e) = started(&id) {
+            self.close();
+            return Err(e);
+        }
         let start = Instant::now();
         let code_file = self.out.join("exit.code");
         let mut last_crash_check = Instant::now();
@@ -175,6 +237,12 @@ impl Environment for WsbEnv {
             }
             std::thread::sleep(Duration::from_millis(250));
         }
+    }
+}
+
+impl Environment for WsbEnv {
+    fn run(&mut self, spec: &JobSpec) -> Result<Exit, LaunchError> {
+        self.run_hooked(spec.limits.time_s.map(Duration::from_secs), &mut |_| Ok(()))
     }
 
     fn collect(&mut self, spec: &JobSpec, results: &Path) -> Result<(), LaunchError> {
