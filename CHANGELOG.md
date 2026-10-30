@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.34
+
+- docs: HANDOFF rewritten to current state.
+
 ## 0.0.33
 
 - Dependency: `capant` 0.0.16 -> 0.1.0 (breaking upstream: result types, `Role` and `Outcome` are `#[non_exhaustive]`). `cargo check --all-targets` needed no change here; `matrix --check` still up to date.
