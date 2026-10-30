@@ -13,6 +13,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+use super::dispatch::JitTransport;
 use super::github::Secret;
 use crate::launchers::windows_sandbox::wsb_exe;
 
@@ -75,6 +76,20 @@ pub fn deliver_to_sandbox(
 ) -> Result<(), String> {
     let ip = guest_ip(sandbox_id)?;
     send_once(SocketAddr::new(IpAddr::V4(ip), port), jit, window)
+}
+
+/// The real [`JitTransport`] (board 322): `wsb ip`, then one connection to the shim's listener on `port`.
+/// `window` is how long to wait for the guest listener to come up after the VM starts.
+#[derive(Debug, Clone, Copy)]
+pub struct ListenerTransport {
+    pub port: u16,
+    pub window: Duration,
+}
+
+impl JitTransport for ListenerTransport {
+    fn deliver(&self, sandbox_id: &str, jit: &Secret) -> Result<(), String> {
+        deliver_to_sandbox(sandbox_id, self.port, jit, self.window)
+    }
 }
 
 #[cfg(test)]
@@ -167,6 +182,22 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.contains("could not connect"), "{err}");
+        assert!(!err.contains("c2VjcmV0"), "{err}");
+    }
+
+    #[test]
+    fn listener_transport_is_a_jit_transport_and_fails_without_a_sandbox_without_leaking() {
+        let t = ListenerTransport {
+            port: 1,
+            window: Duration::from_millis(100),
+        };
+        // An id no sandbox has: wsb ip (or its absence) fails; the error never holds the config.
+        let err = JitTransport::deliver(
+            &t,
+            "00000000-no-such-sandbox",
+            &Secret::new("c2VjcmV0Cg==".into()),
+        )
+        .unwrap_err();
         assert!(!err.contains("c2VjcmV0"), "{err}");
     }
 }
