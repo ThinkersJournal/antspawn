@@ -231,6 +231,15 @@ Replaces the earlier "host health" note, whose "cause UNKNOWN / suspect launch c
   re-earned 5 `yes`; `naive` rows unchanged (5 `no`, each naming its probe; the rest untested). Rows gained `probed_at`
   only. `cargo test --test account -- --test-threads=1`: 5/5. `--check` green with and without `--no-privileged`.
 
+## `wsb exec` forwards no stdin (2026-10-29, main 630257b, wsb from MicrosoftWindows.WindowsSandbox)
+
+- `wsb exec --help` lists --id, -c, -d, -r, --raw: no stdin option. Measured: `printf SECRETPROBE123 | wsb exec --id <id> -r System -c
+  'cmd.exe /c findstr "^" > C:ntspawn\out\stdin.txt'` in a fresh VM (Networking Disable, `out` mapped rw) ran (`Process exited with
+  code: 1`, findstr's code for no input) and left `stdin.txt` at 0 bytes. The piped bytes never reached the guest process.
+- Consequence: board 260's anonymous-pipe hand-off cannot cross `wsb exec`; the shim inside the guest needs another channel that is not a
+  file, argument or variable (proposal to the PM, not built). One VM, one run: a single measurement, no control that stdin works elsewhere
+  (host `findstr` reads piped stdin by definition).
+
 ## Pending (needs the elevated setup, CireSnave)
 
 - `schtasks /Run` by a non-admin through the task security descriptor vs ACL'd named pipe.
