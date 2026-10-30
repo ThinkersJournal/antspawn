@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.42
+
+- `adapter::jit_host`: the host end of the board 322 transport: `guest_ip` (`wsb ip --id`, accepts only one unambiguous IPv4), `send_once` (connect with retry until the guest listener is up, write the config once, close; errors never contain it), `deliver_to_sandbox`. Loopback-tested with controls; **not run against a VM until board 321 is settled**; the `wsb ip` output format is unmeasured. Version number provisional (PM allocates); branches off main, independent of #43.
+
 ## 0.0.40
 
 - docs: HANDOFF rewritten to current state.
