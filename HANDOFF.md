@@ -42,6 +42,8 @@ Runner v2.338.1 pinned, fetched, unpacked; never started. Lanes CAN push their o
 Primary checkout: untracked `supertool` (origin unknown, not ours to delete).
 
 ## Next
+0. Stale SAC control (PM, 2026-10-29): re-run `cargo test --test windows_sandbox -- --test-threads=1` after the NEXT Windows update and record the date and result in
+   MEASUREMENTS "Stale control"; keep the guest-blocks-unsigned-exes claim withdrawn until the control bites again. Never touch host policy.
 1. 260 runner slice (PM order): runner + shim INSIDE the sandbox (JIT config delivery without a file or argument: `wsb exec` has no stdin as far
    as measured, find out), a real `Dispatch` against `antspawn-proof`, network only inside the sandbox. A FULL runner job (not `--version`) in 3
    consecutive VMs before it is called working. Then tell the commy lane (R14) a runner exists.

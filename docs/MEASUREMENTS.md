@@ -239,6 +239,9 @@ Replaces the earlier "host health" note, whose "cause UNKNOWN / suspect launch c
   Host SAC state is `0` with `SAC_PreviousState=1`, key last written **2026-07-30 16:07**, so the host's own setting did not change and is not the cause.
 - **Working hypothesis, not established:** the guest image was rebuilt on 10-28/10-29 and its SAC evaluation restarted, so the guest audits instead of enforcing.
   Nothing here separates the 10-28 layer from the 10-29 update, and no way was found to boot the old layer for a before/after.
+- **Layer diff attempted, read-only, not possible cheaply (PM: only if cheap).** The new layer `adff5482` is readable; its 8 active CI policy files are the same names as the host's
+  (SHA-256 prefixes recorded by name only; `{60fd87f8}` dated 10-28 16:09). The old layer `1ef1ee21`'s files are not readable ("The file cannot be accessed by the
+  system" on every `.cip`) and its 5 `*_BASE` hives are 0 bytes, so no content diff was made. Left open.
 - **Positive control failed to bite.** Forcing `VerifiedAndReputablePolicyState=1` plus `CiTool --refresh` inside one fresh guest read back `0x1` but the
   exe still started 3/3, so this probe has not yet been shown able to see a block in today's image. One VM; not conclusive either way.
 - **Consequence.** Documents that said the guest blocks unsigned exes are annotated (DESIGN) and withdrawn (CHANGELOG 0.0.39) until re-proven. The 3-consecutive-VM
