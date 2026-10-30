@@ -36,7 +36,7 @@ Never kill another lane's sandbox processes. No admin changes, no account creati
 `gh-runner` exists but cannot be acted as from here: wsb-as-gh-runner is UNMEASURED.
 Waiting on the PM: CodeRipper baseline findings (add ONE row per failing rule).
 GitHub App `antspawn-runner` (id 5441608, install 174476958), group `antspawn-account` (id 3), repo `antspawn-proof`: PM-made, leave in place.
-Key = DPAPI file in `%LOCALAPPDATA%ntspawn\github-app\`: never print or copy it. Adapter config for live runs: `%TEMP%ntspawn-proofdapter.toml`.
+Key = DPAPI file in `%LOCALAPPDATA%\antspawn\github-app\`: never print or copy it. Adapter config for live runs: `%TEMP%\antspawn-proof\adapter.toml`.
 Runner v2.338.1 pinned, fetched, unpacked; never started. Lanes CAN push their own branches now (as ciresnave-bot) when the PM tasks it; never merge.
 Primary checkout: untracked `supertool` (origin unknown, not ours to delete).
 
