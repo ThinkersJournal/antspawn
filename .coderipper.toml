@@ -1,0 +1,27 @@
+# The waivers of this repository's CodeRipper runs (`--no-config` ignores every other configuration file, so this one decides).
+# Each carries its reason and is reviewed in the pull request that adds it. Owner: the antspawn lane.
+
+# SEC-002 reads git history. Both hits are line 591 of src/adapter/github_client.rs in two PR13 commits (e0130079, which is on the
+# pr13-github-client branch only, and d5f1c62d, which is on main). That line is a test input, not a key:
+# `"-----BEGIN RSA PRIVATE KEY-----\n!!!SECRETBYTES!!!\n-----END RSA PRIVATE KEY-----"` (96 characters; a real RSA key is over a thousand), fed to
+# `app_jwt` to prove it refuses a malformed key and never echoes it. Read at both commits on 2026-10-31. Later commits build that fixture at run time
+# (`fake_pem`) so no literal header remains in any tree. The App's real key is a DPAPI file under the owner's profile and is in no repository.
+[[allow]]
+check = "SEC-002"
+file = "src/adapter/github_client.rs"
+reason = "History hit only: line 591 of commits e0130079 and d5f1c62d is the 96-character test input '-----BEGIN RSA PRIVATE KEY-----\\n!!!SECRETBYTES!!!\\n-----END RSA PRIVATE KEY-----' passed to app_jwt to prove a malformed key is refused and never echoed. It is not a key. No current tree holds a literal header (the fixture is built at run time). Owner: antspawn lane."
+
+# `reachability`: public items of the library that have callers only in tests today. Each is the adapter's or the sandbox launcher's API, written
+# ahead of the wiring that boards 321/322 and the `spawn adapter` account path still need (docs/ADAPTER-DECISIONS.md line 9 lists them).
+[reachability]
+public_api = [
+  { file = "src/adapter/dispatch.rs", symbol = "take_outcomes", reason = "`SandboxDispatch::take_outcomes` is how a caller reads the finished jobs; only tests call it until the sandbox path is wired into `spawn adapter` (boards 321/322). Owner: antspawn lane." },
+  { file = "src/adapter/dispatch.rs", symbol = "WsbBackend", reason = "the real Windows Sandbox `RunnerBackend`, built on `RunnerVm`; not constructed by the binary until the sandbox path is wired (boards 321/322; docs/ADAPTER-DECISIONS.md). Owner: antspawn lane." },
+  { file = "src/adapter/github.rs", symbol = "clamp_time", reason = "`AdapterConfig::clamp_time` grants a job its time limit (docs/ADAPTER-GITHUB.md); the account and sandbox backends take its result, and only tests call it directly today. Owner: antspawn lane." },
+  { file = "src/adapter/jit_host.rs", symbol = "ListenerTransport", reason = "the TCP `JitTransport` for the Windows Sandbox guest; used only by tests until the sandbox path is wired (boards 321/322). Owner: antspawn lane." },
+  { file = "src/adapter/runner_pin.rs", symbol = "VERSION", reason = "the pinned Actions runner version (2.338.1); only its own test uses it so far, and no run-time caller exists yet. Owner: antspawn lane." },
+  { file = "src/adapter/runner_pin.rs", symbol = "verify", reason = "checks runner archive bytes against the pinned size and SHA-256; it has no caller in the crate yet (the pin is part of the adapter's account path, docs/ADAPTER-DECISIONS.md). Owner: antspawn lane." },
+  { file = "src/adapter/runner_pin.rs", symbol = "verify_against", reason = "the parameterised core of `verify`, which tests call with known inputs; reached through `verify`. Owner: antspawn lane." },
+  { file = "src/launchers/windows_sandbox.rs", symbol = "collect_logs", reason = "copies the guest's logs out after a run; the caller arrives with the sandbox wiring (boards 321/322). Owner: antspawn lane." },
+  { file = "src/launchers/windows_sandbox.rs", symbol = "job_script_in", reason = "builds the in-guest job script for a given output path, without the shutdown prelude (see the note at windows_sandbox.rs:531); only tests call it today. Owner: antspawn lane." },
+]
