@@ -27,7 +27,7 @@ is not reused for runners.
 1. **Per-account task.** The elevated setup (CireSnave) registers, per runner account, a task that runs `spawn-jit-shim --pipe <name> <runner>`
    as that account, in the same style as `account-setup.ps1` (which registers `AntSpawnRunner`). The task, the account, the root and the ACLs are
    created by the script, never by antspawn.
-2. **Shim pipe mode (new, small).** `spawn-jit-shim --pipe <name>` creates a named pipe server, **one instance only** (`nMaxInstances = 1`),
+2. **Shim pipe mode (built in 0.0.50, tested with the current user only; the SID arrives as `--allow-sid <sid>` because the shim runs as the runner account, not the launcher; the ACE is write plus `FILE_READ_ATTRIBUTES`, since write alone denied the named SID when measured).** `spawn-jit-shim --pipe <name> --allow-sid <sid>` creates a named pipe server, **one instance only** (`nMaxInstances = 1`),
    `PIPE_REJECT_REMOTE_CLIENTS`, with a DACL that grants write to the launcher user's SID and nothing to anyone else (not the account itself, not
    `Everyone`), accepts exactly one connection, closes the pipe, reads the config (same limits and checks as stdin mode), and starts the runner
    with the value in that one child's environment, stdin null. In memory only, never a file, never inherited, never logged: the same promises as
