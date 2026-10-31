@@ -605,4 +605,45 @@ mod fresh {
         let (code, _) = run_fresh(&ok, &ok.join("nope"), "x.cmd", CONFIG);
         assert_eq!(code, Some(2));
     }
+
+    const HOME_SCRIPT: &str = concat!(
+        "@echo off\r\n",
+        "set \"H=%CD%\\_home\"\r\n",
+        "if /i not \"%TEMP%\"==\"%H%\\Temp\" exit /b 6\r\n",
+        "if /i not \"%TMP%\"==\"%H%\\Temp\" exit /b 6\r\n",
+        "if /i not \"%USERPROFILE%\"==\"%H%\" exit /b 6\r\n",
+        "if /i not \"%APPDATA%\"==\"%H%\\AppData\\Roaming\" exit /b 6\r\n",
+        "if /i not \"%LOCALAPPDATA%\"==\"%H%\\AppData\\Local\" exit /b 6\r\n",
+        "echo x> \"%TEMP%\\scratch.txt\" || exit /b 7\r\n",
+        "echo x> \"%USERPROFILE%\\profile.txt\" || exit /b 7\r\n",
+        "exit /b 0\r\n"
+    );
+
+    #[test]
+    fn the_runners_temp_and_profile_folders_are_inside_the_copy_and_go_with_it() {
+        let (template, under) = (scratch("t6"), scratch("u6"));
+        std::fs::write(template.join("home.cmd"), HOME_SCRIPT).unwrap();
+        let (code, err) = run_fresh(&template, &under, "home.cmd", CONFIG);
+        assert_eq!(code, Some(0), "{err}");
+        assert_eq!(
+            entries(&under),
+            0,
+            "the scratch space was deleted with the copy"
+        );
+    }
+
+    #[test]
+    fn control_without_fresh_the_same_script_finds_the_real_temp_and_profile() {
+        // Proves the 6 above can happen: run directly, TEMP and USERPROFILE are the account's own.
+        let dir = scratch("home-plain");
+        std::fs::write(dir.join("home.cmd"), HOME_SCRIPT).unwrap();
+        let code = Command::new("cmd")
+            .arg("/c")
+            .arg(dir.join("home.cmd"))
+            .current_dir(&dir)
+            .status()
+            .unwrap()
+            .code();
+        assert_eq!(code, Some(6));
+    }
 }

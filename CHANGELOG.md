@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.54
+
+- `spawn-jit-shim --fresh` (ROADMAP row 21 slice f): the runner's `TEMP`, `TMP`, `USERPROFILE`, `APPDATA` and `LOCALAPPDATA` now point into `<copy>\_home`, so its scratch space is deleted with the copy. This **reduces** what a job leaves for the next one; a job that writes the account's real profile or temp folder by absolute path still can, and nothing here proves otherwise. Two tests (the variables point inside the copy and the copy is gone; a control shows the same script outside the shim sees the real folders); not run as a restricted account (UNMEASURED). Version provisional (PM allocates).
+
 ## 0.0.53
 
 - `spawn-jit-shim --fresh <template> <runs> <runner>` (Windows only; ROADMAP row 21 slice e, design item 4: wipe between runs). After the config arrives the template is copied to a new `<runs>\run-<pid>-<nanos>`, the runner (a path relative to the copy, no `..`) runs there, the shim joins a kill-on-close Job Object so the runner's whole tree is in it, ends every other process in the job when the runner exits, and deletes the copy; a copy that cannot be deleted is exit 3. A symlink in the template is refused; a config that is not one creates no copy. Seven tests as the current user with two controls (a shared directory does carry state; a plain delete does fail while a process holds a file); **not run as a restricted account or via Task Scheduler** (UNMEASURED). `scripts/runner-account-setup.ps1` now keeps the runner as a read-only template (`<root>\runner-src`) and runs the task with `--fresh`; still never applied. The account's temp and profile folders are not wiped yet. Version provisional (PM allocates).
