@@ -21,7 +21,8 @@
     GitHub's hosts is not expressible as Windows Firewall rules (a block rule overrides an allow rule, and
     rules take addresses, not names). How to limit is CireSnave's call, still open.
   * The wipe between runs is the shim's `--fresh` (design item 4), tested locally as the current user only.
-    The account's temp and profile folders are NOT wiped yet; a job writing there leaves files for the next.
+    The runner's TEMP and profile variables point into the copy; a job writing the account's REAL profile by
+    absolute path still leaves files for the next job, and this script does not clean that.
   * It does not start the task: the shim waits for a config on its pipe and would just time out.
   * It does not prove isolation. The negative controls A and B (docs/ACCOUNT-DISPATCH.md) do, after -Apply.
 

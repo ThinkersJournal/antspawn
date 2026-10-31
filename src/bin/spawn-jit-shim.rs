@@ -21,7 +21,8 @@
 //! directory: after the config arrives, `<src>` (a template the account cannot write) is copied to a new
 //! `<under>\run-<pid>-<nanos>`, `<runner>` is a path RELATIVE to that copy, the shim joins a kill-on-close
 //! Job Object so everything the runner starts is in it, and when the runner exits every other process in
-//! the job is terminated and the copy is deleted. A copy that cannot be deleted is exit 3, never silent.
+//! the job is terminated and the copy is deleted. The runner's TEMP, TMP, USERPROFILE, APPDATA and
+//! LOCALAPPDATA point into `<copy>\_home`, so its scratch space goes with the copy. A copy that cannot be deleted is exit 3, never silent.
 
 use std::io::Read;
 use std::net::{SocketAddr, TcpListener};
@@ -167,10 +168,28 @@ mod fresh {
         config: String,
     ) -> Result<i32, String> {
         copy_tree(src, dir).map_err(|e| format!("could not copy the template: {}", e.kind()))?;
+        // The runner's temp and profile folders live inside the copy, so they are deleted with it. This
+        // reduces what a job leaves for the next one; it cannot stop a job writing the real profile
+        // by absolute path.
+        let home = dir.join("_home");
+        let (temp, roaming, local) = (
+            home.join("Temp"),
+            home.join("AppData").join("Roaming"),
+            home.join("AppData").join("Local"),
+        );
+        for d in [&temp, &roaming, &local] {
+            std::fs::create_dir_all(d)
+                .map_err(|e| format!("could not create the temp folders: {}", e.kind()))?;
+        }
         super::contain::join()?;
         let status = Command::new(dir.join(runner))
             .args(args)
             .current_dir(dir)
+            .env("TEMP", &temp)
+            .env("TMP", &temp)
+            .env("USERPROFILE", &home)
+            .env("APPDATA", &roaming)
+            .env("LOCALAPPDATA", &local)
             .env(var, config)
             .stdin(Stdio::null())
             .status()
