@@ -298,6 +298,6 @@ After CireSnave's `-Apply` of `runner-account-setup.ps1` (account `ghr-spawn1`, 
 cires listing `C:\gh-runner-spawn1` was **denied** (the launcher has no access to the account's root). The live task descriptor read through
 `Get-TaskSdProblems`: 0 problems. `schtasks /Run` as cires: `\.\pipe\antspawn-spawn1` appeared within the 20 s poll; a first connection delivered a dummy
 base64 config (44 bytes, not a real JIT config); a second connection was refused; afterwards no shim process remained, the pipe was gone and the task was Ready with
-LastTaskResult 0. **Not measured:** the shim's owner (a standard user cannot read another account's process owner: `GetOwner` came back empty), what the shim did with the
+LastTaskResult 0. **Not measured:** the shim's owner (`GetOwner` came back empty for it, once, as cires; why is not known), what the shim did with the
 dummy config (no log), and whether the runner started (no new `Runner.*` process was seen in one sample after the shim had gone; the box's other runners were excluded by pid).
 GitHub contact was not observed, but the only check was that no shim process remained to hold a connection. One run, one sample.
