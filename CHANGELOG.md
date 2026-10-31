@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.58
+
+- `adapter::routing::RoutingDispatch` (ROADMAP row 23 slice b; `docs/ADAPTER-DECISIONS.md` decision 3, ruled A): one `Dispatch` per launcher id, chosen by the group's `launcher`. One job at a time across all launchers (`busy()` is true while any is busy; a busy flag per launcher waits on a measurement). An unknown launcher is refused naming group and launcher, never the JIT config; `unrouted()` lets `--check` list groups with no dispatcher. Nothing calls it yet: the `spawn adapter` command is slice c. Version provisional (PM allocates).
+
 ## 0.0.57
 
 - `adapter::config_file::load` and the schema `configurant.toml` (ROADMAP row 23 slice a; `docs/ADAPTER-DECISIONS.md` decision 1, ruled B): the adapter's configuration loads through ConfigurAnt, giving a row-indexed error with a did-you-mean for an unknown key (`group[1].launcer`, suggestion `launcher`) and `configurant check/explain` on the schema. The configuration file keeps the shape `AdapterConfig::from_toml` accepts, and a test loads the sample through both and requires equal results; the rules a schema cannot say (unique group names and label sets, exact `owner/name` repos) stay in `AdapterConfig::validate`. New dependency `configurant` 0.5.33 (crates.io; `cargo deny` clean, one duplicate `windows-sys` warning). **Breaking (pre-1.0 notice): the minimum Rust version is now 1.95** (ConfigurAnt needs it; CireSnave 2026-10-08 permits raising it; the CI msrv job reads it from `Cargo.toml`). Nothing calls `load` yet: the `spawn adapter` command is slice c. Version provisional (PM allocates).
