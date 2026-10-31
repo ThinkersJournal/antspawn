@@ -88,6 +88,7 @@ poll), take the oldest queued job not yet minted for that a group routes to, min
 it to `Dispatch`, and stop: one job per tick. A minted job is remembered at once, even if the dispatch fails, so a broken
 hand-off cannot mint a runner per tick (the unused ephemeral runner expires at GitHub). A failed mint is not remembered; the
 `Minter` backoff spaces the retries. Tests use fakes and include a mutation check that dropping `seen` fails four of them.
+(Since 0.0.65 the memory is `jobs`, with an attempt count; see "Retry" below.)
 
 ## Not yet built
 
@@ -107,10 +108,26 @@ The runner gets network only inside Windows Sandbox, so the shim is to be starte
 | 0 | `--check` found no problem; continuous run stopped cleanly; `--once` polled and any runner it started ended |
 | 1 | `--check` found problems (printed to stderr, one per line) |
 | 2 | could not start: unreadable or invalid configuration, a group the router refuses (sandbox or unknown launcher), key provider setup failed, or a usage error (including `--once` with `--check`) |
-| 3 | `--once` ended badly: a runner was minted but its dispatch failed, or a runner was still running when the wait (job ceiling + 120 s) ran out |
+| 3 | `--once` ended badly: a runner was minted but its dispatch failed, a runner ended in an error, or a runner was still running when the wait (job ceiling + 120 s) ran out |
 
 Each dispatch is announced on stderr before it is made: `job <id> (<repo>): group `<g>` -> launcher `<l>``. No secret is in it.
 `--check` is Windows-only for `account` groups: off Windows it reports a problem saying so and to run it on the Windows host.
-**A failed dispatch is not retried.** The job is remembered the moment its runner is minted (so a broken hand-off cannot mint
-one per tick) and is never re-minted; the unused ephemeral runner expires at GitHub and the job stays queued until the workflow
-is re-run. Retry with a cap is ROADMAP row 24.
+### Retry (ROADMAP row 24, 0.0.65)
+
+The job is still remembered the moment its runner is minted, so a broken hand-off cannot mint one per tick. What is new is that
+`Dispatch::finished()` reports how each dispatched job ENDED (the real dispatcher runs the job on a background thread, so
+`dispatch()` returning `Ok` says only that it was started). The watcher reads those at the start of every tick and of `--once`'s
+final settle, and prints `job <id>: runner ended: ...` or `job <id>: the runner ended in an error: ...`.
+
+A job is **minted for again** only when both hold: the end was an error with `nothing_ran`, and attempts are left. `nothing_ran`
+means no runner could have taken the job: the environment never started (for `account`, `schtasks /Run` failed), or starting
+succeeded but the config could not be delivered (the pipe never appeared, was busy or refused) and the backend ended the task.
+An error after the config was delivered is **final**, because the runner may have taken work. Defaults: 3 attempts in all,
+120 s between them (`RetryPolicy`, compiled in; not in the config schema, which the PM ruled on). The mint backoff still applies
+on top. A job GitHub stops listing as queued while it waits (another runner took it) is forgotten, not minted for again.
+`--once` never retries: it reports the error and exits 3.
+
+A failure the dispatcher cannot classify (the default `finished()` reports nothing) is never retried. A `dispatch()` that
+returns `Err` at once (already running, a launcher the adapter does not run) is final, as before.
+
+How a failed account dispatch ends, measured on `ghr-spawn1`: `docs/MEASUREMENTS.md` 2026-10-31 "failed account dispatch".

@@ -5,16 +5,21 @@
 //!
 //! * **One job at a time.** `account` never claims `concurrent`, so while the dispatcher is busy nothing is
 //!   polled, and a tick mints at most one runner.
-//! * **A job is minted for once.** Its id goes in `seen` as soon as a runner is minted (even if the dispatch
-//!   then fails, so a broken hand-off cannot mint a runner per tick); the minted-but-unused runner is
-//!   ephemeral and GitHub expires it. A failed mint is not recorded: the job stays queued and the
-//!   [`Minter`] backoff spaces the retries.
+//! * **A job is minted for once, unless it provably never started.** Its id goes in `jobs` as soon as a
+//!   runner is minted (even if the dispatch then fails, so a broken hand-off cannot mint a runner per
+//!   tick); the minted-but-unused runner is ephemeral and GitHub expires it. A failed mint is not
+//!   recorded: the job stays queued and the [`Minter`] backoff spaces the retries.
+//! * **Retry (ROADMAP row 24).** When the dispatcher reports (through [`Dispatch::finished`]) that a job
+//!   ended with an error and `nothing_ran` (the environment never started, or the config never arrived,
+//!   so no runner took the job), the job is minted for again after `cooldown_s`, at most `max_attempts`
+//!   times in all. Any other failure is final: a runner that started may have taken work.
 //! * **Unrouted jobs are left alone.** Another runner pool may own them; they are never recorded.
 //! * The JIT config is a [`Secret`]: it goes from the minter to the dispatcher and nowhere else, and no
 //!   report type holds it.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
+use super::dispatch::Outcome;
 use super::github::{
     AdapterConfig, GithubApi, JitRequest, MintError, MintOutcome, Minter, RunnerGroup, Secret,
 };
@@ -47,6 +52,37 @@ pub trait Dispatch {
     fn busy(&self) -> bool;
     fn dispatch(&mut self, group: &RunnerGroup, job: &QueuedJob, jit: Secret)
     -> Result<(), String>;
+    /// How jobs dispatched earlier ended, each once. The default reports none (a dispatcher that cannot
+    /// tell is never retried).
+    fn finished(&mut self) -> Vec<Outcome> {
+        Vec::new()
+    }
+}
+
+/// How many times a job whose runner never started is minted for, and how long to wait between attempts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RetryPolicy {
+    /// Attempts in all, the first included. `1` turns retry off.
+    pub max_attempts: u32,
+    /// Seconds to wait after a failed attempt before minting again.
+    pub cooldown_s: u64,
+}
+
+impl Default for RetryPolicy {
+    fn default() -> Self {
+        RetryPolicy {
+            max_attempts: 3,
+            cooldown_s: 120,
+        }
+    }
+}
+
+/// What the watcher remembers about a job it minted for.
+#[derive(Debug, Clone, Copy)]
+struct JobState {
+    attempts: u32,
+    /// Set only after a failure with `nothing_ran` and attempts left: mint again at or after this time.
+    retry_at: Option<u64>,
 }
 
 /// What one tick did. Holds no secret.
@@ -58,6 +94,11 @@ pub struct TickReport {
     pub dispatched: Vec<u64>,
     /// `(job id, reason)`: a runner was minted but the dispatch failed (operator needed).
     pub dispatch_failed: Vec<(u64, String)>,
+    /// `(job id, one-line account)`: a dispatched runner ended well.
+    pub ended_ok: Vec<(u64, String)>,
+    /// `(job id, reason, will retry)`: a dispatched job ended in an error. `will retry` is true only when
+    /// nothing ran and attempts remain; the job is then minted for again after the cooldown.
+    pub ended_failed: Vec<(u64, String, bool)>,
     /// `(job id, reason, operator)`: no runner was minted, the job stays queued.
     pub stayed_queued: Vec<(u64, String, bool)>,
     /// `(repo, reason)`: the poll failed; other repos were still polled.
@@ -71,7 +112,8 @@ pub struct Watcher<A: GithubApi, S: JobSource, D: Dispatch> {
     minter: Minter<A>,
     source: S,
     dispatch: D,
-    seen: HashSet<u64>,
+    jobs: HashMap<u64, JobState>,
+    retry: RetryPolicy,
 }
 
 impl<A: GithubApi, S: JobSource, D: Dispatch> Watcher<A, S, D> {
@@ -81,7 +123,34 @@ impl<A: GithubApi, S: JobSource, D: Dispatch> Watcher<A, S, D> {
             minter,
             source,
             dispatch,
-            seen: HashSet::new(),
+            jobs: HashMap::new(),
+            retry: RetryPolicy::default(),
+        }
+    }
+
+    /// Take in how earlier dispatches ended, without polling or minting anything: the part of a tick
+    /// that `--once` runs after it has waited for the runner.
+    pub fn settle(&mut self, now_s: u64) -> TickReport {
+        let mut report = TickReport::default();
+        self.absorb(now_s, &mut report);
+        report
+    }
+
+    fn absorb(&mut self, now_s: u64, report: &mut TickReport) {
+        for o in self.dispatch.finished() {
+            match o.result {
+                Ok(account) => report.ended_ok.push((o.job_id, account)),
+                Err(why) => {
+                    let will_retry = match self.jobs.get_mut(&o.job_id) {
+                        Some(st) if o.nothing_ran && st.attempts < self.retry.max_attempts => {
+                            st.retry_at = Some(now_s.saturating_add(self.retry.cooldown_s));
+                            true
+                        }
+                        _ => false,
+                    };
+                    report.ended_failed.push((o.job_id, why, will_retry));
+                }
+            }
         }
     }
 
@@ -92,7 +161,7 @@ impl<A: GithubApi, S: JobSource, D: Dispatch> Watcher<A, S, D> {
 
     /// Job ids remembered as already minted for.
     pub fn seen(&self) -> usize {
-        self.seen.len()
+        self.jobs.len()
     }
 
     /// The repos any group names, each once, in config order.
@@ -114,6 +183,7 @@ impl<A: GithubApi, S: JobSource, D: Dispatch> Watcher<A, S, D> {
             report.busy = true;
             return report;
         }
+        self.absorb(now_s, &mut report);
         let mut queued: Vec<QueuedJob> = Vec::new();
         let mut polled_all = true;
         for repo in self.repos() {
@@ -128,13 +198,18 @@ impl<A: GithubApi, S: JobSource, D: Dispatch> Watcher<A, S, D> {
         if polled_all {
             // Forget jobs GitHub no longer lists as queued (taken, finished or cancelled).
             let still: HashSet<u64> = queued.iter().map(|j| j.job_id).collect();
-            self.seen.retain(|id| still.contains(id));
+            self.jobs.retain(|id, _| still.contains(id));
         }
         // Oldest first: job ids grow with time.
         queued.sort_by_key(|j| j.job_id);
         for job in queued {
-            if self.seen.contains(&job.job_id) {
-                continue;
+            match self.jobs.get(&job.job_id) {
+                // Minted for before. Skip it, unless a failed attempt left it waiting out its cooldown.
+                Some(JobState {
+                    retry_at: Some(t), ..
+                }) if now_s >= *t => {}
+                Some(_) => continue,
+                None => {}
             }
             let Some(group) = self.cfg.route(&job.repo, &job.labels).cloned() else {
                 report.unrouted += 1;
@@ -148,7 +223,14 @@ impl<A: GithubApi, S: JobSource, D: Dispatch> Watcher<A, S, D> {
             };
             match self.minter.mint(now_s, &group, &req) {
                 MintOutcome::Minted(jit) => {
-                    self.seen.insert(job.job_id);
+                    let attempts = self.jobs.get(&job.job_id).map_or(0, |s| s.attempts) + 1;
+                    self.jobs.insert(
+                        job.job_id,
+                        JobState {
+                            attempts,
+                            retry_at: None,
+                        },
+                    );
                     match self.dispatch.dispatch(&group, &job, jit) {
                         Ok(()) => report.dispatched.push(job.job_id),
                         Err(e) => report.dispatch_failed.push((job.job_id, e)),
@@ -242,10 +324,14 @@ pipe = "antspawn-r1"
         busy: Cell<bool>,
         fail: Cell<bool>,
         got: RefCell<Vec<(String, u64, String)>>,
+        ended: RefCell<Vec<Outcome>>,
     }
     impl Dispatch for Rc<Sink> {
         fn busy(&self) -> bool {
             self.busy.get()
+        }
+        fn finished(&mut self) -> Vec<Outcome> {
+            std::mem::take(&mut *self.ended.borrow_mut())
         }
         fn dispatch(&mut self, g: &RunnerGroup, j: &QueuedJob, jit: Secret) -> Result<(), String> {
             assert_eq!(jit.expose(), "jit");
@@ -387,6 +473,119 @@ pipe = "antspawn-r1"
         assert!(r.w.tick(100).dispatched.is_empty());
         assert!(r.w.tick(200).dispatched.is_empty());
         assert_eq!(r.api.mint_calls.get(), 1);
+    }
+
+    /// Report job `id` as ended with `result`; `nothing_ran` as the dispatcher would set it.
+    fn end(r: &Rig, id: u64, result: Result<&str, &str>, nothing_ran: bool) {
+        r.sink.ended.borrow_mut().push(Outcome {
+            job_id: id,
+            result: result.map(String::from).map_err(String::from),
+            nothing_ran,
+        });
+    }
+
+    fn policy(r: &mut Rig, max_attempts: u32, cooldown_s: u64) {
+        r.w.retry = RetryPolicy {
+            max_attempts,
+            cooldown_s,
+        };
+    }
+
+    #[test]
+    fn a_job_whose_runner_never_started_is_minted_for_again_after_the_cooldown_up_to_the_cap() {
+        let mut r = rig();
+        policy(&mut r, 3, 60);
+        set(&r, "O/a", vec![job("O/a", 7, MINE)]);
+        assert_eq!(r.w.tick(0).dispatched, vec![7]);
+        end(&r, 7, Err("could not open pipe p: NotFound"), true);
+        let t = r.w.tick(10);
+        assert_eq!(
+            t.ended_failed,
+            vec![(7, "could not open pipe p: NotFound".to_string(), true)]
+        );
+        assert!(t.dispatched.is_empty(), "inside the cooldown: no mint");
+        assert_eq!(r.api.mint_calls.get(), 1);
+        assert!(r.w.tick(69).dispatched.is_empty(), "one second early");
+        assert_eq!(r.w.tick(70).dispatched, vec![7], "cooldown over: attempt 2");
+        end(&r, 7, Err("again"), true);
+        assert!(r.w.tick(71).ended_failed[0].2, "attempt 2 of 3 may retry");
+        assert_eq!(r.w.tick(131).dispatched, vec![7], "attempt 3");
+        end(&r, 7, Err("third"), true);
+        let last = r.w.tick(132);
+        assert_eq!(
+            last.ended_failed,
+            vec![(7, "third".to_string(), false)],
+            "attempt 3 of 3 is final"
+        );
+        assert!(r.w.tick(10_000).dispatched.is_empty());
+        assert_eq!(r.api.mint_calls.get(), 3, "capped at max_attempts");
+    }
+
+    #[test]
+    fn a_runner_that_started_and_then_failed_is_never_minted_for_again() {
+        let mut r = rig();
+        set(&r, "O/a", vec![job("O/a", 7, MINE)]);
+        assert_eq!(r.w.tick(0).dispatched, vec![7]);
+        end(&r, 7, Err("vm died"), false);
+        let t = r.w.tick(1);
+        assert_eq!(t.ended_failed, vec![(7, "vm died".to_string(), false)]);
+        assert!(r.w.tick(100_000).dispatched.is_empty());
+        assert_eq!(
+            r.api.mint_calls.get(),
+            1,
+            "known-bad control: a watcher that retried on any error would mint twice"
+        );
+    }
+
+    #[test]
+    fn max_attempts_one_turns_retry_off_and_an_ok_end_is_reported_not_retried() {
+        let mut r = rig();
+        policy(&mut r, 1, 0);
+        set(&r, "O/a", vec![job("O/a", 7, MINE)]);
+        assert_eq!(r.w.tick(0).dispatched, vec![7]);
+        end(&r, 7, Err("no pipe"), true);
+        assert!(!r.w.tick(1).ended_failed[0].2);
+        assert!(r.w.tick(2).dispatched.is_empty());
+        let mut r = rig();
+        set(&r, "O/a", vec![job("O/a", 8, MINE)]);
+        assert_eq!(r.w.tick(0).dispatched, vec![8]);
+        end(&r, 8, Ok("Code(0)"), false);
+        let t = r.w.tick(1);
+        assert_eq!(t.ended_ok, vec![(8, "Code(0)".to_string())]);
+        assert!(t.ended_failed.is_empty());
+    }
+
+    #[test]
+    fn a_job_that_left_the_queue_while_waiting_to_retry_is_not_minted_for_again() {
+        let mut r = rig();
+        policy(&mut r, 3, 60);
+        set(&r, "O/a", vec![job("O/a", 7, MINE)]);
+        assert_eq!(r.w.tick(0).dispatched, vec![7]);
+        end(&r, 7, Err("no pipe"), true);
+        assert!(r.w.tick(1).ended_failed[0].2);
+        // Another runner took it (GitHub no longer lists it as queued).
+        set(&r, "O/a", vec![]);
+        assert!(r.w.tick(2).dispatched.is_empty());
+        assert_eq!(r.w.seen(), 0, "forgotten");
+        set(&r, "O/a", vec![job("O/a", 7, MINE)]);
+        assert_eq!(
+            r.w.tick(1000).dispatched,
+            vec![7],
+            "if it is queued again it is a new job to us"
+        );
+    }
+
+    #[test]
+    fn settle_takes_in_how_a_job_ended_without_polling_or_minting() {
+        let mut r = rig();
+        set(&r, "O/a", vec![job("O/a", 7, MINE)]);
+        assert_eq!(r.w.tick(0).dispatched, vec![7]);
+        let polls = r.src.polls.get();
+        end(&r, 7, Err("pipe closed"), false);
+        let s = r.w.settle(5);
+        assert_eq!(s.ended_failed, vec![(7, "pipe closed".to_string(), false)]);
+        assert_eq!(r.src.polls.get(), polls, "no poll");
+        assert_eq!(r.api.mint_calls.get(), 1, "no mint");
     }
 
     #[test]

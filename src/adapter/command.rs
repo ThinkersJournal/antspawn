@@ -183,6 +183,10 @@ impl<D: Dispatch> Dispatch for Announce<D> {
         self.inner.busy()
     }
 
+    fn finished(&mut self) -> Vec<super::dispatch::Outcome> {
+        self.inner.finished()
+    }
+
     fn dispatch(
         &mut self,
         group: &RunnerGroup,
@@ -197,14 +201,21 @@ impl<D: Dispatch> Dispatch for Announce<D> {
     }
 }
 
-/// Did a `--once` run end well? A failed dispatch, or a runner still going when the wait ran out, is a
-/// failure: a gate must not read success from either. Returns the reasons (empty = success).
-pub fn once_failures(t: &TickReport, timed_out: bool) -> Vec<String> {
+/// Did a `--once` run end well? A failed dispatch, a runner that ended in an error (`settled` is the report
+/// taken after the wait), or a runner still going when the wait ran out, is a failure: a gate must not read
+/// success from any of them. `--once` never retries. Returns the reasons (empty = success).
+pub fn once_failures(t: &TickReport, settled: &TickReport, timed_out: bool) -> Vec<String> {
     let mut f: Vec<String> = t
         .dispatch_failed
         .iter()
         .map(|(id, why)| format!("job {id}: runner minted but not started: {why}"))
         .collect();
+    f.extend(
+        settled
+            .ended_failed
+            .iter()
+            .map(|(id, why, _)| format!("job {id}: the runner ended in an error: {why}")),
+    );
     if timed_out {
         f.push("the runner was still running when the wait ended".into());
     }
@@ -218,6 +229,17 @@ fn unix_now() -> u64 {
 }
 
 fn print_tick(t: &TickReport) {
+    for (id, account) in &t.ended_ok {
+        eprintln!("spawn adapter: job {id}: runner ended: {account}");
+    }
+    for (id, why, retry) in &t.ended_failed {
+        let next = if *retry {
+            "; will mint again after the cooldown"
+        } else {
+            ""
+        };
+        eprintln!("spawn adapter: job {id}: the runner ended in an error: {why}{next}");
+    }
     if t.busy {
         eprintln!("spawn adapter: a runner is running; nothing polled");
         return;
@@ -265,7 +287,10 @@ pub fn run(config: &Path, pem_key: bool, once: bool) -> Result<bool, String> {
             while watcher.busy() && std::time::Instant::now() < end {
                 std::thread::sleep(Duration::from_secs(1));
             }
-            let bad = once_failures(&tick, watcher.busy());
+            let timed_out = watcher.busy();
+            let settled = watcher.settle(unix_now());
+            print_tick(&settled);
+            let bad = once_failures(&tick, &settled, timed_out);
             for why in &bad {
                 eprintln!("spawn adapter: --once failed: {why}");
             }
@@ -313,18 +338,31 @@ mod tests {
     fn once_fails_on_a_failed_dispatch_or_a_runner_still_going_and_only_then() {
         let clean = TickReport::default();
         assert!(
-            once_failures(&clean, false).is_empty(),
+            once_failures(&clean, &clean, false).is_empty(),
             "control: a clean tick succeeds"
         );
         let mut bad = TickReport::default();
         bad.dispatch_failed.push((7, "pipe never appeared".into()));
-        let f = once_failures(&bad, false);
+        let f = once_failures(&bad, &clean, false);
         assert!(
             f.len() == 1 && f[0].contains("job 7") && f[0].contains("pipe never appeared"),
             "{f:?}"
         );
-        let t = once_failures(&clean, true);
+        let t = once_failures(&clean, &clean, true);
         assert!(t.len() == 1 && t[0].contains("still running"), "{t:?}");
+        let mut ended = TickReport::default();
+        ended.ended_failed.push((9, "pipe closed".into(), false));
+        let e = once_failures(&clean, &ended, false);
+        assert!(
+            e.len() == 1 && e[0].contains("job 9") && e[0].contains("pipe closed"),
+            "a runner that ended in an error fails --once: {e:?}"
+        );
+        let mut fine = TickReport::default();
+        fine.ended_ok.push((9, "Code(0)".into()));
+        assert!(
+            once_failures(&clean, &fine, false).is_empty(),
+            "control: a runner that ended well does not"
+        );
     }
 
     #[test]

@@ -39,6 +39,11 @@ pub trait RunnerBackend: Send + Sync + 'static {
 pub struct Outcome {
     pub job_id: u64,
     pub result: Result<String, String>,
+    /// The job failed before a runner could have taken it: the environment never started, or `started`
+    /// (the delivery of the config) failed and the backend ended the environment. Only then may the
+    /// watcher mint for the job again. A failure after a successful delivery is never `nothing_ran`:
+    /// the runner may have taken the job. Always `false` for `Ok`.
+    pub nothing_ran: bool,
 }
 
 pub struct SandboxDispatch<B: RunnerBackend, T: JitTransport> {
@@ -86,6 +91,10 @@ impl<B: RunnerBackend, T: JitTransport> Dispatch for SandboxDispatch<B, T> {
         self.busy.load(Ordering::SeqCst)
     }
 
+    fn finished(&mut self) -> Vec<Outcome> {
+        self.take_outcomes()
+    }
+
     fn dispatch(
         &mut self,
         group: &RunnerGroup,
@@ -101,12 +110,22 @@ impl<B: RunnerBackend, T: JitTransport> Dispatch for SandboxDispatch<B, T> {
         let (group, job_id) = (group.clone(), job.job_id);
         self.thread = Some(std::thread::spawn(move || {
             let _clear = ClearOnDrop(busy);
-            let result = backend.run_one(&group, &mut |id| transport.deliver(id, &jit));
+            let mut delivered = false;
+            let result = backend.run_one(&group, &mut |id| {
+                let r = transport.deliver(id, &jit);
+                delivered = r.is_ok();
+                r
+            });
             drop(jit);
+            let nothing_ran = result.is_err() && !delivered;
             outcomes
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
-                .push(Outcome { job_id, result });
+                .push(Outcome {
+                    job_id,
+                    result,
+                    nothing_ran,
+                });
         }));
         Ok(())
     }
@@ -251,7 +270,8 @@ mod tests {
             d.take_outcomes(),
             vec![Outcome {
                 job_id: 7,
-                result: Ok("Code(0)".into())
+                result: Ok("Code(0)".into()),
+                nothing_ran: false
             }]
         );
         assert!(d.take_outcomes().is_empty(), "outcomes are taken once");
@@ -269,7 +289,8 @@ mod tests {
             d.take_outcomes(),
             vec![Outcome {
                 job_id: 1,
-                result: Err("no route".into())
+                result: Err("no route".into()),
+                nothing_ran: true
             }]
         );
     }
@@ -281,7 +302,12 @@ mod tests {
             .unwrap();
         gate.send(()).unwrap();
         d.join();
-        assert_eq!(d.take_outcomes()[0].result, Err("vm died".into()));
+        let o = d.take_outcomes();
+        assert_eq!(o[0].result, Err("vm died".into()));
+        assert!(
+            !o[0].nothing_ran,
+            "the config reached the runner, so the job may have been taken"
+        );
         d.dispatch(&group(), &job(2), Secret::new("B".into()))
             .unwrap();
         gate.send(()).unwrap();
