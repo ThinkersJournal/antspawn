@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.56
+
+- docs: `docs/ADAPTER-DECISIONS.md`, the three decisions `spawn adapter` (ROADMAP row 23, which clears the 11 true `reachability` findings of row 14) needs before it is built: where the configuration lives (plain TOML vs a ConfigurAnt schema), where the GitHub App key comes from (DPAPI/file now, vault env later, SecretAnt does not exist yet), and sandbox vs account per group. Options, evidence and a recommendation each; nothing run. Version provisional (PM allocates).
+
 ## 0.0.55
 
 - CodeRipper baseline (ROADMAP rows 15-17), no behaviour change: the five discarded `watcher::tick` results in tests now assert what they return (`unused-return-values`); the `allow(dead_code)` in `examples/matrix.rs` gets a reason (`lint-suppression`); the test fixtures in `adapter::github_client` no longer contain a full PEM header literal, they build it at run time (`SEC-002`, gitleaks `private-key`). The SEC-002 cause is a **hypothesis** (the rule's pattern spans lines, and the three fixtures sit close together; the reported line 591 is not a key) that gitleaks could not be run here to confirm: CI is the check. Row 14 (`reachability`) is unchanged and recorded as a finding that is true: no binary drives the adapter yet. Version provisional (PM allocates).
