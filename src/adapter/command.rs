@@ -18,7 +18,7 @@ use super::github::{
 };
 use super::github_client::HttpGithub;
 use super::routing::RoutingDispatch;
-use super::watcher::{TickReport, Watcher};
+use super::watcher::{Dispatch, QueuedJob, TickReport, Watcher};
 
 /// Seconds between polls when running continuously.
 const POLL_S: u64 = 20;
@@ -60,7 +60,10 @@ pub fn load_config(path: &Path) -> Result<AdapterConfig, String> {
 fn runnable(launcher: &str) -> Result<(), String> {
     match launcher {
         "account" if cfg!(windows) => Ok(()),
-        "account" => Err("the account launcher is Windows-only".into()),
+        "account" => Err(
+            "the account launcher is Windows-only: this build cannot check or run it here; run `spawn adapter --check` on the Windows host"
+                .into(),
+        ),
         "windows-sandbox" => {
             Err("the windows-sandbox launcher has no JIT-config transport yet (board 322)".into())
         }
@@ -165,6 +168,46 @@ pub fn router(cfg: &AdapterConfig) -> Result<RoutingDispatch, String> {
     Ok(r)
 }
 
+/// Announces, before each dispatch, which job goes to which group and launcher. Holds no secret: the JIT
+/// config is passed through untouched and never formatted.
+struct Announce<D: Dispatch> {
+    inner: D,
+    sink: Box<dyn Fn(String)>,
+}
+
+impl<D: Dispatch> Dispatch for Announce<D> {
+    fn busy(&self) -> bool {
+        self.inner.busy()
+    }
+
+    fn dispatch(
+        &mut self,
+        group: &RunnerGroup,
+        job: &QueuedJob,
+        jit: Secret,
+    ) -> Result<(), String> {
+        (self.sink)(format!(
+            "spawn adapter: job {} ({}): group `{}` -> launcher `{}`",
+            job.job_id, job.repo, group.name, group.launcher
+        ));
+        self.inner.dispatch(group, job, jit)
+    }
+}
+
+/// Did a `--once` run end well? A failed dispatch, or a runner still going when the wait ran out, is a
+/// failure: a gate must not read success from either. Returns the reasons (empty = success).
+pub fn once_failures(t: &TickReport, timed_out: bool) -> Vec<String> {
+    let mut f: Vec<String> = t
+        .dispatch_failed
+        .iter()
+        .map(|(id, why)| format!("job {id}: runner minted but not started: {why}"))
+        .collect();
+    if timed_out {
+        f.push("the runner was still running when the wait ended".into());
+    }
+    f
+}
+
 fn unix_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -195,7 +238,8 @@ fn print_tick(t: &TickReport) {
 }
 
 /// Run the adapter. `once`: one poll, then wait for the runner it started (if any) and return.
-pub fn run(config: &Path, pem_key: bool, once: bool) -> Result<(), String> {
+/// `Ok(true)`: clean. `Ok(false)`: `--once` ended badly (reasons printed to stderr; exit code 3).
+pub fn run(config: &Path, pem_key: bool, once: bool) -> Result<bool, String> {
     let cfg = load_config(config)?;
     let dispatch = router(&cfg)?;
     let keys = key_provider(&cfg.key_path, pem_key).map_err(|e| e.to_string())?;
@@ -205,16 +249,24 @@ pub fn run(config: &Path, pem_key: bool, once: bool) -> Result<(), String> {
         cfg,
         Minter::new(&github, Backoff::default()),
         &github,
-        dispatch,
+        Announce {
+            inner: dispatch,
+            sink: Box::new(|l| eprintln!("{l}")),
+        },
     );
     loop {
-        print_tick(&watcher.tick(unix_now()));
+        let tick = watcher.tick(unix_now());
+        print_tick(&tick);
         if once {
             let end = std::time::Instant::now() + ceiling + Duration::from_secs(120);
             while watcher.busy() && std::time::Instant::now() < end {
                 std::thread::sleep(Duration::from_secs(1));
             }
-            return Ok(());
+            let bad = once_failures(&tick, watcher.busy());
+            for why in &bad {
+                eprintln!("spawn adapter: --once failed: {why}");
+            }
+            return Ok(bad.is_empty());
         }
         std::thread::sleep(Duration::from_secs(POLL_S));
     }
@@ -252,6 +304,77 @@ mod tests {
         );
         let e = router(&c).err().expect("refused");
         assert!(e.contains("`g`") && e.contains("322"), "{e}");
+    }
+
+    #[test]
+    fn once_fails_on_a_failed_dispatch_or_a_runner_still_going_and_only_then() {
+        let clean = TickReport::default();
+        assert!(
+            once_failures(&clean, false).is_empty(),
+            "control: a clean tick succeeds"
+        );
+        let mut bad = TickReport::default();
+        bad.dispatch_failed.push((7, "pipe never appeared".into()));
+        let f = once_failures(&bad, false);
+        assert!(
+            f.len() == 1 && f[0].contains("job 7") && f[0].contains("pipe never appeared"),
+            "{f:?}"
+        );
+        let t = once_failures(&clean, true);
+        assert!(t.len() == 1 && t[0].contains("still running"), "{t:?}");
+    }
+
+    #[test]
+    fn the_routing_decision_is_announced_with_job_group_and_launcher_and_no_secret() {
+        use std::sync::{Arc, Mutex};
+        struct Ok1;
+        impl Dispatch for Ok1 {
+            fn busy(&self) -> bool {
+                false
+            }
+            fn dispatch(
+                &mut self,
+                _: &RunnerGroup,
+                _: &QueuedJob,
+                _: Secret,
+            ) -> Result<(), String> {
+                Ok(())
+            }
+        }
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let l2 = lines.clone();
+        let mut a = Announce {
+            inner: Ok1,
+            sink: Box::new(move |l| l2.lock().unwrap().push(l)),
+        };
+        let c = cfg("windows-sandbox", "C:/k.pem");
+        let job = QueuedJob {
+            repo: "O/a".into(),
+            run_id: 1,
+            job_id: 42,
+            labels: vec!["antspawn".into()],
+        };
+        a.dispatch(&c.groups[0], &job, Secret::new("SECRET-JIT".into()))
+            .unwrap();
+        let got = lines.lock().unwrap().join(
+            "
+",
+        );
+        assert!(
+            got.contains("job 42") && got.contains("`g`") && got.contains("`windows-sandbox`"),
+            "{got}"
+        );
+        assert!(!got.contains("SECRET"));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn off_windows_check_says_the_account_launcher_needs_the_windows_host() {
+        let r = check(&cfg("account", "/k.pem"), true);
+        assert!(
+            r.problems.iter().any(|p| p.contains("Windows host")),
+            "{r:?}"
+        );
     }
 
     #[test]
