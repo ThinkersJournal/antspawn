@@ -2,7 +2,8 @@
 <#
 .SYNOPSIS
   One-time, elevated setup for ONE account-backed Actions runner (ROADMAP row 21, docs/ACCOUNT-DISPATCH.md).
-  Run by the machine owner, never by a lane. NOT YET RUN ANYWHERE: written 2026-10-31, dry-run checked only.
+  Run by the machine owner, never by a lane. FAILED on its first real run (2026-10-31, 0.0.58: `New-LocalUser -Description`
+  was 59 characters, the limit is 48; and the error left the exit code 0). Fixed in 0.0.59; NOT YET COMPLETED anywhere.
 
 .DESCRIPTION
   Creates the restricted local account `ghr-<Name>` (no group beyond Users), its private root
@@ -44,7 +45,15 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
+# Any terminating error below ends in the catch at the bottom: it prints FAILED and exits 1. Without it, a
+# `throw` leaves $LASTEXITCODE untouched, so `& script.ps1; $LASTEXITCODE` read 0 after a failed run
+# (seen on the first real run, 2026-10-31). Errors raised while binding the parameters (a bad -Name) happen
+# before this point and are PowerShell's own.
+try {
+
 $AccountName = "ghr-$Name"
+# New-LocalUser limits -Description to 48 characters, whatever -Name is (the first real run failed on 59).
+$AccountDescription = 'AntSpawn runner; nobody holds its password'
 $TaskName = "AntSpawnRunner-$Name"
 $Root = "C:\gh-runner-$Name"
 $BinDir = [IO.Path]::GetFullPath($BinDir)
@@ -84,15 +93,20 @@ $account = Get-LocalUser -Name $AccountName -ErrorAction SilentlyContinue
 $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 $plain = $null
 if ($Apply -and ((-not $account) -or (-not $task))) {
-    $bytes = [byte[]]::new(48)
-    [Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
-    $plain = [Convert]::ToBase64String($bytes)
+    # Local password policy wants 3 of 4 character classes; base64 usually has them, so insist on it rather than hope.
+    do {
+        $bytes = [byte[]]::new(48)
+        $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+        $rng.GetBytes($bytes)   # works in Windows PowerShell 5.1 too ([RandomNumberGenerator]::Fill needs .NET Core)
+        $rng.Dispose()
+        $plain = [Convert]::ToBase64String($bytes)
+    } until (($plain -cmatch '[A-Z]') -and ($plain -cmatch '[a-z]') -and ($plain -match '[0-9]'))
 }
 Step "create local user $AccountName (random password, never expires, cannot change it, no groups added)" {
     if (-not $account) {
         New-LocalUser -Name $AccountName -Password (ConvertTo-SecureString $plain -AsPlainText -Force) `
             -PasswordNeverExpires -UserMayNotChangePassword -AccountNeverExpires `
-            -Description "AntSpawn Actions runner $Name. Nobody holds this password." | Out-Null
+            -Description $AccountDescription | Out-Null
     } elseif (-not $task) {
         Set-LocalUser -Name $AccountName -Password (ConvertTo-SecureString $plain -AsPlainText -Force)
     }
@@ -212,3 +226,10 @@ Check "the account can execute $Shim (read+execute granted, none denied)" {
 
 if ($results | Where-Object { -not $_.Ok }) { Write-Host "`nFAILED: see the FAIL lines above."; exit 1 }
 Write-Host "`nAll properties read back as expected. Next: the negative controls (docs/ACCOUNT-DISPATCH.md), then the 3-run proof."
+} catch {
+    Write-Host ''
+    Write-Host "FAILED: $($_.Exception.Message)"
+    Write-Host $_.ScriptStackTrace
+    Write-Host 'Nothing after the failing step ran. Read the state back before re-running (the script is safe to re-run).'
+    exit 1
+}

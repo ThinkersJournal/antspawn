@@ -46,6 +46,9 @@ pub fn key_provider(path: &Path, pem: bool) -> Result<AnyKey, KeyError> {
         return super::github_client::DpapiKeyProvider::new(path.to_path_buf(), vec![])
             .map(AnyKey::Dpapi);
     }
+    // Off Windows there is no DPAPI, so a plain PEM file is the only form and `--pem-key` changes nothing.
+    #[cfg(not(windows))]
+    let _ = pem;
     FileKeyProvider::new(path.to_path_buf(), vec![]).map(AnyKey::File)
 }
 
