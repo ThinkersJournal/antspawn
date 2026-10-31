@@ -2,6 +2,8 @@
 
 ## 0.0.64
 
+- `.coderipper.toml` (from 0.0.63) quoted the test input's header and footer lines literally, so SEC-002 matched the config itself in commits `7e21e131` and `104cdadb`. Reworded so no current line matches, and a second `[[allow]]` names those two commits with its reason. Measured (coderipper 0.8.19, same flags, this tree): SEC-002 0 findings, 4 waived; reachability 0 findings, 9 waived; before the reword SEC-002 had 1 unwaived finding on `.coderipper.toml:6`. `docs/MEASUREMENTS.md` also records the 2026-10-31 spawn1/spawn2 pipe probes and the unexplained `LastTaskResult` 2.
+
 - docs/proof/: the files for the account-backed 3-run proof (ROADMAP row 21 slice d): `adapter.toml` (two account groups), `proof.yml` (positive, clean-slate and negative controls A and B, written so a step passes only on a proven denial), `PASTE-spawn1.ps1`, `PASTE-spawn2.ps1` (second runner account and canary; elevated), `make-dpapi-key.ps1` (PEM to the DPAPI key file; dry-run by default; tested with a dummy PEM only) and `README.md` with the order. None run end to end. Version provisional (PM allocates).
 
 ## 0.0.63
