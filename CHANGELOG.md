@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.51
+
+- `adapter::account_backend` (ROADMAP row 21 slice b): `AccountBackend<T: AccountTask>` (a `RunnerBackend`: start the account's task, hand the pipe name to delivery, wait; a failed delivery ends the task), `PipeTransport` (a `JitTransport`: opens `\\.\pipe\<name>` as the launcher user, retries until the shim has created it, writes once; busy and denied are errors at once) and `SchtasksTask` (the real task, `schtasks /Run`, `/Query`, `/End`). Tested with a fake task and, on Windows, against the real `spawn-jit-shim --pipe` as the current user, with a denied-principal control. **Not run against a real account, task or Task Scheduler**; `schtasks /Query` output format and whether a non-admin `/Run` works are UNMEASURED. Not yet wired into `spawn adapter`. Version provisional (PM allocates).
+
 ## 0.0.50
 
 - `spawn-jit-shim --pipe <name> --allow-sid <sid> <runner>` (Windows only; ROADMAP row 21 slice a, board 341): receives the JIT config on a named pipe with one instance, remote clients rejected, `FILE_FLAG_FIRST_PIPE_INSTANCE` (a squatter's name is refused), and a protected DACL with a single ACE for `--allow-sid` (write only). Same limits, checks and in-memory-only handling as stdin and `--listen`. Six tests against the current user, with a denied-principal control; **not run against a second account or via Task Scheduler** (needs the elevated provisioning, UNMEASURED). Found by measurement: SDDL `FW` alone denies the named SID; the ACE needs `FILE_READ_ATTRIBUTES` too. Adds windows-sys features `Win32_Security_Authorization`, `Win32_Storage_FileSystem`, `Win32_System_IO`, `Win32_System_Pipes`. Version provisional (PM allocates).
