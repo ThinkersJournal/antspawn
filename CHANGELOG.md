@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.50
+
+- `spawn-jit-shim --pipe <name> --allow-sid <sid> <runner>` (Windows only; ROADMAP row 21 slice a, board 341): receives the JIT config on a named pipe with one instance, remote clients rejected, `FILE_FLAG_FIRST_PIPE_INSTANCE` (a squatter's name is refused), and a protected DACL with a single ACE for `--allow-sid` (write only). Same limits, checks and in-memory-only handling as stdin and `--listen`. Six tests against the current user, with a denied-principal control; **not run against a second account or via Task Scheduler** (needs the elevated provisioning, UNMEASURED). Found by measurement: SDDL `FW` alone denies the named SID; the ACE needs `FILE_READ_ATTRIBUTES` too. Adds windows-sys features `Win32_Security_Authorization`, `Win32_Storage_FileSystem`, `Win32_System_IO`, `Win32_System_Pipes`. Version provisional (PM allocates).
+
 ## 0.0.49
 
 - **Breaking for callers of `spawn run`:** a refusal exits **125** (was 2) and another spawn-side failure **126** (was 2); job exit codes, 124 (timeout) and 137 (killed) are unchanged. New `<results>/spawn-result.json` (authoritative status), `stdout.tail` and `stderr.tail` (last 64 KiB; `windows-sandbox` combined). Output names `stdout.tail`, `stderr.tail`, `spawn-result.json` are reserved. `naive` now gives its job a null stdin and captures output instead of inheriting it. `account` streams need a redeployed `spawn-runner` (UNVERIFIED). MEASUREMENTS: the "sandbox never starts from a tool shell" statements are marked superseded (0.0.29). Version provisional (PM allocates).
