@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.57
+
+- `adapter::config_file::load` and the schema `configurant.toml` (ROADMAP row 23 slice a; `docs/ADAPTER-DECISIONS.md` decision 1, ruled B): the adapter's configuration loads through ConfigurAnt, giving a row-indexed error with a did-you-mean for an unknown key (`group[1].launcer`, suggestion `launcher`) and `configurant check/explain` on the schema. The configuration file keeps the shape `AdapterConfig::from_toml` accepts, and a test loads the sample through both and requires equal results; the rules a schema cannot say (unique group names and label sets, exact `owner/name` repos) stay in `AdapterConfig::validate`. New dependency `configurant` 0.5.33 (crates.io; `cargo deny` clean, one duplicate `windows-sys` warning). **Breaking (pre-1.0 notice): the minimum Rust version is now 1.95** (ConfigurAnt needs it; CireSnave 2026-10-08 permits raising it; the CI msrv job reads it from `Cargo.toml`). Nothing calls `load` yet: the `spawn adapter` command is slice c. Version provisional (PM allocates).
+
 ## 0.0.56
 
 - docs: `docs/ADAPTER-DECISIONS.md`, the three decisions `spawn adapter` (ROADMAP row 23, which clears the 11 true `reachability` findings of row 14) needs before it is built: where the configuration lives (plain TOML vs a ConfigurAnt schema), where the GitHub App key comes from (DPAPI/file now, vault env later, SecretAnt does not exist yet), and sandbox vs account per group. Options, evidence and a recommendation each; nothing run. Rulings (PM, 2026-10-31) recorded; both unverified points checked (published configurant 0.5.33 loads `[[table]]` rows; a multi-line value survives an environment variable between processes). Version provisional (PM allocates).

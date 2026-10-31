@@ -1,0 +1,72 @@
+# The adapter's configuration, as a ConfigurAnt schema (docs/ADAPTER-DECISIONS.md, decision 1; PM ruling 2026-10-31).
+# The configuration FILE is plain TOML in this shape; `configurant check/describe/explain configurant.toml` read this file.
+# Cross-row rules (unique group names, unique label sets, exact `owner/name` repos, a launcher named per group) are not
+# expressible here and stay code: `AdapterConfig::validate`.
+
+[project]
+name = "antspawn-adapter"
+version = "1.0.0"
+schema_version = 1
+summary = "The GitHub adapter that turns queued Actions jobs into AntSpawn runners."
+
+[[value]]
+key = "org"
+type = "string"
+required = true
+description = "The GitHub organisation whose runner groups and App installation are used."
+
+[[value]]
+key = "app_id"
+type = "int"
+min = 1
+required = true
+description = "The GitHub App's id."
+
+[[value]]
+key = "installation_id"
+type = "int"
+min = 1
+required = true
+description = "The App's installation id on the organisation."
+
+[[value]]
+key = "key_path"
+type = "path"
+required = true
+description = "Absolute path of the App's private key, outside every sandbox. A path, never the key."
+
+[[value]]
+key = "job_timeout_s"
+type = "int"
+min = 1
+max = 21600
+required = true
+description = "Ceiling for every job, in seconds; a spec may ask for less. Six hours at most."
+
+[[table]]
+key = "group"
+description = "A runner group: the repos allowed to use it and the labels that route a job to it."
+
+[[table.field]]
+key = "name"
+type = "string"
+required = true
+description = "Unique group name."
+
+[[table.field]]
+key = "repos"
+type = "list"
+required = true
+description = "Repos allowed to use the group, each exactly owner/name (no wildcards)."
+
+[[table.field]]
+key = "labels"
+type = "list"
+required = true
+description = "Labels a workflow's runs-on must carry, all of them."
+
+[[table.field]]
+key = "launcher"
+type = "string"
+required = true
+description = "The AntSpawn launcher that runs this group's jobs (account or windows-sandbox)."

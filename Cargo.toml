@@ -1,8 +1,8 @@
 [package]
 name = "antspawn"
-version = "0.0.56"
+version = "0.0.57"
 edition = "2024"
-rust-version = "1.94"
+rust-version = "1.95"
 description = "A sandboxed job runner: one clean environment per job, only what the job declares, outputs collected, environment destroyed. Launchers are certified by tests, never asserted."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/ThinkersJournal/antspawn"
@@ -22,6 +22,7 @@ path = "src/bin/spawn-runner.rs"
 base64 = "0.23.1"
 capant = "0.1.0"
 clap = { version = "4.6.7", features = ["derive"] }
+configurant = "0.5.33"
 ring = "0.17.14"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
