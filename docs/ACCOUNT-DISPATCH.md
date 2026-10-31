@@ -4,6 +4,8 @@ Design note, docs only. Written 2026-10-30 at `origin/main` ecb6f76 (0.0.46) for
 the runner runs on the host as a restricted account, not in Windows Sandbox). **Nothing here was run**; facts are read from this repo at that
 ref and from agentlife's `docs/RUNNER-ACCOUNTS.md` (read from branch `docs/runner-setup-8b` at e034c99, **not yet on its `main`**).
 
+**Ruled (board 341, CireSnave 2026-10-30, verbatim: "341: A."):** this path may use a named ACL'd pipe and outbound network, departing from board 260 ruling (b) as this note describes. Where the text below says "open ruling" or "needs its own CireSnave decision", that decision is made for the pipe and the network; the elevated provisioning is still CireSnave's and still not run. How the outbound access is limited was not part of the ruling as relayed; the design below still recommends limiting it to GitHub's hosts.
+
 ## What exists, and the one thing that does not carry over
 
 `SandboxDispatch` (0.0.38) runs one runner VM per minted JIT config behind two seams: `RunnerBackend` (start a VM, call a hook with its id) and
@@ -36,11 +38,11 @@ is not reused for runners.
    ephemeral, so the runner exits after one job and deregisters itself. "Outcome" and `busy()` semantics of `SandboxDispatch` are unchanged.
 4. **Between runs.** The task's last step wipes the per-run directory and the account's temp and work folders (the existing `serve` semantics:
    the result marker appears only after the process tree is dead and the directory is gone), and a kill-on-close Job Object holds the tree.
-5. **Network is the open ruling.** The existing account is outbound-firewalled (`account-setup.ps1`: "block all outbound"). A runner needs
+5. **Network (ruled, board 341).** The existing account is outbound-firewalled (`account-setup.ps1`: "block all outbound"). A runner needs
    outbound HTTPS to GitHub, which **contradicts board 260 ruling (b)** ("the runner gets network only inside Windows Sandbox"). That ruling was
    about the VM path; the account path needs its own CireSnave decision before any live run (draft question for the board: may a per-runner
    account have outbound access limited to GitHub's required hosts, and how is "limited" enforced when Windows Firewall rules take addresses,
-   not host names). Recommendation: ask; do not widen by default. Everything below that needs the network is therefore also blocked on that decision.
+   not host names). Board 341 ruled A: outbound network is allowed on this path. Recommendation kept: limit it to GitHub's hosts, not wider by default; how to enforce that is a setup-script detail for the elevated step.
 6. **Residue.** Anything that can run as the launcher user can connect to the pipe first. The launcher user already holds the GitHub App key that
    mints the config, so this widens no trust boundary; the sandbox path's residue (any guest process) is larger. A second account's processes
    cannot connect (DACL).
@@ -74,7 +76,7 @@ launcher user and nobody else on this machine, anything involving the second acc
 ## What needs board 321 and what does not
 
 Board 321 is the Windows Sandbox feature and the runner account for **sandbox** tests. It is **not** needed for this path. This path needs its
-own elevated provisioning (account, task, ACLs) and the network ruling above, which a new board item should carry (the PM raises it).
+own elevated provisioning (account, task, ACLs) and, now ruled (board 341), the network above; the provisioning itself still needs its own board item (the PM raises it).
 
 | Step | Needs |
 |---|---|
@@ -82,10 +84,10 @@ own elevated provisioning (account, task, ACLs) and the network ruling above, wh
 | `spawn-jit-shim --pipe`, one-shot semantics, DACL-for-current-user test, `PipeTransport`, `AccountBackend` with fakes (as 0.0.38 did) | nothing: all testable without elevation or a second account |
 | Setup script for per-runner account/task/ACL (printed, dry-run by default) | nothing to write; running it is CireSnave's elevated step |
 | Negative controls A and B, non-admin `schtasks /Run`, DACL against a real second principal | the elevated provisioning (new board item), not 321 |
-| A live run against `antspawn-proof`, then 3 runs | provisioning + the network ruling; for cpufish also the GitHub App installed on cpufish (an owner action) |
+| A live run against `antspawn-proof`, then 3 runs | provisioning (the network is ruled, board 341); for cpufish also the GitHub App installed on cpufish (an owner action) |
 | Running these tests in CI on a self-hosted runner (rules 5.1g/h) | board 321's runner half |
 
 ## Slices
 
 1. Shim `--pipe` mode + tests (loopback-style, current user only). 2. `PipeTransport` + `AccountBackend` with fakes. 3. Setup script and the
-board question (PM). 4. Live run and the 3-run proof after provisioning and the network ruling. Each slice one PR, each saying "not run live".
+board question (PM). 4. Live run and the 3-run proof after provisioning (network ruled, board 341). Each slice one PR, each saying "not run live".

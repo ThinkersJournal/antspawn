@@ -25,7 +25,7 @@ State is `open`, `held(by what)` or `done(PR)`. Add rows here, not to HANDOFF.
 | 18 | GPU in Windows Sandbox / Hyper-V GPU-P: unmeasured | open |
 | 19 | Sandboxie-Plus with named pipes: unmeasured | open |
 | 20 | CodeRipper `patent-sweep-record` (Medium/High): any version change fails it until `docs/PATENT-SWEEP.md` exists (first seen with the v0.15.0 pin, #46). Take the required content from CodeRipper's rule docs, not guessed | open |
-| 21 | Account-backed Dispatch: a runner job on a per-runner restricted account for host-resource tests (cpufish AOCL). Design note `docs/ACCOUNT-DISPATCH.md` (the stdin pipe cannot cross accounts; named pipe; 3-run proof with a cross-account negative control; what needs elevation and what needs board 321). Slices: shim `--pipe`, `PipeTransport`/`AccountBackend` with fakes, setup script, live proof. Live steps blocked on elevated provisioning and a network ruling, not on 321 | done(note); slices open |
+| 21 | Account-backed Dispatch: a runner job on a per-runner restricted account for host-resource tests (cpufish AOCL). Design note `docs/ACCOUNT-DISPATCH.md` (the stdin pipe cannot cross accounts; named pipe; 3-run proof with a cross-account negative control; what needs elevation and what needs board 321). Slices: shim `--pipe`, `PipeTransport`/`AccountBackend` with fakes, setup script, live proof. Board 341 RULED A (CireSnave 2026-10-30, "341: A."): the named ACL'd pipe and outbound network are allowed, departing from 260(b). Live steps blocked on elevated provisioning, not on 321 | done(note); slices open |
 
 Sweep source for 14 to 17: `coderipper sweep --profile portfolio` on `f08a257` (CI run 41015493600, coderipper 0.9.6); a local run
 (0.8.19) reproduces rows 14 to 16 exactly and cannot run gitleaks.

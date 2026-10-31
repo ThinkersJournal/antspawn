@@ -2,7 +2,7 @@
 
 ## 0.0.48
 
-- docs: `docs/ACCOUNT-DISPATCH.md`, the design note for an account-backed Dispatch (ROADMAP row 21); docs only, nothing run. Version provisional (PM allocates).
+- docs: `docs/ACCOUNT-DISPATCH.md`, the design note for an account-backed Dispatch (ROADMAP row 21); docs only, nothing run. Records board 341 ruled A (CireSnave 2026-10-30): named ACL'd pipe and outbound network allowed on this path. Version provisional (PM allocates).
 
 ## 0.0.46
 
