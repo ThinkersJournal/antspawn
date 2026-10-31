@@ -2,7 +2,7 @@
 
 ## 0.0.56
 
-- docs: `docs/ADAPTER-DECISIONS.md`, the three decisions `spawn adapter` (ROADMAP row 23, which clears the 11 true `reachability` findings of row 14) needs before it is built: where the configuration lives (plain TOML vs a ConfigurAnt schema), where the GitHub App key comes from (DPAPI/file now, vault env later, SecretAnt does not exist yet), and sandbox vs account per group. Options, evidence and a recommendation each; nothing run. Version provisional (PM allocates).
+- docs: `docs/ADAPTER-DECISIONS.md`, the three decisions `spawn adapter` (ROADMAP row 23, which clears the 11 true `reachability` findings of row 14) needs before it is built: where the configuration lives (plain TOML vs a ConfigurAnt schema), where the GitHub App key comes from (DPAPI/file now, vault env later, SecretAnt does not exist yet), and sandbox vs account per group. Options, evidence and a recommendation each; nothing run. Rulings (PM, 2026-10-31) recorded; both unverified points checked (published configurant 0.5.33 loads `[[table]]` rows; a multi-line value survives an environment variable between processes). Version provisional (PM allocates).
 
 ## 0.0.55
 

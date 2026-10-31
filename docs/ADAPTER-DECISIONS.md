@@ -3,6 +3,8 @@
 Docs only, written 2026-10-31 at `origin/main` 6ee9d40 (0.0.54) for the PM's ruling. **Nothing here was run.** Facts are read from this repo, from
 ConfigurAnt and SecretAnt at their `origin/main` (not working trees), and from crates.io; each says which. What I could not read is marked UNVERIFIED.
 
+**Ruled (PM, 2026-10-31):** (1) config = ConfigurAnt schema + TOML (B), falling back to plain TOML (A) only if the published `configurant` lacks `[[table]]`; (2) App key = the existing DPAPI/file providers behind `KeyProvider` (A), no dependency on SecretAnt; (3) launcher per group via a `RoutingDispatch`, one job at a time (A), measure before per-launcher busy. The two unverified points below were checked the same day; results are in place.
+
 **Why this exists.** CodeRipper's 11 `reachability` findings (row 14) are true: nothing in `src/main.rs` or `src/bin/` calls the adapter, so `Watcher::tick`,
 `SandboxDispatch`, `WsbBackend`, `ListenerTransport`, `AccountBackend` and the runner pin have callers only in tests. The fix is a command that runs the
 watcher loop (`spawn adapter`, row 23), not a suppression (PM ruling 2026-10-31). Building it forces three choices that are not mine to make.
@@ -21,6 +23,8 @@ the configuration and reports, touching neither GitHub nor a launcher. The piece
 promises layering `default < file < environment < command line`, `explain`, named errors, a did-you-mean on unknown keys, schema migration, and "secrets:
 environment only, never printed". Its `ValueType` has `Table` ("an array of tables, `[[name]]`") at 59a88db, so `[[group]]` fits; **I did not check that
 0.5.33 already has `Table`** (UNVERIFIED), so building on it means depending on a version at least as new as the first one that does.
+
+**Verified 2026-10-31 against the published crate, not `main`.** I downloaded `configurant-0.5.33.crate` from static.crates.io into an empty scratch folder and built a throwaway project with `configurant = "=0.5.33"` (crates.io, nothing from a working tree). A schema with a `[[table]]` named `group` (fields `name`, `repos`, `labels` and `launcher`, all `required`) and two `[[group]]` rows in a TOML file loaded as two rows with the right values; a misspelt key `launcer` in row 2 was refused as `UnknownKey { key: "group[1].launcer", suggestion: Some("launcher") }`; a missing required `launcher` was refused as `MissingRequired { key: "group[1].launcher" }`. So **the fallback to A is not needed**, and ConfigurAnt gives the row index and the did-you-mean for free. The probe is not committed. Not checked: the cross-row rules (unique label sets, exact `owner/name` repos) are not expressible in a schema, so `AdapterConfig::validate` stays as code on the loaded rows.
 Portfolio roadmap: "every project needs configuration" is the reason ConfigurAnt exists; no ruling in `CIRESNAVE-EXPECTATIONS.md` makes adopting it
 mandatory (6.14 names auth-framework, PersistAnt and SafeImage only).
 
@@ -51,7 +55,7 @@ convention the PM proposed and CireSnave has not confirmed (EXPECTATIONS 6.12, s
 | Option | What | For | Against |
 |---|---|---|---|
 | **A. DPAPI (or file) behind `KeyProvider`** | Use what exists. Config: `key_path` plus `key_store = "dpapi" or "file"`. | Built and tested; no new dependency; key is never an env var or argument. | Windows-only DPAPI; the protected blob is machine-and-user bound, so a move is a re-wrap; rotation is manual; `CurrentUser` scope means any process of the watcher account can unwrap it (the same limit every tool here states). |
-| **B. Vault entry delivered as an env var** | `with-secret` starts `spawn adapter run` with `GITHUB_ANTSPAWN_APP_KEY` set; a new `EnvKeyProvider` reads it. | Matches the portfolio's secret path and ConfigurAnt's "secrets from the environment only" rule; nothing on disk. | A multi-line PEM in an environment variable: UNVERIFIED on this box and awkward; the process environment is readable by same-user processes; needs the vault to exist where the watcher runs. |
+| **B. Vault entry delivered as an env var** | `with-secret` starts `spawn adapter run` with `GITHUB_ANTSPAWN_APP_KEY` set; a new `EnvKeyProvider` reads it. | Matches the portfolio's secret path and ConfigurAnt's "secrets from the environment only" rule; nothing on disk. | A multi-line PEM in an environment variable (the OS passes a 44-byte, 5-line value to a child process unchanged on this box, tested with PowerShell; the vault's own handling was not tried) is awkward; the process environment is readable by same-user processes; needs the vault to exist where the watcher runs. |
 | **C. SecretAnt** | Wait; implement `KeyProvider` over it. | The portfolio's intended end state (requirement 1 of its design). | Does not exist; blocks the adapter on another project. |
 
 **Recommendation: A for now, behind the existing trait**, with B added only if CireSnave wants the key out of a file on this machine; revisit when SecretAnt has a
@@ -92,6 +96,6 @@ board 346; so row 14 clears when row 23 merges, not when the adapter first works
 
 ## Questions I could not settle from the files
 
-* Does `configurant` 0.5.33 (published) support `[[table]]`, or only 0.5.39 on `main`? (Read at `main` only.)
-* Does the vault deliver a multi-line PEM in one environment variable on Windows? (Not tried.)
+* ~~Does `configurant` 0.5.33 (published) support `[[table]]`?~~ **Yes**, verified above.
+* ~~Does a multi-line PEM survive an environment variable?~~ **Between two processes on this box, yes.** Whether `with-secret` delivers it intact is not tried, and the ruling (A) does not need it.
 * Is the `_RO`/entry-naming convention (6.12, second) confirmed for use in a docs and code example? It is "proposed, to confirm".
