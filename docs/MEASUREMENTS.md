@@ -283,10 +283,37 @@ Replaces the earlier "host health" note, whose "cause UNKNOWN / suspect launch c
   `slangc.exe` + `slang*`/`glslang*` DLLs + VC++ runtime = **54.2 MiB** (VulkanSDK 1.4.350.0). Job compiles a trivial compute shader to SPIR-V.
 - Run phase (VM start to `exit.code`): `none` (hostname.exe, the VM alone) **4354 ms**; `mapped` (slangc straight from the read-only mapped folder)
   **5780 ms**; `copied` (xcopy the folder to the guest disk, then run from there) **5483 ms**. Total with provision, collect and destroy: 6842 / 8297 / 7287 ms.
-- So the toolchain costs about **1.1 to 1.4 s per job** over the bare VM, and copying it in first is **not slower** than running from the
-  mapping (within noise: 3 rounds, no spread reported). There is no "golden image" to compare: Windows Sandbox boots a fresh image every
+- **SUPERSEDED by the 2026-10-31 entry below** (it reported medians of 3 with no spread; with the spread shown, the 1.1 to 1.4 s difference is inside the
+  host's noise). Originally: the toolchain costs about 1.1 to 1.4 s per job over the bare VM, and copying it in first is not slower than running from the
+  mapping. There is no "golden image" to compare: Windows Sandbox boots a fresh image every
   job, so the only choices are a mapped cache or a copy. Not measured: a larger toolchain (the 54 MiB set is small), a cold host file cache, `account`.
 - Control: the `none` variant uses the same launcher, folders mapped and VM lifecycle; a launcher or mount problem would fail it, and it ran.
+
+## Toolchain loading cost per job, with spread and a larger set (2026-10-31, main d446332 + examples/toolchain.rs `PAD_MIB`, 0.0.66)
+
+`cargo run --release --example toolchain 5` on this host, Windows Sandbox, sequential, variants round-robined, **median (min to max) in ms, 5 rounds**.
+`PAD_MIB=512` adds a 512 MiB synthetic filler file the job never reads to the toolchain folder (total 566.2 MiB), so a mapped folder pays nothing for it and a
+copy pays for every byte; a real toolchain's unused share will differ. The host was **loaded**: CPU 60% before the second run and 90% after, 1.2 GB free memory, several `claude` processes and `bun` running;
+the load before the first run was not recorded.
+
+| Toolchain | Variant | Run phase | Total (provision to destroy) |
+|---|---|---|---|
+| 54.2 MiB | none | 12598 (9164 to 15143) | 15330 (13453 to 18570) |
+| 54.2 MiB | mapped | 14820 (7524 to 18493) | 18939 (10152 to 23324) |
+| 54.2 MiB | copied | 14538 (9391 to 16127) | 18112 (12806 to 20700) |
+| 566.2 MiB | none | 9461 (8426 to 23371) | 12557 (11295 to 27014) |
+| 566.2 MiB | mapped | 8435 (8341 to 12680) | 11251 (10879 to 14917) |
+| 566.2 MiB | copied | 9875 (8435 to 25836) | 12693 (11490 to 29822) |
+
+- **The variants are not distinguishable on this host.** The bare VM alone ranges 9.2 to 15.1 s (54 MiB set) and 8.4 to 23.4 s (566 MiB set), against 4.4 s in the
+  quiet 2026-10-30 run, and `mapped` has a lower minimum than `none` in the first set, which no real cost can do. The earlier "1.1 to 1.4 s per job" is within that noise and is
+  not a result. Whatever the toolchain costs, at 54 MiB it is smaller than the host's own variation, and even 512 MiB of unread filler copied into the guest did not
+  separate `copied` from `mapped` at 5 rounds (medians 9875 vs 8435, minimums 8435 vs 8341).
+- **Golden image: not measurable here, and not available in Windows Sandbox.** The sandbox boots a pristine image every launch (nothing installed survives), so the
+  alternatives are the mapped folder and the copy. For the `account` launcher an installed toolchain would need a directory the account may read, which is an
+  elevated setup step and CireSnave's; nothing was changed. **Unmeasured:** `account` at all; a cold host file cache; a real large toolchain; any measurement on a quiet host
+  (needs the other lanes idle, and `copied` and `mapped` may separate there).
+- Recommendation from this evidence only: nothing here separates `mapped` from `copied` (the 54 MiB medians go one way, the 566 MiB medians the other), so keep `mapped` because it needs no copy step, and re-measure on a quiet host before deciding anything finer.
 
 ## Pending (needs the elevated setup, CireSnave)
 

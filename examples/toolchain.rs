@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! Toolchain loading cost per job in Windows Sandbox:
-//! `cargo run --example toolchain [N]` (N rounds per variant, default 3; `SLANGC` or `PATH` finds `slangc`).
+//! `cargo run --example toolchain [N]` (N rounds per variant, default 3; `SLANGC` or `PATH` finds `slangc`;
+//! `PAD_MIB=<n>` adds an unused filler file of n MiB to the toolchain folder, to see how each variant scales).
 //!
 //! Every job is a fresh VM, so a toolchain cannot stay installed between jobs. Three variants, each
 //! `provision + run + collect + destroy` over N sequential rounds, reported as median milliseconds:
@@ -71,6 +72,22 @@ mod imp {
             bytes += std::fs::copy(sys.join(n), dest.join(n)).expect("copy VC++ runtime");
         }
         assert!(dest.join("slangc.exe").exists(), "slangc.exe staged");
+        // Filler the job never reads: a mapped folder pays nothing for it, a copied one pays for every byte.
+        // Synthetic on purpose; a real toolchain's unused share varies.
+        let pad_mib: u64 = std::env::var("PAD_MIB")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        if pad_mib > 0 {
+            let block: Vec<u8> = (0..1_048_576u32)
+                .map(|i| (i.wrapping_mul(2654435761) >> 24) as u8)
+                .collect();
+            let mut f = std::fs::File::create(dest.join("filler.bin")).expect("filler");
+            for _ in 0..pad_mib {
+                std::io::Write::write_all(&mut f, &block).expect("filler write");
+            }
+            bytes += pad_mib * 1_048_576;
+        }
         // The `copied` variant's job: the launcher refuses `&&` in an argument, so the copy-then-run is a script.
         std::fs::write(
             dest.join("copy-and-run.cmd"),
@@ -121,9 +138,15 @@ mod imp {
         Ok((run, t.elapsed()))
     }
 
-    fn median(mut v: Vec<Duration>) -> u128 {
+    /// `median (min to max)` in milliseconds.
+    fn median(mut v: Vec<Duration>) -> String {
         v.sort();
-        v[v.len() / 2].as_millis()
+        format!(
+            "{} ({} to {})",
+            v[v.len() / 2].as_millis(),
+            v[0].as_millis(),
+            v[v.len() - 1].as_millis()
+        )
     }
 
     pub fn main() -> ExitCode {
@@ -175,7 +198,7 @@ mod imp {
         }
         for (v, name) in variants.iter().enumerate() {
             println!(
-                "MEASURE variant={name} rounds={n} median_ms run={} total={}",
+                "MEASURE variant={name} rounds={n} ms median (min to max) run={} total={}",
                 median(runs[v].clone()),
                 median(totals[v].clone())
             );

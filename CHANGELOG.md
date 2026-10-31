@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.66
+
+- ROADMAP row 13 (toolchain loading cost per job): `examples/toolchain.rs` now reports median **and min to max**, and `PAD_MIB=<n>` adds an unread filler file to scale the toolchain. Re-measured on the (loaded) host, 5 rounds, 54.2 and 566.2 MiB: `none`, `mapped` and `copied` are not distinguishable (the bare VM alone ranges 9.2 to 23.4 s), so the 0.0.42 figure "1.1 to 1.4 s per job" is **retracted** in `docs/MEASUREMENTS.md`, not just caveated. A golden image does not exist in Windows Sandbox and for `account` needs elevated setup, so it stays unmeasured. Nothing in the launchers changes.
+
 ## 0.0.64
 
 - `.coderipper.toml` (from 0.0.63) quoted the test input's header and footer lines literally, so SEC-002 matched the config itself in commits `7e21e131` and `104cdadb`. Reworded so no current line matches, and a second `[[allow]]` names those two commits with its reason. Measured (coderipper 0.8.19, same flags, this tree): SEC-002 0 findings, 4 waived; reachability 0 findings, 9 waived; before the reword SEC-002 had 1 unwaived finding on `.coderipper.toml:6`. `docs/MEASUREMENTS.md` also records the 2026-10-31 spawn1/spawn2 pipe probes and the unexplained `LastTaskResult` 2.
