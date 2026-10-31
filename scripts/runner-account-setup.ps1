@@ -7,8 +7,10 @@
 .DESCRIPTION
   Creates the restricted local account `ghr-<Name>` (no group beyond Users), its private root
   `C:\gh-runner-<Name>` (only that account, SYSTEM and Administrators; the launcher user has NO access), a copy
-  of the pinned runner inside it, and a scheduled task that runs `spawn-jit-shim --pipe <PipeName>
-  --allow-sid <launcher SID> run.cmd` AS that account. The launcher user may run the task and nothing else.
+  of the pinned runner as a TEMPLATE the account can read but not write (`<root>\runner-src`), and a scheduled
+  task that runs `spawn-jit-shim --pipe <PipeName> --allow-sid <launcher SID> --fresh <root>\runner-src
+  <root>\runs run.cmd` AS that account: every job runs in a new copy under `<root>\runs` that is deleted, after
+  its processes are ended, when the job is over. The launcher user may run the task and nothing else.
   The account's password is random, used once to register the task, then discarded.
   DRY-RUN BY DEFAULT: without -Apply it changes nothing and prints what it would do. With -Apply it does each
   step, then READS THE STATE BACK and prints PASS/FAIL per property; the exit code is non-zero on any FAIL.
@@ -18,8 +20,8 @@
   * It does not touch the firewall. Board 341 ruled outbound network allowed on this path; limiting it to
     GitHub's hosts is not expressible as Windows Firewall rules (a block rule overrides an allow rule, and
     rules take addresses, not names). How to limit is CireSnave's call, still open.
-  * It does not wipe the runner directory between runs (design item 4): until that exists, a second job
-    sees the first job's files in `<root>\runner`. Do not use it for more than the 3-run proof.
+  * The wipe between runs is the shim's `--fresh` (design item 4), tested locally as the current user only.
+    The account's temp and profile folders are NOT wiped yet; a job writing there leaves files for the next.
   * It does not start the task: the shim waits for a config on its pipe and would just time out.
   * It does not prove isolation. The negative controls A and B (docs/ACCOUNT-DISPATCH.md) do, after -Apply.
 
@@ -46,7 +48,8 @@ $TaskName = "AntSpawnRunner-$Name"
 $Root = "C:\gh-runner-$Name"
 $BinDir = [IO.Path]::GetFullPath($BinDir)
 $Shim = Join-Path $BinDir 'spawn-jit-shim.exe'
-$RunCmd = Join-Path $Root 'runner\run.cmd'
+$Template = Join-Path $Root 'runner-src'
+$RunCmd = Join-Path $Template 'run.cmd'
 $usersRoot = Join-Path $env:SystemDrive 'Users'
 if ($BinDir.StartsWith($usersRoot, [StringComparison]::OrdinalIgnoreCase)) {
     throw "BinDir $BinDir is under ${usersRoot}: the restricted account cannot execute files in a user profile. Use e.g. 'C:\Program Files\antspawn'."
@@ -102,11 +105,16 @@ Step "create $Root; ACL: SYSTEM + Administrators full, $AccountName modify, nobo
     New-Item -ItemType Directory -Force $Root | Out-Null
     Acl $Root @('/inheritance:r', '/grant:r', '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F', "*${sid}:(OI)(CI)M")
 }
-Step "copy the pinned runner from $RunnerSource to $Root\runner (once; robocopy exit < 8 is success)" {
+Step "create $Root\runs (the account writes: one new copy per job lives and dies here)" {
+    New-Item -ItemType Directory -Force "$Root\runs" | Out-Null
+}
+Step "copy the pinned runner from $RunnerSource to $Template (once; robocopy exit < 8 is success); then the account may only read and execute it" {
     if (-not (Test-Path $RunCmd)) {
-        & robocopy.exe $RunnerSource "$Root\runner" /E /NFL /NDL /NJH /NJS | Out-Null
+        & robocopy.exe $RunnerSource $Template /E /NFL /NDL /NJH /NJS | Out-Null
         if ($LASTEXITCODE -ge 8) { throw "robocopy failed ($LASTEXITCODE)" }
     }
+    # The template must not be writable by the account, or one job could poison every later copy.
+    Acl $Template @('/inheritance:r', '/grant:r', '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F', "*${sid}:(OI)(CI)RX")
 }
 
 # --- 'Log on as a batch job' (the task cannot start without it) ------------------------------------
@@ -138,7 +146,7 @@ Step "grant $AccountName the right 'Log on as a batch job' (SeBatchLogonRight)" 
 }
 
 # --- the task, run AS the account; the launcher may run it but not change it -----------------------
-$shimArgs = "--pipe $PipeName --allow-sid $launcherSid `"$RunCmd`""
+$shimArgs = "--pipe $PipeName --allow-sid $launcherSid --fresh `"$Template`" `"$Root\runs`" run.cmd"
 Step "register task ${TaskName}: `"$Shim`" $shimArgs, as ${AccountName}; ${LauncherUser} may run it" {
     if (-not $task) {
         $action = New-ScheduledTaskAction -Execute $Shim -Argument $shimArgs
@@ -157,7 +165,7 @@ $plain = $null
 
 if (-not $Apply) {
     Write-Host "`nDry run: nothing was changed. Re-run with -Apply in an elevated shell."
-    Write-Host "Not done by this script either way: firewall limit, wipe between runs, starting the task (see .DESCRIPTION)."
+    Write-Host "Not done by this script either way: firewall limit, wipe of the account's temp/profile folders, starting the task (see .DESCRIPTION)."
     exit 0
 }
 
@@ -179,7 +187,12 @@ Check "$Root grants only SYSTEM, Administrators and $AccountName (nobody else, n
 Check "$Root has no ACE for any other ghr-* account (one runner = one root)" {
     -not ((Get-Acl $Root).Access.IdentityReference.Value | Where-Object { $_ -match '\\ghr-' -and $_ -notmatch "\\$AccountName$" })
 }
-Check "the pinned runner is in $Root\runner" { Test-Path $RunCmd }
+Check "the pinned runner template is in $Template" { Test-Path $RunCmd }
+Check "$AccountName can read but not write the template (a job cannot poison later copies)" {
+    $acl = (Get-Acl $Template).Access | Where-Object { $_.IdentityReference.Value -match "\\$AccountName$" }
+    ($acl | Where-Object { $_.FileSystemRights -match 'ReadAndExecute' }) -and -not ($acl | Where-Object { $_.FileSystemRights -match 'Modify|FullControl|Write' })
+}
+Check "$Root\runs exists and holds no leftover copy" { (Test-Path "$Root\runs") -and -not (Get-ChildItem "$Root\runs" -Force) }
 Check "task $TaskName runs as $AccountName" { (Get-ScheduledTask -TaskName $TaskName).Principal.UserId -match "$AccountName$" }
 Check "task action is the shim with --pipe $PipeName --allow-sid $launcherSid" {
     $a = (Get-ScheduledTask -TaskName $TaskName).Actions[0]

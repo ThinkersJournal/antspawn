@@ -443,3 +443,166 @@ mod pipe {
         assert!(!String::from_utf8_lossy(&out.stderr).contains("not base64 !"));
     }
 }
+
+// ---- --fresh (design item 4): a new copy per run, deleted when the runner's tree is dead ----
+
+#[cfg(windows)]
+mod fresh {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn scratch(tag: &str) -> PathBuf {
+        let p = std::env::temp_dir().join(format!("antspawn-fresh-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    /// A template and an empty runs dir, plus the shim's exit code and stderr for `runner`.
+    fn run_fresh(
+        template: &Path,
+        under: &Path,
+        runner: &str,
+        stdin: &[u8],
+    ) -> (Option<i32>, String) {
+        let mut child = Command::new(SHIM)
+            .args(["--fresh"])
+            .arg(template)
+            .arg(under)
+            .arg(runner)
+            .stdin(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let _ = child.stdin.take().unwrap().write_all(stdin);
+        let out = child.wait_with_output().unwrap();
+        (
+            out.status.code(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    }
+
+    fn entries(dir: &Path) -> usize {
+        std::fs::read_dir(dir).unwrap().count()
+    }
+
+    const CONFIG: &[u8] = b"c2VjcmV0Cg==";
+
+    #[test]
+    fn each_run_gets_a_new_copy_that_is_gone_afterwards_and_the_template_is_untouched() {
+        let (template, under) = (scratch("t1"), scratch("u1"));
+        // Exit 3 if the variable is wrong, 5 if an earlier run left a file here, 0 otherwise.
+        std::fs::write(
+            template.join("chk.cmd"),
+            format!(
+                "@echo off\r\nif not \"%{VAR}%\"==\"c2VjcmV0Cg==\" exit /b 3\r\nif exist leftover.txt exit /b 5\r\necho x> leftover.txt\r\nexit /b 0\r\n"
+            ),
+        )
+        .unwrap();
+        for round in 1..=2 {
+            let (code, err) = run_fresh(&template, &under, "chk.cmd", CONFIG);
+            assert_eq!(code, Some(0), "round {round}: {err}");
+            assert_eq!(entries(&under), 0, "round {round}: the copy was deleted");
+        }
+        assert!(
+            !template.join("leftover.txt").exists(),
+            "the template is never run in"
+        );
+    }
+
+    #[test]
+    fn control_without_fresh_a_second_run_does_see_the_first_runs_file() {
+        // Proves the "5" above can happen: in one shared directory the second run finds the leftover.
+        let dir = scratch("shared");
+        let script = dir.join("chk.cmd");
+        std::fs::write(
+            &script,
+            "@echo off\r\nif exist leftover.txt exit /b 5\r\necho x> leftover.txt\r\nexit /b 0\r\n",
+        )
+        .unwrap();
+        let run = || {
+            Command::new("cmd")
+                .arg("/c")
+                .arg(&script)
+                .current_dir(&dir)
+                .status()
+                .unwrap()
+                .code()
+        };
+        assert_eq!(run(), Some(0));
+        assert_eq!(
+            run(),
+            Some(5),
+            "the shared directory carries state between runs"
+        );
+    }
+
+    #[test]
+    fn a_process_left_running_is_ended_and_does_not_block_the_delete() {
+        let (template, under) = (scratch("t2"), scratch("u2"));
+        // The runner exits at once but leaves a ping holding held.txt open for ~20 s.
+        std::fs::write(
+            template.join("leave.cmd"),
+            "@echo off\r\nstart /b ping -n 20 127.0.0.1 > held.txt\r\nexit /b 0\r\n",
+        )
+        .unwrap();
+        let t0 = Instant::now();
+        let (code, err) = run_fresh(&template, &under, "leave.cmd", CONFIG);
+        assert_eq!(code, Some(0), "{err}");
+        assert_eq!(
+            entries(&under),
+            0,
+            "the copy is gone although a process held a file in it"
+        );
+        assert!(
+            t0.elapsed() < Duration::from_secs(15),
+            "the straggler was ended, not waited out"
+        );
+    }
+
+    #[test]
+    fn control_a_plain_delete_fails_while_a_process_holds_a_file() {
+        // Proves the test above can fail: without the sweep, deleting the directory is refused.
+        let dir = scratch("held");
+        let mut child = Command::new("cmd")
+            .args(["/c", "ping -n 8 127.0.0.1 > held.txt"])
+            .current_dir(&dir)
+            .spawn()
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(500));
+        assert!(
+            std::fs::remove_dir_all(&dir).is_err(),
+            "an open file blocks the delete"
+        );
+        child.wait().unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_runner_path_that_leaves_the_copy_is_refused_and_nothing_is_created() {
+        let (template, under) = (scratch("t3"), scratch("u3"));
+        for bad in [r"..\x.cmd", r"C:\Windows\System32\cmd.exe", r"\x.cmd", ""] {
+            let (code, _) = run_fresh(&template, &under, bad, CONFIG);
+            assert_eq!(code, Some(2), "{bad:?}");
+            assert_eq!(entries(&under), 0, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn a_config_that_is_not_one_creates_no_copy() {
+        let (template, under) = (scratch("t4"), scratch("u4"));
+        std::fs::write(template.join("chk.cmd"), "@echo off\r\nexit /b 0\r\n").unwrap();
+        let (code, _) = run_fresh(&template, &under, "chk.cmd", b"not base64 !");
+        assert_eq!(code, Some(2));
+        assert_eq!(entries(&under), 0);
+    }
+
+    #[test]
+    fn a_missing_template_or_runs_directory_is_refused() {
+        let ok = scratch("t5");
+        let (code, _) = run_fresh(&ok.join("nope"), &ok, "x.cmd", CONFIG);
+        assert_eq!(code, Some(2));
+        let (code, _) = run_fresh(&ok, &ok.join("nope"), "x.cmd", CONFIG);
+        assert_eq!(code, Some(2));
+    }
+}
