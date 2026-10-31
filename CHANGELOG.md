@@ -4,6 +4,14 @@
 
 - **Breaking for callers of `spawn run`:** a refusal exits **125** (was 2) and another spawn-side failure **126** (was 2); job exit codes, 124 (timeout) and 137 (killed) are unchanged. New `<results>/spawn-result.json` (authoritative status), `stdout.tail` and `stderr.tail` (last 64 KiB; `windows-sandbox` combined). Output names `stdout.tail`, `stderr.tail`, `spawn-result.json` are reserved. `naive` now gives its job a null stdin and captures output instead of inheriting it. `account` streams need a redeployed `spawn-runner` (UNVERIFIED). MEASUREMENTS: the "sandbox never starts from a tool shell" statements are marked superseded (0.0.29). Version provisional (PM allocates).
 
+## 0.0.48
+
+- docs: `docs/ACCOUNT-DISPATCH.md`, the design note for an account-backed Dispatch (ROADMAP row 21); docs only, nothing run. Records board 341 ruled A (CireSnave 2026-10-30): named ACL'd pipe and outbound network allowed on this path. Version provisional (PM allocates).
+
+## 0.0.47
+
+- docs: `docs/PATENT-SWEEP.md`, the patent sweep of antspawn 0.0.47 (8 ideas, 11 dated Google Patents queries, 13 patents' independent claims read, all `clear`, three watches). Espacenet returned nothing and USPTO/WIPO were not used; the record says so. ROADMAP row 20 updated. Version provisional (PM allocates).
+
 ## 0.0.46
 
 - measure: `examples/toolchain.rs` and the toolchain-loading-cost numbers (MEASUREMENTS): mapped vs copied vs bare VM.
