@@ -1,10 +1,15 @@
 # Changelog
 
+## 0.0.61
+
+- `scripts/runner-account-setup.ps1`: the check "task allows the launcher to run it and nothing beyond read+run" gave a **false FAIL** on CireSnave's first real `-Apply` (2026-10-31; 11 of 12 checks passed): it matched the text `GRGX`, but Windows stores the mask as `0x1200a9`, and Task Scheduler adds the run-as account (`FR`) and inherited BA/SY entries. It now decodes the descriptor numerically (`scripts/AntSpawnTaskSd.ps1`): the launcher must hold exactly `0x1200a9`, the run-as account read only, BA/SY anything, any other principal or any non-Allow entry fails. `tests/task_sd_check.rs` uses the descriptor read back from that machine (SIDs from it) with a control that the old text match fails it, and cases for an extra principal, write and change-permission bits, a missing launcher, a run-as write, and a deny entry. The check was not run elevated against the live task by me; the string is the one `GetSecurityDescriptor(4)` returned to a standard user.
+
 ## 0.0.60
 
 - Review fixes on #59: `spawn adapter --once` exits **3** when a dispatch failed or a runner was still running when the wait ended (it exited 0 before); exit codes are documented (`docs/ADAPTER-GITHUB.md`); each dispatch logs its job, group and launcher; `RoutingDispatch::unrouted` (dead) removed; `--check` of an `account` group off Windows says to run it on the Windows host; a failed dispatch is documented as not retried (ROADMAP row 24). **Behaviour change:** `--once` exit code on failure 0 -> 3.
 
 - `spawn adapter --config <file> [--check | --once] [--pem-key]` (ROADMAP row 23 slice c, which gives the adapter its first caller and so clears the 11 true `reachability` findings of row 14 once the CI sweep agrees): loads the configuration through `adapter::config_file::load`, builds `HttpGithub` (DPAPI key file by default, plain PEM with `--pem-key`), a `Minter`, a `Watcher` and a `RoutingDispatch`, and polls every 20 s (`--once`: one poll, then wait for the runner it started). `--check` is offline: it validates the file, that each group's launcher can take a config, and that `key_path` is an absolute existing file (the key is not read). Only the `account` launcher is routable (Windows, the pipe path); a group naming `windows-sandbox` makes `--check` fail and the adapter refuse to start, naming the group and board 322, rather than mint a runner it cannot deliver. Account groups declare their own `task` and `pipe` (new optional group keys in the schema and `RunnerGroup`; required and unique for `account`, refused for any other launcher), served by `PerGroupAccountBackend`. Runner ends are logged to stderr (group and result, never the config). **Not run against GitHub or a real account**: `--check` was run on this machine, `run` and `--once` were not (UNMEASURED). Version provisional (PM allocates).
+
 
 ## 0.0.59
 
