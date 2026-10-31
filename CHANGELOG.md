@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.47
+
+- docs: `docs/PATENT-SWEEP.md`, the patent sweep of antspawn 0.0.47 (8 ideas, 11 dated Google Patents queries, 13 patents' independent claims read, all `clear`, three watches). Espacenet returned nothing and USPTO/WIPO were not used; the record says so. ROADMAP row 20 updated. Version provisional (PM allocates).
+
 ## 0.0.46
 
 - measure: `examples/toolchain.rs` and the toolchain-loading-cost numbers (MEASUREMENTS): mapped vs copied vs bare VM.
