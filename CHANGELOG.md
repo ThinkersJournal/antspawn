@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.62
+
+- docs/proof/: the files for the account-backed 3-run proof (ROADMAP row 21 slice d): `adapter.toml` (two account groups), `proof.yml` (positive, clean-slate and negative controls A and B, written so a step passes only on a proven denial), `PASTE-spawn1.ps1`, `PASTE-spawn2.ps1` (second runner account and canary; elevated), `make-dpapi-key.ps1` (PEM to the DPAPI key file; dry-run by default; tested with a dummy PEM only) and `README.md` with the order. None run end to end. Version provisional (PM allocates).
+
+## 0.0.62
+
+- docs/proof/: the files for the account-backed 3-run proof (ROADMAP row 21 slice d): `adapter.toml` (two account groups), `proof.yml` (positive, clean-slate and negative controls A and B, written so a step passes only on a proven denial), `PASTE-spawn1.ps1`, `PASTE-spawn2.ps1` (second runner account and canary; elevated), `make-dpapi-key.ps1` (PEM to the DPAPI key file; dry-run by default; tested with a dummy PEM only) and `README.md` with the order. None run end to end. Version provisional (PM allocates).
+
 ## 0.0.59
 
 - `scripts/runner-account-setup.ps1` **failed on its first real run** (CireSnave, 2026-10-31, 0.0.58): `New-LocalUser -Description` accepts at most 48 characters and ours had 59, so `-Apply` stopped at its first action (read back: no user, no folder, no task; only the shim installed). It had only ever been dry-run. Fixes: (1) the description is a 42-character constant, independent of `-Name`; (2) the whole body is in `try`/`catch` that prints `FAILED: ...` and exits 1, because an uncaught `throw` left `$LASTEXITCODE` at 0 when the script was called with `&` (the "exit non-zero on any FAIL" promise held only for the read-back checks); (3) the random password is regenerated until it has an upper-case letter, a lower-case letter and a digit (local password policy), and uses `RandomNumberGenerator.Create().GetBytes` (works in Windows PowerShell 5.1; `Fill` needs .NET Core). Tests `tests/runner_account_setup_script.rs`: every `-Description` is at most 48 characters with a 16-character `-Name` (and a control that the old 59-character text is flagged), and a forced throw gives exit code 1 through `&`; both fail on the 0.0.58 script. Parameters audited against documentation, not by running elevated: see the PR. **Still unverified: the script has not completed an `-Apply` anywhere.**
