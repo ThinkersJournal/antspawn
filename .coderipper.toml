@@ -3,13 +3,21 @@
 
 # SEC-002 reads git history. Both hits are line 591 of src/adapter/github_client.rs in two PR13 commits (e0130079, which is on the
 # pr13-github-client branch only, and d5f1c62d, which is on main). That line is a test input, not a key:
-# `"-----BEGIN RSA PRIVATE KEY-----\n!!!SECRETBYTES!!!\n-----END RSA PRIVATE KEY-----"` (96 characters; a real RSA key is over a thousand), fed to
+# a PEM header line, the body `!!!SECRETBYTES!!!` and the matching footer line (96 characters; a real RSA key is over a thousand), fed to
 # `app_jwt` to prove it refuses a malformed key and never echoes it. Read at both commits on 2026-10-31. Later commits build that fixture at run time
 # (`fake_pem`) so no literal header remains in any tree. The App's real key is a DPAPI file under the owner's profile and is in no repository.
 [[allow]]
 check = "SEC-002"
 file = "src/adapter/github_client.rs"
-reason = "History hit only: line 591 of commits e0130079 and d5f1c62d is the 96-character test input '-----BEGIN RSA PRIVATE KEY-----\\n!!!SECRETBYTES!!!\\n-----END RSA PRIVATE KEY-----' passed to app_jwt to prove a malformed key is refused and never echoed. It is not a key. No current tree holds a literal header (the fixture is built at run time). Owner: antspawn lane."
+reason = "History hit only: line 591 of commits e0130079 and d5f1c62d is the 96-character test input (a PEM header line, the body !!!SECRETBYTES!!! and a PEM footer line), passed to app_jwt to prove a malformed key is refused and never echoed. It is not a key. No current tree holds a literal header (the fixture is built at run time). Owner: antspawn lane."
+
+# SEC-002, second entry, caused by the first: version 0.0.63 of this file quoted the 96-character test input literally (its header and footer lines), so the
+# scanner matched this file in commit 7e21e131 (the #63 branch) and 104cdadb (its squash on main). The text is reworded in 0.0.64 and no current line matches;
+# the two commits keep the hit. Same input, same reading as above: not a key. Owner: the antspawn lane.
+[[allow]]
+check = "SEC-002"
+file = ".coderipper.toml"
+reason = "History hit only: commits 7e21e131 and 104cdadb quoted, in this file's comment and reason text, the same 96-character malformed-key test input waived above (not a key). Reworded in 0.0.64; no current line matches. Owner: antspawn lane."
 
 # `reachability`: public items of the library that have callers only in tests today. Each is the adapter's or the sandbox launcher's API, written
 # ahead of the wiring that boards 321/322 and the `spawn adapter` account path still need (docs/ADAPTER-DECISIONS.md line 9 lists them).

@@ -1,0 +1,25 @@
+# Adapter configuration for the account-backed 3-run proof (ROADMAP row 21 slice d; docs/ACCOUNT-DISPATCH.md).
+# Used as: spawn adapter --config docs/proof/adapter.toml --check   (then --once, three times).
+# The GitHub runner groups must exist first (PM): `antspawn-account` (id 3, exists) and `antspawn-account-2` (to create),
+# both visibility `selected`, only ThinkersJournal/antspawn-proof. Nothing here is a secret: key_path is a path.
+org = "ThinkersJournal"
+app_id = 5441608
+installation_id = 174476958
+key_path = 'C:\Users\cires\AppData\Local\antspawn\github-app\antspawn-runner.key.dpapi'
+job_timeout_s = 900
+
+[[group]]
+name = "antspawn-account"
+repos = ["ThinkersJournal/antspawn-proof"]
+labels = ["antspawn-s1"]
+launcher = "account"
+task = "AntSpawnRunner-spawn1"
+pipe = "antspawn-spawn1"
+
+[[group]]
+name = "antspawn-account-2"
+repos = ["ThinkersJournal/antspawn-proof"]
+labels = ["antspawn-s2"]
+launcher = "account"
+task = "AntSpawnRunner-spawn2"
+pipe = "antspawn-spawn2"

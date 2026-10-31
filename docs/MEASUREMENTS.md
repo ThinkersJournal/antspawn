@@ -291,3 +291,24 @@ Replaces the earlier "host health" note, whose "cause UNKNOWN / suspect launch c
 ## Pending (needs the elevated setup, CireSnave)
 
 - `schtasks /Run` by a non-admin through the task security descriptor vs ACL'd named pipe.
+
+## 2026-10-31: pipe controls on the real runner account (ref: main 238b9b7, shim built from 0e10cbe hash 3D83E4CB; standard user cires)
+
+After CireSnave's `-Apply` of `runner-account-setup.ps1` (account `ghr-spawn1`, task `AntSpawnRunner-spawn1`, pipe `antspawn-spawn1`):
+cires listing `C:\gh-runner-spawn1` was **denied** (the launcher has no access to the account's root). The live task descriptor read through
+`Get-TaskSdProblems`: 0 problems. `schtasks /Run` as cires: `\.\pipe\antspawn-spawn1` appeared within the 20 s poll (probe method not recorded; see the later entry); a first connection reported as delivering a dummy
+base64 config (44 bytes, not a real JIT config; client direction not recorded); a second connection was refused; afterwards no shim process remained, the pipe was gone and the task was Ready with
+LastTaskResult 0. **Not measured:** the shim's owner (`GetOwner` came back empty for it, once, as cires; why is not known), what the shim did with the
+dummy config (no log), and whether the runner started (no new `Runner.*` process was seen in one sample after the shim had gone; the box's other runners were excluded by pid).
+GitHub contact was not observed, but the only check was that no shim process remained to hold a connection. One run, one sample.
+
+## 2026-10-31: spawn1/spawn2 pipe probes, and LastTaskResult 2 (ref: main ca72587; standard user cires; one box)
+
+The spawn1 entry above does not record how the pipe was probed or which client direction was used; treat its 0 as the result of an unknown probe.
+spawn2 (`ghr-spawn2`, pipe `antspawn-spawn2`): cires denied on `C:\gh-runner-spawn2` and `\canary`; task descriptor 0 problems (control with the SIDs swapped: 2).
+Two probes, same dummy 16-byte base64 text, each run after a `schtasks /Run`, task Ready beforehand:
+- **A** = `Test-Path \.\pipe\<name>` to wait for the pipe, then a two-way client that reads: connect timed out; LastTaskResult **2**. Seen 2 of 2 on spawn1 and 3 of 3 on spawn2.
+- **B** = list `\.\pipe\` with `Directory.GetFiles` (does not open the pipe), then a write-only client sends the text: wrote 16 bytes; LastTaskResult **0**. Seen 1 of 1 on each.
+Exit 2 in the shim is `refuse()` (empty, oversized or not-base64 config, `src/bin/spawn-jit-shim.rs`). Consistent with, but not proven by, `Test-Path` itself opening the one allowed connection and
+closing it empty; the shim's stderr was not captured and the pipe's access mask was not read, so the cause is **unmeasured**. Either way the shim took exactly one connection and left nothing behind (no shim, no pipe, task Ready).
+Not measured: the shim's reaction to a real config, whether the runner started, any GitHub contact.

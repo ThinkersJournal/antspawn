@@ -1,0 +1,59 @@
+# Goes to ThinkersJournal/antspawn-proof as .github/workflows/proof.yml (the PM pushes it; lanes cannot).
+# Every step that expects a refusal PASSES only if the operation was refused, so a green job means the control held.
+name: antspawn-account-proof
+on: workflow_dispatch
+permissions: {}
+
+jobs:
+  s1-positive-and-controls:
+    runs-on: [self-hosted, windows, antspawn-s1]
+    timeout-minutes: 10
+    steps:
+      - name: who am I (must be ghr-spawn1)
+        shell: pwsh
+        run: |
+          $me = whoami
+          "whoami = $me"
+          if ($me -notmatch '\ghr-spawn1$') { throw "expected ghr-spawn1, got $me" }
+      - name: positive - read AOCL (BUILTIN\Users can read it)
+        shell: pwsh
+        run: |
+          $d = 'C:\Program Files\AMD\AOCL-Windows'
+          if (-not (Test-Path $d)) { throw "$d missing: this box has no AOCL, so the positive control cannot run" }
+          (Get-ChildItem $d | Select-Object -First 3 | ForEach-Object Name) -join ', '
+      - name: clean slate - no sentinel from an earlier run, then leave one
+        shell: pwsh
+        run: |
+          $s = Join-Path (Split-Path $env:GITHUB_WORKSPACE -Parent) 'sentinel.txt'
+          if (Test-Path $s) { throw "sentinel from an earlier run is still here: $s" }
+          Set-Content $s "run $env:GITHUB_RUN_ID"
+          "left $s"
+      - name: control A - read the OTHER account's canary (must be refused)
+        shell: pwsh
+        run: |
+          try { $t = Get-Content C:\gh-runner-spawn2\canary -ErrorAction Stop; throw "READ THE CANARY: $t" }
+          catch [System.UnauthorizedAccessException] { "refused, as required: $($_.Exception.Message)" }
+          catch { if ($_.Exception.Message -like 'READ THE CANARY*') { throw }; throw "refused for another reason, not a proven denial: $($_.Exception.GetType().FullName)" }
+      - name: control B - write into the OTHER account's root (must be refused)
+        shell: pwsh
+        run: |
+          try { Set-Content C:\gh-runner-spawn2\runs\intruder.txt 'x' -ErrorAction Stop; throw "WROTE INTO THE OTHER ROOT" }
+          catch [System.UnauthorizedAccessException] { "refused, as required" }
+          catch [System.IO.DirectoryNotFoundException] { throw "path missing, not a proven denial" }
+          catch { if ($_.Exception.Message -like 'WROTE*') { throw }; throw "refused for another reason, not a proven denial: $($_.Exception.GetType().FullName)" }
+
+  s2-canary-is-real:
+    runs-on: [self-hosted, windows, antspawn-s2]
+    timeout-minutes: 10
+    steps:
+      - name: who am I (must be ghr-spawn2)
+        shell: pwsh
+        run: |
+          $me = whoami
+          if ($me -notmatch '\ghr-spawn2$') { throw "expected ghr-spawn2, got $me" }
+      - name: control A, other half - the owner CAN read its canary (proves it exists and is readable)
+        shell: pwsh
+        run: |
+          $t = Get-Content C:\gh-runner-spawn2\canary -ErrorAction Stop
+          if ($t -ne 'canary-spawn2') { throw "unexpected canary content: $t" }
+          "owner read it: $t"

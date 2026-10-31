@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.64
+
+- `.coderipper.toml` (from 0.0.63) quoted the test input's header and footer lines literally, so SEC-002 matched the config itself in commits `7e21e131` and `104cdadb`. Reworded so no current line matches, and a second `[[allow]]` names those two commits with its reason. Measured (coderipper 0.8.19, same flags, this tree): SEC-002 0 findings, 4 waived; reachability 0 findings, 9 waived; before the reword SEC-002 had 1 unwaived finding on `.coderipper.toml:6`. `docs/MEASUREMENTS.md` also records the 2026-10-31 spawn1/spawn2 pipe probes and the unexplained `LastTaskResult` 2.
+
+- docs/proof/: the files for the account-backed 3-run proof (ROADMAP row 21 slice d): `adapter.toml` (two account groups), `proof.yml` (positive, clean-slate and negative controls A and B, written so a step passes only on a proven denial), `PASTE-spawn1.ps1`, `PASTE-spawn2.ps1` (second runner account and canary; elevated), `make-dpapi-key.ps1` (PEM to the DPAPI key file; dry-run by default; tested with a dummy PEM only) and `README.md` with the order. None run end to end. Version provisional (PM allocates).
+
 ## 0.0.63
 
 - `.coderipper.toml`: the repository's CodeRipper waivers, each with its reason and owner, none blanket. **SEC-002** (gitleaks `private-key`) flagged line 591 of `src/adapter/github_client.rs` in two history commits, `e0130079` (the `pr13-github-client` branch only) and `d5f1c62d` (on main). Read at both: the line is the 96-character test input `-----BEGIN RSA PRIVATE KEY-----\n!!!SECRETBYTES!!!\n-----END RSA PRIVATE KEY-----`, fed to `app_jwt` to show a malformed key is refused and never echoed; it is not a key, and no current tree holds a literal header (the fixture is built at run time by `fake_pem`). **Reachability** (9 rows, `coderipper check reachability`): `take_outcomes`, `WsbBackend`, `clamp_time`, `ListenerTransport`, `VERSION`, `verify`, `verify_against`, `collect_logs`, `job_script_in` are library API with callers only in tests until the sandbox path is wired (boards 321/322). Measured with coderipper 0.8.19, `--profile extended --deny medium --no-config`, on main `aaf814d`: without the file SEC-002 gave 2 findings and reachability 9 (exit 1); with it both give 0 findings, 2 and 9 waived (exit 0).
