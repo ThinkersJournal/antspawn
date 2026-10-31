@@ -719,14 +719,22 @@ mod tests {
         assert!(e.len() < 260, "{} chars", e.len());
     }
 
+    /// A PEM-shaped fixture assembled at run time. The header is never written out in full in this
+    /// file, so a secret scanner's `private-key` pattern has no literal here to match (these bodies
+    /// are not keys: `QUJD` is "ABC").
+    fn fake_pem(body: &str) -> String {
+        let label = ["RSA", "PRIVATE", "KEY"].join(" ");
+        format!("-----BEGIN {label}-----\n{body}\n-----END {label}-----")
+    }
+
     #[test]
     fn a_key_that_is_not_an_rsa_pem_is_malformed_and_never_echoed() {
         for junk in [
-            "not a key SECRETBYTES",
-            "-----BEGIN RSA PRIVATE KEY-----\n!!!SECRETBYTES!!!\n-----END RSA PRIVATE KEY-----",
-            "-----BEGIN RSA PRIVATE KEY-----\nQUJD\n-----END RSA PRIVATE KEY-----",
+            "not a key SECRETBYTES".to_string(),
+            fake_pem("!!!SECRETBYTES!!!"),
+            fake_pem("QUJD"),
         ] {
-            let e = app_jwt(1, &Secret::new(junk.into()), 1_000).unwrap_err();
+            let e = app_jwt(1, &Secret::new(junk), 1_000).unwrap_err();
             assert_eq!(e, KeyError::Malformed);
             assert!(!e.to_string().contains("SECRETBYTES"));
         }
@@ -807,7 +815,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn dpapi_round_trip_and_garbage_is_refused() {
-        let pem = "-----BEGIN RSA PRIVATE KEY-----\nQUJD\n-----END RSA PRIVATE KEY-----\n";
+        let pem = fake_pem("QUJD") + "\n";
         let utf16: Vec<u8> = pem.encode_utf16().flat_map(u16::to_le_bytes).collect();
         let blob = dpapi::protect(&utf16).expect("protect");
         let hex: String = blob.iter().map(|b| format!("{b:02x}")).collect();

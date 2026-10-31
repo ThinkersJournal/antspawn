@@ -371,8 +371,8 @@ launcher = "account"
         set(&r, "O/a", vec![job("O/a", 7, MINE)]);
         let rep = r.w.tick(0);
         assert_eq!(rep.dispatch_failed, vec![(7, "no environment".to_string())]);
-        r.w.tick(100);
-        r.w.tick(200);
+        assert!(r.w.tick(100).dispatched.is_empty());
+        assert!(r.w.tick(200).dispatched.is_empty());
         assert_eq!(r.api.mint_calls.get(), 1);
     }
 
@@ -394,18 +394,18 @@ launcher = "account"
     fn seen_forgets_jobs_github_no_longer_lists_but_not_after_a_partial_poll() {
         let mut r = rig();
         set(&r, "O/a", vec![job("O/a", 7, MINE)]);
-        r.w.tick(0);
+        assert_eq!(r.w.tick(0).dispatched, vec![7]);
         assert_eq!(r.w.seen(), 1);
         // A poll that failed for one repo cannot say the job is gone.
         r.src
             .jobs
             .borrow_mut()
             .insert("O/a".into(), Err("503".into()));
-        r.w.tick(1);
+        assert_eq!(r.w.tick(1).poll_errors.len(), 1);
         assert_eq!(r.w.seen(), 1);
         // A complete poll that no longer lists it forgets it.
         set(&r, "O/a", vec![]);
-        r.w.tick(2);
+        assert!(r.w.tick(2).poll_errors.is_empty());
         assert_eq!(r.w.seen(), 0);
     }
 

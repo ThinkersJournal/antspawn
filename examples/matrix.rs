@@ -63,7 +63,10 @@ fn untested() -> Outcome {
 
 struct Matrixer {
     probes: Probes,
-    #[cfg_attr(not(windows), allow(dead_code))]
+    #[cfg_attr(
+        not(windows),
+        allow(dead_code, reason = "only the Windows-only probes run the exe")
+    )]
     exe: PathBuf,
     /// Scratch files for the `naive` probes.
     dir: PathBuf,
