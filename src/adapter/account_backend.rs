@@ -189,10 +189,53 @@ impl AccountTask for SchtasksTask {
     }
 }
 
+/// One [`AccountBackend`] per group, built from the group's own `task` and `pipe`: the `account` launcher
+/// serves several runner accounts, one per group.
+#[derive(Debug, Clone, Copy)]
+pub struct PerGroupAccountBackend {
+    pub limit: Duration,
+    pub poll: Duration,
+}
+
+impl RunnerBackend for PerGroupAccountBackend {
+    fn run_one(
+        &self,
+        group: &RunnerGroup,
+        started: &mut dyn FnMut(&str) -> Result<(), String>,
+    ) -> Result<String, String> {
+        let (Some(task), Some(pipe)) = (&group.task, &group.pipe) else {
+            return Err(format!("group `{}` has no task or pipe", group.name));
+        };
+        AccountBackend {
+            task: SchtasksTask {
+                name: task.clone(),
+                poll: self.poll,
+            },
+            pipe_name: pipe.clone(),
+            limit: self.limit,
+        }
+        .run_one(group, started)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Mutex;
+
+    #[test]
+    fn a_group_without_task_and_pipe_is_refused_before_anything_starts() {
+        let b = PerGroupAccountBackend {
+            limit: Duration::from_secs(1),
+            poll: Duration::from_secs(1),
+        };
+        let mut g = group();
+        g.task = None;
+        let e = b
+            .run_one(&g, &mut |_| panic!("must not deliver"))
+            .unwrap_err();
+        assert!(e.contains("`g`"), "{e}");
+    }
 
     /// Records the calls it gets, in order.
     #[derive(Default)]
@@ -224,6 +267,8 @@ mod tests {
             repos: vec!["O/a".into()],
             labels: vec!["antspawn".into()],
             launcher: "account".into(),
+            task: Some("t".into()),
+            pipe: Some("p".into()),
         }
     }
 

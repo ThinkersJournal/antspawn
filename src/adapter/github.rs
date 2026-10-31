@@ -134,6 +134,12 @@ pub struct RunnerGroup {
     pub labels: Vec<String>,
     /// The AntSpawn launcher id that runs this group's jobs.
     pub launcher: String,
+    /// `account` launcher only: the scheduled task that runs the shim as the runner account.
+    #[serde(default)]
+    pub task: Option<String>,
+    /// `account` launcher only: the pipe name that task's shim creates (a fixed argument of the task).
+    #[serde(default)]
+    pub pipe: Option<String>,
 }
 
 /// The adapter's configuration (TOML, strict). Holds a key *path*, never a key.
@@ -181,12 +187,37 @@ impl AdapterConfig {
             return invalid("no [[group]] declared");
         }
         let (mut names, mut label_sets) = (BTreeSet::new(), BTreeSet::new());
+        let (mut tasks, mut pipes) = (BTreeSet::new(), BTreeSet::new());
         for g in &self.groups {
             if g.name.trim().is_empty() || !names.insert(g.name.as_str()) {
                 return invalid(format!("group name `{}` is empty or repeated", g.name));
             }
             if g.launcher.trim().is_empty() {
                 return invalid(format!("group `{}` names no launcher", g.name));
+            }
+            let blank = |o: &Option<String>| o.as_deref().is_none_or(|s| s.trim().is_empty());
+            if g.launcher == "account" {
+                if blank(&g.task) || blank(&g.pipe) {
+                    return invalid(format!(
+                        "group `{}` uses the account launcher and needs `task` and `pipe`",
+                        g.name
+                    ));
+                }
+                let (t, p) = (
+                    g.task.as_deref().unwrap_or(""),
+                    g.pipe.as_deref().unwrap_or(""),
+                );
+                if !tasks.insert(t) || !pipes.insert(p) {
+                    return invalid(format!(
+                        "group `{}` repeats another group's task or pipe",
+                        g.name
+                    ));
+                }
+            } else if g.task.is_some() || g.pipe.is_some() {
+                return invalid(format!(
+                    "group `{}` sets `task` or `pipe`, which only the account launcher uses",
+                    g.name
+                ));
             }
             if g.labels.is_empty() || g.labels.iter().any(|l| l.trim().is_empty()) {
                 return invalid(format!("group `{}` needs non-empty labels", g.name));
@@ -437,6 +468,8 @@ name = "antspawn-account"
 repos = ["ThinkersJournal/antspawn"]
 labels = ["antspawn", "account"]
 launcher = "account"
+task = "antspawn-r1"
+pipe = "antspawn-r1"
 
 [[group]]
 name = "antspawn-sandbox"

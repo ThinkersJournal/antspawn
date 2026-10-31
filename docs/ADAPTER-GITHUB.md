@@ -99,3 +99,18 @@ launcher, which needs the JIT config delivered without a file or env: board 260)
 The JIT config reaches the runner by an anonymous pipe to `spawn-jit-shim`, which sets `ACTIONS_RUNNER_INPUT_JITCONFIG` on the one
 child it starts: never an argument, a file, or a variable of the host or the shim. `adapter::handoff::start_shim` is the host end.
 The runner gets network only inside Windows Sandbox, so the shim is to be started there; that step waits on the sandbox starting.
+
+## `spawn adapter`: exit codes, routing log, retry
+
+| Code | Meaning |
+|---|---|
+| 0 | `--check` found no problem; continuous run stopped cleanly; `--once` polled and any runner it started ended |
+| 1 | `--check` found problems (printed to stderr, one per line) |
+| 2 | could not start: unreadable or invalid configuration, a group the router refuses (sandbox or unknown launcher), key provider setup failed, or a usage error (including `--once` with `--check`) |
+| 3 | `--once` ended badly: a runner was minted but its dispatch failed, or a runner was still running when the wait (job ceiling + 120 s) ran out |
+
+Each dispatch is announced on stderr before it is made: `job <id> (<repo>): group `<g>` -> launcher `<l>``. No secret is in it.
+`--check` is Windows-only for `account` groups: off Windows it reports a problem saying so and to run it on the Windows host.
+**A failed dispatch is not retried.** The job is remembered the moment its runner is minted (so a broken hand-off cannot mint
+one per tick) and is never re-minted; the unused ephemeral runner expires at GitHub and the job stays queued until the workflow
+is re-run. Retry with a cap is ROADMAP row 24.
