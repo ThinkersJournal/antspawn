@@ -160,6 +160,8 @@ mod tests {
             repos: vec!["O/a".into()],
             labels: vec!["antspawn".into()],
             launcher: "windows-sandbox".into(),
+            task: None,
+            pipe: None,
         }
     }
 

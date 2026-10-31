@@ -94,6 +94,8 @@ mod tests {
             repos: vec!["O/a".into()],
             labels: vec![name.into()],
             launcher: launcher.into(),
+            task: None,
+            pipe: None,
         }
     }
 

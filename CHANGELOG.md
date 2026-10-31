@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.59
+
+- `spawn adapter --config <file> [--check | --once] [--pem-key]` (ROADMAP row 23 slice c, which gives the adapter its first caller and so clears the 11 true `reachability` findings of row 14 once the CI sweep agrees): loads the configuration through `adapter::config_file::load`, builds `HttpGithub` (DPAPI key file by default, plain PEM with `--pem-key`), a `Minter`, a `Watcher` and a `RoutingDispatch`, and polls every 20 s (`--once`: one poll, then wait for the runner it started). `--check` is offline: it validates the file, that each group's launcher can take a config, and that `key_path` is an absolute existing file (the key is not read). Only the `account` launcher is routable (Windows, the pipe path); a group naming `windows-sandbox` makes `--check` fail and the adapter refuse to start, naming the group and board 322, rather than mint a runner it cannot deliver. Account groups declare their own `task` and `pipe` (new optional group keys in the schema and `RunnerGroup`; required and unique for `account`, refused for any other launcher), served by `PerGroupAccountBackend`. Runner ends are logged to stderr (group and result, never the config). **Not run against GitHub or a real account**: `--check` was run on this machine, `run` and `--once` were not (UNMEASURED). Version provisional (PM allocates).
+
 ## 0.0.58
 
 - `adapter::routing::RoutingDispatch` (ROADMAP row 23 slice b; `docs/ADAPTER-DECISIONS.md` decision 3, ruled A): one `Dispatch` per launcher id, chosen by the group's `launcher`. One job at a time across all launchers (`busy()` is true while any is busy; a busy flag per launcher waits on a measurement). An unknown launcher is refused naming group and launcher, never the JIT config; `unrouted()` lets `--check` list groups with no dispatcher. Nothing calls it yet: the `spawn adapter` command is slice c. Version provisional (PM allocates).

@@ -70,3 +70,15 @@ key = "launcher"
 type = "string"
 required = true
 description = "The AntSpawn launcher that runs this group's jobs (account or windows-sandbox)."
+
+[[table.field]]
+key = "task"
+type = "string"
+required = false
+description = "Account launcher only: the scheduled task that runs spawn-jit-shim as the runner account."
+
+[[table.field]]
+key = "pipe"
+type = "string"
+required = false
+description = "Account launcher only: the pipe name that task's shim creates."

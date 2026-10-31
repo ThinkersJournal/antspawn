@@ -29,6 +29,14 @@ fn field_string(row: &Row, key: &str) -> Result<String, ConfigError> {
     }
 }
 
+fn field_opt(row: &Row, key: &str) -> Result<Option<String>, ConfigError> {
+    match row.get(key) {
+        None => Ok(None),
+        Some(Value::String(s)) => Ok(Some(s.clone())),
+        _ => Err(bad(format!("group row has a non-text `{key}`"))),
+    }
+}
+
 fn field_list(row: &Row, key: &str) -> Result<Vec<String>, ConfigError> {
     match row.get(key) {
         Some(Value::List(l)) => Ok(l.clone()),
@@ -58,6 +66,8 @@ pub fn load(text: &str, origin: &str) -> Result<AdapterConfig, ConfigError> {
                 repos: field_list(row, "repos")?,
                 labels: field_list(row, "labels")?,
                 launcher: field_string(row, "launcher")?,
+                task: field_opt(row, "task")?,
+                pipe: field_opt(row, "pipe")?,
             })
         })
         .collect::<Result<Vec<_>, ConfigError>>()?;
@@ -89,6 +99,8 @@ name = "antspawn-account"
 repos = ["ThinkersJournal/antspawn"]
 labels = ["antspawn", "account"]
 launcher = "account"
+task = "antspawn-r1"
+pipe = "antspawn-r1"
 
 [[group]]
 name = "antspawn-sandbox"

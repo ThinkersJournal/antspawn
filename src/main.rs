@@ -28,6 +28,21 @@ enum Command {
     Providers { spec: PathBuf },
     /// Print the recorded capability matrix.
     Matrix,
+    /// Run the GitHub adapter: turn queued Actions jobs into runners (needs a configuration file).
+    Adapter {
+        /// The adapter configuration (TOML; schema `configurant.toml`).
+        #[arg(long)]
+        config: PathBuf,
+        /// Validate the configuration and the key path offline, then exit.
+        #[arg(long)]
+        check: bool,
+        /// Poll once, wait for the runner it started, then exit.
+        #[arg(long, conflicts_with = "check")]
+        once: bool,
+        /// The App key is a plain PEM file, not a DPAPI-protected one.
+        #[arg(long)]
+        pem_key: bool,
+    },
     /// Run a job: provision, run, collect outputs, destroy.
     Run {
         spec: PathBuf,
@@ -77,6 +92,12 @@ fn run(command: Command) -> Result<ExitCode, String> {
             }
         }
         Command::Matrix => print!("{MATRIX}"),
+        Command::Adapter {
+            config,
+            check,
+            once,
+            pem_key,
+        } => return adapter(&config, check, once, pem_key),
         Command::Run {
             spec,
             launcher,
@@ -84,6 +105,26 @@ fn run(command: Command) -> Result<ExitCode, String> {
         } => return Ok(run_job(&spec, launcher, &results)),
     }
     Ok(ExitCode::SUCCESS)
+}
+
+fn adapter(config: &Path, check: bool, once: bool, pem_key: bool) -> Result<ExitCode, String> {
+    use antspawn::adapter::command;
+    if !check {
+        command::run(config, pem_key, once)?;
+        return Ok(ExitCode::SUCCESS);
+    }
+    let report = command::check(&command::load_config(config)?, pem_key);
+    for l in &report.lines {
+        println!("{l}");
+    }
+    for p in &report.problems {
+        eprintln!("spawn: {p}");
+    }
+    Ok(if report.problems.is_empty() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    })
 }
 
 fn run_job(spec_path: &Path, launcher: Option<String>, results: &Path) -> ExitCode {
