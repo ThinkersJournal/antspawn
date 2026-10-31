@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.59
+
+- `scripts/runner-account-setup.ps1` **failed on its first real run** (CireSnave, 2026-10-31, 0.0.58): `New-LocalUser -Description` accepts at most 48 characters and ours had 59, so `-Apply` stopped at its first action (read back: no user, no folder, no task; only the shim installed). It had only ever been dry-run. Fixes: (1) the description is a 42-character constant, independent of `-Name`; (2) the whole body is in `try`/`catch` that prints `FAILED: ...` and exits 1, because an uncaught `throw` left `$LASTEXITCODE` at 0 when the script was called with `&` (the "exit non-zero on any FAIL" promise held only for the read-back checks); (3) the random password is regenerated until it has an upper-case letter, a lower-case letter and a digit (local password policy), and uses `RandomNumberGenerator.Create().GetBytes` (works in Windows PowerShell 5.1; `Fill` needs .NET Core). Tests `tests/runner_account_setup_script.rs`: every `-Description` is at most 48 characters with a 16-character `-Name` (and a control that the old 59-character text is flagged), and a forced throw gives exit code 1 through `&`; both fail on the 0.0.58 script. Parameters audited against documentation, not by running elevated: see the PR. **Still unverified: the script has not completed an `-Apply` anywhere.**
+
 ## 0.0.58
 
 - `adapter::routing::RoutingDispatch` (ROADMAP row 23 slice b; `docs/ADAPTER-DECISIONS.md` decision 3, ruled A): one `Dispatch` per launcher id, chosen by the group's `launcher`. One job at a time across all launchers (`busy()` is true while any is busy; a busy flag per launcher waits on a measurement). An unknown launcher is refused naming group and launcher, never the JIT config; `unrouted()` lets `--check` list groups with no dispatcher. Nothing calls it yet: the `spawn adapter` command is slice c. Version provisional (PM allocates).
