@@ -35,6 +35,12 @@ pub trait JobSource {
     fn queued(&self, repo: &str) -> Result<Vec<QueuedJob>, MintError>;
 }
 
+impl<T: JobSource + ?Sized> JobSource for &T {
+    fn queued(&self, repo: &str) -> Result<Vec<QueuedJob>, MintError> {
+        (**self).queued(repo)
+    }
+}
+
 /// Where a minted runner goes: starts it inside a fresh environment of the group's launcher.
 pub trait Dispatch {
     /// Is a job still running? Nothing is polled or minted while this is true.
@@ -77,6 +83,11 @@ impl<A: GithubApi, S: JobSource, D: Dispatch> Watcher<A, S, D> {
             dispatch,
             seen: HashSet::new(),
         }
+    }
+
+    /// Is a runner still running?
+    pub fn busy(&self) -> bool {
+        self.dispatch.busy()
     }
 
     /// Job ids remembered as already minted for.
@@ -174,6 +185,8 @@ name = "g"
 repos = ["O/a", "O/b"]
 labels = ["antspawn", "account"]
 launcher = "account"
+task = "antspawn-r1"
+pipe = "antspawn-r1"
 "#;
 
     fn job(repo: &str, id: u64, labels: &[&str]) -> QueuedJob {

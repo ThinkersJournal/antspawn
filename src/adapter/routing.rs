@@ -29,15 +29,6 @@ impl RoutingDispatch {
         }
         Ok(self)
     }
-
-    /// Group names whose `launcher` has no dispatcher here (for `spawn adapter --check`).
-    pub fn unrouted<'a>(&self, groups: &'a [RunnerGroup]) -> Vec<&'a str> {
-        groups
-            .iter()
-            .filter(|g| !self.by_launcher.contains_key(&g.launcher))
-            .map(|g| g.name.as_str())
-            .collect()
-    }
 }
 
 impl Dispatch for RoutingDispatch {
@@ -94,6 +85,8 @@ mod tests {
             repos: vec!["O/a".into()],
             labels: vec![name.into()],
             launcher: launcher.into(),
+            task: None,
+            pipe: None,
         }
     }
 
@@ -184,14 +177,6 @@ mod tests {
         assert!(e.contains("gx") && e.contains("naive"), "{e}");
         assert!(!e.contains("SECRET"));
         assert!(t.log.lock().unwrap().is_empty());
-    }
-
-    #[test]
-    fn unrouted_lists_groups_whose_launcher_is_not_registered() {
-        let t = rig();
-        let gs = [group("ga", "account"), group("gx", "naive")];
-        assert_eq!(t.r.unrouted(&gs), ["gx"]);
-        assert!(t.r.unrouted(&gs[..1]).is_empty());
     }
 
     #[test]

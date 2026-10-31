@@ -3,6 +3,7 @@
 //! `docs/`: `github` holds the types and policy (no network code), `github_client` the real client.
 
 pub mod account_backend;
+pub mod command;
 pub mod config_file;
 pub mod dispatch;
 pub mod github;
