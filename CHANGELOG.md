@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.55
+
+- CodeRipper baseline (ROADMAP rows 15-17), no behaviour change: the five discarded `watcher::tick` results in tests now assert what they return (`unused-return-values`); the `allow(dead_code)` in `examples/matrix.rs` gets a reason (`lint-suppression`); the test fixtures in `adapter::github_client` no longer contain a full PEM header literal, they build it at run time (`SEC-002`, gitleaks `private-key`). The SEC-002 cause is a **hypothesis** (the rule's pattern spans lines, and the three fixtures sit close together; the reported line 591 is not a key) that gitleaks could not be run here to confirm: CI is the check. Row 14 (`reachability`) is unchanged and recorded as a finding that is true: no binary drives the adapter yet. Version provisional (PM allocates).
+
 ## 0.0.54
 
 - `spawn-jit-shim --fresh` (ROADMAP row 21 slice f): the runner's `TEMP`, `TMP`, `USERPROFILE`, `APPDATA` and `LOCALAPPDATA` now point into `<copy>\_home`, so its scratch space is deleted with the copy. This **reduces** what a job leaves for the next one; a job that writes the account's real profile or temp folder by absolute path still can, and nothing here proves otherwise. Two tests (the variables point inside the copy and the copy is gone; a control shows the same script outside the shim sees the real folders); not run as a restricted account (UNMEASURED). Version provisional (PM allocates).
