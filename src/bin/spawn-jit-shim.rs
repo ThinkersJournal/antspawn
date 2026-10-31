@@ -16,6 +16,12 @@
 //! Task Scheduler as the runner account, so the host cannot hand it an anonymous pipe; this is the channel
 //! that crosses two accounts without a file. Anything that is not a plausible JIT config (empty, oversized, not base64) is
 //! refused before the runner starts.
+//!
+//! With `--fresh <src> <under>` (Windows only; design item 4) the runner does not run in a shared
+//! directory: after the config arrives, `<src>` (a template the account cannot write) is copied to a new
+//! `<under>\run-<pid>-<nanos>`, `<runner>` is a path RELATIVE to that copy, the shim joins a kill-on-close
+//! Job Object so everything the runner starts is in it, and when the runner exits every other process in
+//! the job is terminated and the copy is deleted. A copy that cannot be deleted is exit 3, never silent.
 
 use std::io::Read;
 use std::net::{SocketAddr, TcpListener};
@@ -82,6 +88,210 @@ fn valid_sid(sid: &str) -> bool {
         && sid
             .chars()
             .all(|c| c.is_ascii_digit() || matches!(c, 'S' | '-'))
+}
+
+mod fresh {
+    use std::ffi::{OsStr, OsString};
+    use std::path::{Component, Path, PathBuf};
+    use std::process::{Command, Stdio};
+    use std::time::Duration;
+
+    /// A runner path inside the copy: relative, no `..`, no drive or root.
+    pub fn relative_ok(p: &OsStr) -> bool {
+        let path = Path::new(p);
+        path.components().next().is_some()
+            && path.components().all(|c| matches!(c, Component::Normal(_)))
+    }
+
+    /// Copy `src` into the existing directory `dst`. A symlink or junction in the template is refused.
+    fn copy_tree(src: &Path, dst: &Path) -> std::io::Result<()> {
+        for entry in std::fs::read_dir(src)? {
+            let entry = entry?;
+            let kind = entry.file_type()?;
+            let to = dst.join(entry.file_name());
+            if kind.is_symlink() {
+                return Err(std::io::Error::other("the template holds a symbolic link"));
+            }
+            if kind.is_dir() {
+                std::fs::create_dir(&to)?;
+                copy_tree(&entry.path(), &to)?;
+            } else {
+                std::fs::copy(entry.path(), &to)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn remove_with_retries(dir: &Path) -> std::io::Result<()> {
+        let mut last = Ok(());
+        for _ in 0..25 {
+            last = std::fs::remove_dir_all(dir);
+            if last.is_ok() || !dir.exists() {
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        last
+    }
+
+    /// Run `runner` (relative to a fresh copy of `src` under `under`) with `config` in its environment.
+    /// `Ok` is the runner's exit code; a copy left behind is an `Err`.
+    pub fn run(
+        src: &Path,
+        under: &Path,
+        runner: &OsStr,
+        args: Vec<OsString>,
+        var: &str,
+        config: String,
+    ) -> Result<i32, String> {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.subsec_nanos());
+        let dir: PathBuf = under.join(format!("run-{}-{nanos}", std::process::id()));
+        std::fs::create_dir(&dir)
+            .map_err(|e| format!("could not create the run directory: {}", e.kind()))?;
+        let result = start(src, &dir, runner, args, var, config);
+        match (result, remove_with_retries(&dir)) {
+            (Ok(code), Ok(())) => Ok(code),
+            (Err(e), Ok(())) => Err(e),
+            (_, Err(e)) => Err(format!("could not delete {}: {}", dir.display(), e.kind())),
+        }
+    }
+
+    fn start(
+        src: &Path,
+        dir: &Path,
+        runner: &OsStr,
+        args: Vec<OsString>,
+        var: &str,
+        config: String,
+    ) -> Result<i32, String> {
+        copy_tree(src, dir).map_err(|e| format!("could not copy the template: {}", e.kind()))?;
+        super::contain::join()?;
+        let status = Command::new(dir.join(runner))
+            .args(args)
+            .current_dir(dir)
+            .env(var, config)
+            .stdin(Stdio::null())
+            .status()
+            .map_err(|e| format!("could not start the runner: {}", e.kind()))?;
+        super::contain::sweep()?;
+        Ok(status.code().unwrap_or(1))
+    }
+}
+
+#[cfg(windows)]
+mod contain {
+    //! The Win32 Job Object calls (the shim's only other `unsafe`, with the pipe).
+    use std::mem::size_of;
+    use std::sync::atomic::{AtomicPtr, Ordering};
+    use std::time::{Duration, Instant};
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectBasicProcessIdList,
+        JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject,
+    };
+    use windows_sys::Win32::System::Threading::{
+        GetCurrentProcess, OpenProcess, PROCESS_TERMINATE, TerminateProcess,
+    };
+
+    static JOB: AtomicPtr<core::ffi::c_void> = AtomicPtr::new(std::ptr::null_mut());
+
+    /// Create a kill-on-close job and put this process in it; children inherit it.
+    pub fn join() -> Result<(), String> {
+        // SAFETY: plain Win32 calls on valid pointers to locals; the handle is checked and kept for the
+        // life of the process (closing it, at exit, is what kills any straggler).
+        unsafe {
+            let h = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+            if h.is_null() {
+                return Err(format!(
+                    "CreateJobObjectW: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+            let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            if SetInformationJobObject(
+                h,
+                JobObjectExtendedLimitInformation,
+                std::ptr::addr_of!(info).cast(),
+                size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            ) == 0
+                || AssignProcessToJobObject(h, GetCurrentProcess()) == 0
+            {
+                let e = std::io::Error::last_os_error();
+                CloseHandle(h);
+                return Err(format!("could not contain the runner: {e}"));
+            }
+            JOB.store(h, Ordering::SeqCst);
+        }
+        Ok(())
+    }
+
+    /// PIDs in the job, from `JobObjectBasicProcessIdList` (room for 1023).
+    fn members(job: HANDLE) -> Result<Vec<u32>, String> {
+        let mut buf = vec![0u64; 1024];
+        // SAFETY: `buf` is a writable block of the stated size; the call fills the documented layout
+        // (two u32 counts, then pointer-sized ids).
+        let ok = unsafe {
+            QueryInformationJobObject(
+                job,
+                JobObjectBasicProcessIdList,
+                buf.as_mut_ptr().cast(),
+                (buf.len() * 8) as u32,
+                std::ptr::null_mut(),
+            )
+        };
+        if ok == 0 {
+            return Err(format!(
+                "QueryInformationJobObject: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        let listed = ((buf[0] >> 32) as usize).min(1023);
+        Ok(buf[1..=listed].iter().map(|&p| p as u32).collect())
+    }
+
+    /// Terminate every process in the job except this one, and wait until only this one is left.
+    pub fn sweep() -> Result<(), String> {
+        let job: HANDLE = JOB.load(Ordering::SeqCst);
+        let me = std::process::id();
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            let others: Vec<u32> = members(job)?.into_iter().filter(|&p| p != me).collect();
+            if others.is_empty() {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err(format!(
+                    "{} process(es) outlived the runner and could not be ended",
+                    others.len()
+                ));
+            }
+            for pid in others {
+                // SAFETY: a pid from the job list; the handle is closed at once.
+                unsafe {
+                    let h = OpenProcess(PROCESS_TERMINATE, 0, pid);
+                    if !h.is_null() {
+                        TerminateProcess(h, 1);
+                        CloseHandle(h);
+                    }
+                }
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+}
+
+#[cfg(not(windows))]
+mod contain {
+    pub fn join() -> Result<(), String> {
+        Err("--fresh is only available on Windows".into())
+    }
+    pub fn sweep() -> Result<(), String> {
+        Ok(())
+    }
 }
 
 #[cfg(windows)]
@@ -260,11 +470,34 @@ fn main() -> ExitCode {
     } else {
         None
     };
+    let fresh = if args.peek().is_some_and(|a| a == "--fresh") {
+        args.next();
+        match (args.next(), args.next()) {
+            (Some(src), Some(under))
+                if std::path::Path::new(&src).is_dir() && std::path::Path::new(&under).is_dir() =>
+            {
+                Some((
+                    std::path::PathBuf::from(src),
+                    std::path::PathBuf::from(under),
+                ))
+            }
+            _ => {
+                return refuse(
+                    "--fresh needs <template dir> <runs dir>, both existing directories",
+                );
+            }
+        }
+    } else {
+        None
+    };
     let Some(runner) = args.next() else {
         return refuse(
-            "usage: spawn-jit-shim [--listen <addr:port> | --pipe <name> --allow-sid <sid>] <runner> [args...]",
+            "usage: spawn-jit-shim [--listen <addr:port> | --pipe <name> --allow-sid <sid>] [--fresh <template> <runs>] <runner> [args...]",
         );
     };
+    if fresh.is_some() && !fresh::relative_ok(&runner) {
+        return refuse("with --fresh the runner is a path inside the copy: relative, no '..'");
+    }
     let read = if let Some((name, sid)) = pipe {
         match receive_pipe(&name, &sid) {
             Ok(read) => read,
@@ -283,6 +516,15 @@ fn main() -> ExitCode {
         Ok(config) => config,
         Err(why) => return refuse(why),
     };
+    if let Some((src, under)) = fresh {
+        return match fresh::run(&src, &under, &runner, args.collect(), VAR, config) {
+            Ok(code) => ExitCode::from(u8::try_from(code).unwrap_or(1)),
+            Err(why) => {
+                eprintln!("spawn-jit-shim: {why}");
+                ExitCode::from(3)
+            }
+        };
+    }
     match Command::new(runner)
         .args(args)
         .env(VAR, config)

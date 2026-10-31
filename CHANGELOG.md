@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.53
+
+- `spawn-jit-shim --fresh <template> <runs> <runner>` (Windows only; ROADMAP row 21 slice e, design item 4: wipe between runs). After the config arrives the template is copied to a new `<runs>\run-<pid>-<nanos>`, the runner (a path relative to the copy, no `..`) runs there, the shim joins a kill-on-close Job Object so the runner's whole tree is in it, ends every other process in the job when the runner exits, and deletes the copy; a copy that cannot be deleted is exit 3. A symlink in the template is refused; a config that is not one creates no copy. Seven tests as the current user with two controls (a shared directory does carry state; a plain delete does fail while a process holds a file); **not run as a restricted account or via Task Scheduler** (UNMEASURED). `scripts/runner-account-setup.ps1` now keeps the runner as a read-only template (`<root>\runner-src`) and runs the task with `--fresh`; still never applied. The account's temp and profile folders are not wiped yet. Version provisional (PM allocates).
+
 ## 0.0.52
 
 - `scripts/runner-account-setup.ps1` (ROADMAP row 21 slice c): one-time elevated setup for one account-backed runner (`ghr-<Name>`, private root `C:\gh-runner-<Name>`, pinned-runner copy, `SeBatchLogonRight`, a task running `spawn-jit-shim --pipe` as the account that the launcher may run). Dry-run by default, `-Apply` reads the state back as PASS/FAIL. **Never applied anywhere**; only the dry-run output and the argument guards were run. It does not set a firewall limit (not expressible as Windows Firewall rules), does not wipe the runner directory between runs, and does not start the task. Version provisional (PM allocates).

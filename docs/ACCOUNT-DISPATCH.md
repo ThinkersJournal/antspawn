@@ -36,7 +36,7 @@ is not reused for runners.
    (retry window), and a `PipeTransport: JitTransport` connects as the launcher user and writes the config once. The runner is the pinned
    v2.338.1, copied from the read-only cache into a fresh per-run directory under the account's root and removed afterwards; JIT runners are
    ephemeral, so the runner exits after one job and deregisters itself. "Outcome" and `busy()` semantics of `SandboxDispatch` are unchanged.
-4. **Between runs.** The task's last step wipes the per-run directory and the account's temp and work folders (the existing `serve` semantics:
+4. **Between runs (built in 0.0.53 as the shim's `--fresh`, tested as the current user only; the account's temp and profile folders are NOT wiped yet).** The task's last step wipes the per-run directory and the account's temp and work folders (the existing `serve` semantics:
    the result marker appears only after the process tree is dead and the directory is gone), and a kill-on-close Job Object holds the tree.
 5. **Network (ruled, board 341).** The existing account is outbound-firewalled (`account-setup.ps1`: "block all outbound"). A runner needs
    outbound HTTPS to GitHub, which **contradicts board 260 ruling (b)** ("the runner gets network only inside Windows Sandbox"). That ruling was
