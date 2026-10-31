@@ -51,6 +51,7 @@ $ErrorActionPreference = 'Stop'
 # before this point and are PowerShell's own.
 try {
 
+. (Join-Path $PSScriptRoot 'AntSpawnTaskSd.ps1')
 $AccountName = "ghr-$Name"
 # New-LocalUser limits -Description to 48 characters, whatever -Name is (the first real run failed on 59).
 $AccountDescription = 'AntSpawn runner; nobody holds its password'
@@ -215,7 +216,9 @@ Check "task action is the shim with --pipe $PipeName --allow-sid $launcherSid" {
 }
 Check "task allows $LauncherUser to run it and nothing beyond read+run" {
     $sd = (New-Object -ComObject Schedule.Service | ForEach-Object { $_.Connect(); $_.GetFolder('\').GetTask($TaskName) }).GetSecurityDescriptor(4)
-    ($sd -match 'GRGX') -and ($sd -match [regex]::Escape($launcherSid))
+    $bad = @(Get-TaskSdProblems -Sddl $sd -LauncherSid $launcherSid -RunAsSid $sid)
+    foreach ($b in $bad) { Write-Host "      $b" }
+    $bad.Count -eq 0
 }
 Check "the account can execute $Shim (read+execute granted, none denied)" {
     $acl = (Get-Acl $Shim).Access
