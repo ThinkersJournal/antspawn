@@ -1,0 +1,200 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+<#
+.SYNOPSIS
+  One-time, elevated setup for ONE account-backed Actions runner (ROADMAP row 21, docs/ACCOUNT-DISPATCH.md).
+  Run by the machine owner, never by a lane. NOT YET RUN ANYWHERE: written 2026-10-31, dry-run checked only.
+
+.DESCRIPTION
+  Creates the restricted local account `ghr-<Name>` (no group beyond Users), its private root
+  `C:\gh-runner-<Name>` (only that account, SYSTEM and Administrators; the launcher user has NO access), a copy
+  of the pinned runner inside it, and a scheduled task that runs `spawn-jit-shim --pipe <PipeName>
+  --allow-sid <launcher SID> run.cmd` AS that account. The launcher user may run the task and nothing else.
+  The account's password is random, used once to register the task, then discarded.
+  DRY-RUN BY DEFAULT: without -Apply it changes nothing and prints what it would do. With -Apply it does each
+  step, then READS THE STATE BACK and prints PASS/FAIL per property; the exit code is non-zero on any FAIL.
+  Safe to re-run. Run it once per runner account; each account gets its own root and its own pipe.
+
+  What it does NOT do (so do not read a PASS as more than it says):
+  * It does not touch the firewall. Board 341 ruled outbound network allowed on this path; limiting it to
+    GitHub's hosts is not expressible as Windows Firewall rules (a block rule overrides an allow rule, and
+    rules take addresses, not names). How to limit is CireSnave's call, still open.
+  * It does not wipe the runner directory between runs (design item 4): until that exists, a second job
+    sees the first job's files in `<root>\runner`. Do not use it for more than the 3-run proof.
+  * It does not start the task: the shim waits for a config on its pipe and would just time out.
+  * It does not prove isolation. The negative controls A and B (docs/ACCOUNT-DISPATCH.md) do, after -Apply.
+
+.PARAMETER Apply         Make the changes (needs an elevated PowerShell).
+.PARAMETER Name          Runner name, 1-16 chars of a-z 0-9 '-'; the account is ghr-<Name>.
+.PARAMETER BinDir        Folder holding spawn-jit-shim.exe. NOT under C:\Users; not writable by the account.
+.PARAMETER RunnerSource  The pinned Actions runner folder (read-only cache); copied into the account's root.
+.PARAMETER LauncherUser  The user that delivers the config and may trigger the task. Default: current user.
+.PARAMETER PipeName      Pipe the shim creates. Default: antspawn-<Name>.
+#>
+[CmdletBinding()]
+param(
+    [switch]$Apply,
+    [Parameter(Mandatory)][ValidatePattern('^[a-z0-9-]{1,16}$')][string]$Name,
+    [Parameter(Mandatory)][string]$BinDir,
+    [Parameter(Mandatory)][string]$RunnerSource,
+    [string]$LauncherUser = "$env:USERDOMAIN\$env:USERNAME",
+    [string]$PipeName = "antspawn-$Name"
+)
+$ErrorActionPreference = 'Stop'
+
+$AccountName = "ghr-$Name"
+$TaskName = "AntSpawnRunner-$Name"
+$Root = "C:\gh-runner-$Name"
+$BinDir = [IO.Path]::GetFullPath($BinDir)
+$Shim = Join-Path $BinDir 'spawn-jit-shim.exe'
+$RunCmd = Join-Path $Root 'runner\run.cmd'
+$usersRoot = Join-Path $env:SystemDrive 'Users'
+if ($BinDir.StartsWith($usersRoot, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "BinDir $BinDir is under ${usersRoot}: the restricted account cannot execute files in a user profile. Use e.g. 'C:\Program Files\antspawn'."
+}
+if ($PipeName -notmatch '^[A-Za-z0-9._-]{1,64}$') { throw "PipeName must be 1-64 chars of A-Z a-z 0-9 . _ -" }
+
+$principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+$elevated = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if ($Apply -and -not $elevated) { throw 'Run this in an elevated PowerShell for -Apply (dry-run needs no elevation).' }
+if (-not (Test-Path $Shim)) { throw "spawn-jit-shim.exe not found at $Shim" }
+if (-not (Test-Path (Join-Path $RunnerSource 'run.cmd'))) { throw "no run.cmd in RunnerSource $RunnerSource (not an Actions runner folder)" }
+
+$results = [System.Collections.Generic.List[object]]::new()
+function Step([string]$What, [scriptblock]$Do) {
+    if ($Apply) { Write-Host "APPLY  $What"; & $Do } else { Write-Host "WOULD  $What" }
+}
+function Check([string]$Property, [scriptblock]$Test) {
+    $ok = $false
+    try { $ok = [bool](& $Test) } catch { $ok = $false }
+    $results.Add([pscustomobject]@{ Property = $Property; Ok = $ok })
+    Write-Host ("{0,-5} {1}" -f ($(if ($ok) { 'PASS' } else { 'FAIL' })), $Property)
+}
+function Acl([string]$Path, [string[]]$IcaclsArgs) {
+    & icacls.exe $Path @IcaclsArgs | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "icacls $Path $IcaclsArgs failed ($LASTEXITCODE)" }
+}
+function SidOf([string]$User) { ([Security.Principal.NTAccount]$User).Translate([Security.Principal.SecurityIdentifier]).Value }
+
+# --- the account (password: random, used once below, never stored) ---------------------------------
+$account = Get-LocalUser -Name $AccountName -ErrorAction SilentlyContinue
+$task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+$plain = $null
+if ($Apply -and ((-not $account) -or (-not $task))) {
+    $bytes = [byte[]]::new(48)
+    [Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+    $plain = [Convert]::ToBase64String($bytes)
+}
+Step "create local user $AccountName (random password, never expires, cannot change it, no groups added)" {
+    if (-not $account) {
+        New-LocalUser -Name $AccountName -Password (ConvertTo-SecureString $plain -AsPlainText -Force) `
+            -PasswordNeverExpires -UserMayNotChangePassword -AccountNeverExpires `
+            -Description "AntSpawn Actions runner $Name. Nobody holds this password." | Out-Null
+    } elseif (-not $task) {
+        Set-LocalUser -Name $AccountName -Password (ConvertTo-SecureString $plain -AsPlainText -Force)
+    }
+}
+$account = Get-LocalUser -Name $AccountName -ErrorAction SilentlyContinue
+$sid = if ($account) { $account.SID.Value } else { '<account SID>' }
+$launcherSid = if ($Apply) { SidOf $LauncherUser } else { '<launcher SID>' }
+
+# --- the private root and the runner copy ----------------------------------------------------------
+Step "create $Root; ACL: SYSTEM + Administrators full, $AccountName modify, nobody else (not $LauncherUser)" {
+    New-Item -ItemType Directory -Force $Root | Out-Null
+    Acl $Root @('/inheritance:r', '/grant:r', '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F', "*${sid}:(OI)(CI)M")
+}
+Step "copy the pinned runner from $RunnerSource to $Root\runner (once; robocopy exit < 8 is success)" {
+    if (-not (Test-Path $RunCmd)) {
+        & robocopy.exe $RunnerSource "$Root\runner" /E /NFL /NDL /NJH /NJS | Out-Null
+        if ($LASTEXITCODE -ge 8) { throw "robocopy failed ($LASTEXITCODE)" }
+    }
+}
+
+# --- 'Log on as a batch job' (the task cannot start without it) ------------------------------------
+function Get-BatchRightSids {
+    $f = Join-Path ([IO.Path]::GetTempPath()) ("antspawn-sec-" + [guid]::NewGuid().ToString('N') + '.inf')
+    try {
+        & secedit.exe /export /cfg $f /areas USER_RIGHTS | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "secedit /export failed ($LASTEXITCODE)" }
+        $line = Get-Content $f | Where-Object { $_ -match '^SeBatchLogonRight\s*=' }
+        if ($line) {
+            ($line -replace '^[^=]*=\s*', '').Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ } | ForEach-Object {
+                if ($_.StartsWith('*')) { $_ } else { '*' + (SidOf $_) }
+            }
+        } else { @() }
+    } finally { Remove-Item $f -ErrorAction SilentlyContinue }
+}
+Step "grant $AccountName the right 'Log on as a batch job' (SeBatchLogonRight)" {
+    $have = @(Get-BatchRightSids)
+    if ($have -notcontains "*$sid") {
+        $inf = Join-Path ([IO.Path]::GetTempPath()) ("antspawn-sec-" + [guid]::NewGuid().ToString('N') + '.inf')
+        $db = [IO.Path]::ChangeExtension($inf, '.sdb')
+        try {
+            $sids = (@($have) + "*$sid") -join ','
+            Set-Content -Path $inf -Encoding unicode -Value "[Unicode]`r`nUnicode=yes`r`n[Version]`r`nsignature=`"`$CHICAGO`$`"`r`nRevision=1`r`n[Privilege Rights]`r`nSeBatchLogonRight = $sids`r`n"
+            & secedit.exe /configure /db $db /cfg $inf /areas USER_RIGHTS | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "secedit /configure failed ($LASTEXITCODE)" }
+        } finally { Remove-Item $inf, $db -ErrorAction SilentlyContinue }
+    }
+}
+
+# --- the task, run AS the account; the launcher may run it but not change it -----------------------
+$shimArgs = "--pipe $PipeName --allow-sid $launcherSid `"$RunCmd`""
+Step "register task ${TaskName}: `"$Shim`" $shimArgs, as ${AccountName}; ${LauncherUser} may run it" {
+    if (-not $task) {
+        $action = New-ScheduledTaskAction -Execute $Shim -Argument $shimArgs
+        $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 7) `
+            -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+        $def = New-ScheduledTask -Action $action -Settings $settings
+        Register-ScheduledTask -TaskName $TaskName -InputObject $def -User "$env:COMPUTERNAME\$AccountName" `
+            -Password $plain | Out-Null
+    }
+    $svc = New-Object -ComObject Schedule.Service
+    $svc.Connect()
+    $t = $svc.GetFolder('\').GetTask($TaskName)
+    $t.SetSecurityDescriptor("D:(A;;FA;;;BA)(A;;FA;;;SY)(A;;GRGX;;;$launcherSid)", 0)
+}
+$plain = $null
+
+if (-not $Apply) {
+    Write-Host "`nDry run: nothing was changed. Re-run with -Apply in an elevated shell."
+    Write-Host "Not done by this script either way: firewall limit, wipe between runs, starting the task (see .DESCRIPTION)."
+    exit 0
+}
+
+# --- read the state back (a changed exit code is not a changed state) ------------------------------
+Write-Host ''
+Write-Host 'State read back:'
+Check "user $AccountName exists and is enabled" { (Get-LocalUser -Name $AccountName).Enabled }
+Check "user $AccountName is in no group beyond Users" {
+    $null = Get-LocalUser -Name $AccountName
+    $g = Get-LocalGroup | Where-Object { (Get-LocalGroupMember $_ -ErrorAction SilentlyContinue).Name -contains "$env:COMPUTERNAME\$AccountName" }
+    -not ($g | Where-Object Name -ne 'Users')
+}
+Check "$AccountName holds SeBatchLogonRight" { @(Get-BatchRightSids) -contains "*$sid" }
+Check "$Root grants only SYSTEM, Administrators and $AccountName (nobody else, not $LauncherUser)" {
+    $ids = (Get-Acl $Root).Access.IdentityReference.Value | Sort-Object -Unique
+    $extra = $ids | Where-Object { $_ -notmatch "^(NT AUTHORITY\\SYSTEM|BUILTIN\\Administrators)$" -and $_ -notmatch "\\$AccountName$" }
+    -not $extra
+}
+Check "$Root has no ACE for any other ghr-* account (one runner = one root)" {
+    -not ((Get-Acl $Root).Access.IdentityReference.Value | Where-Object { $_ -match '\\ghr-' -and $_ -notmatch "\\$AccountName$" })
+}
+Check "the pinned runner is in $Root\runner" { Test-Path $RunCmd }
+Check "task $TaskName runs as $AccountName" { (Get-ScheduledTask -TaskName $TaskName).Principal.UserId -match "$AccountName$" }
+Check "task action is the shim with --pipe $PipeName --allow-sid $launcherSid" {
+    $a = (Get-ScheduledTask -TaskName $TaskName).Actions[0]
+    ($a.Execute -eq $Shim) -and ($a.Arguments -eq $shimArgs)
+}
+Check "task allows $LauncherUser to run it and nothing beyond read+run" {
+    $sd = (New-Object -ComObject Schedule.Service | ForEach-Object { $_.Connect(); $_.GetFolder('\').GetTask($TaskName) }).GetSecurityDescriptor(4)
+    ($sd -match 'GRGX') -and ($sd -match [regex]::Escape($launcherSid))
+}
+Check "the account can execute $Shim (read+execute granted, none denied)" {
+    $acl = (Get-Acl $Shim).Access
+    $allow = $acl | Where-Object { $_.AccessControlType -eq 'Allow' -and $_.FileSystemRights -match 'ReadAndExecute|FullControl|Modify' -and $_.IdentityReference.Value -match "(^|\\)($AccountName|Users|Authenticated Users|Everyone)$" }
+    $deny = $acl | Where-Object { $_.AccessControlType -eq 'Deny' -and $_.IdentityReference.Value -match "$AccountName$" }
+    $allow -and -not $deny
+}
+
+if ($results | Where-Object { -not $_.Ok }) { Write-Host "`nFAILED: see the FAIL lines above."; exit 1 }
+Write-Host "`nAll properties read back as expected. Next: the negative controls (docs/ACCOUNT-DISPATCH.md), then the 3-run proof."

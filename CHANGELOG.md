@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.52
+
+- `scripts/runner-account-setup.ps1` (ROADMAP row 21 slice c): one-time elevated setup for one account-backed runner (`ghr-<Name>`, private root `C:\gh-runner-<Name>`, pinned-runner copy, `SeBatchLogonRight`, a task running `spawn-jit-shim --pipe` as the account that the launcher may run). Dry-run by default, `-Apply` reads the state back as PASS/FAIL. **Never applied anywhere**; only the dry-run output and the argument guards were run. It does not set a firewall limit (not expressible as Windows Firewall rules), does not wipe the runner directory between runs, and does not start the task. Version provisional (PM allocates).
+
 ## 0.0.51
 
 - `adapter::account_backend` (ROADMAP row 21 slice b): `AccountBackend<T: AccountTask>` (a `RunnerBackend`: start the account's task, hand the pipe name to delivery, wait; a failed delivery ends the task), `PipeTransport` (a `JitTransport`: opens `\\.\pipe\<name>` as the launcher user, retries until the shim has created it, writes once; busy and denied are errors at once) and `SchtasksTask` (the real task, `schtasks /Run`, `/Query`, `/End`). Tested with a fake task and, on Windows, against the real `spawn-jit-shim --pipe` as the current user, with a denied-principal control. **Not run against a real account, task or Task Scheduler**; `schtasks /Query` output format and whether a non-admin `/Run` works are UNMEASURED. Not yet wired into `spawn adapter`. Version provisional (PM allocates).
