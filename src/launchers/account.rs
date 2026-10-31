@@ -25,6 +25,7 @@ use std::time::{Duration, Instant};
 use crate::launcher::{Environment, Exit, LaunchError, Launcher};
 use crate::runner::{Layout, RunnerConfig, TASK_NAME, check_spec, decode_exit};
 use crate::spec::{JobSpec, MountMode};
+use crate::streams::Streams;
 
 /// How long the runner gets to pick a job up and answer, beyond the job's own time limit.
 const GRACE: Duration = Duration::from_secs(60);
@@ -139,6 +140,16 @@ impl Environment for AccountEnv {
                 )));
             }
             std::thread::sleep(Duration::from_millis(200));
+        }
+    }
+
+    fn streams(&mut self) -> Streams {
+        let dir = self.layout.job_results(&self.id).join("streams");
+        let read = |n: &str| std::fs::read(dir.join(n)).ok();
+        Streams {
+            stdout: read("stdout.tail"),
+            stderr: read("stderr.tail"),
+            combined: false,
         }
     }
 

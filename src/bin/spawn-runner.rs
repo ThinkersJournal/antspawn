@@ -13,6 +13,7 @@
 //! The layout root is `ANTSPAWN_ROOT` or `%ProgramData%\antspawn` (see `antspawn::runner`).
 
 use antspawn::runner::{Layout, RunnerConfig, check_spec, copy_tree, encode_exit, valid_job_id};
+use antspawn::streams::{Tail, settle};
 use antspawn::{Exit, JobSpec};
 use std::process::{Command, ExitCode};
 use std::time::{Duration, Instant};
@@ -116,18 +117,37 @@ fn exec(layout: &Layout, id: &str) -> Result<(), String> {
             spec.job.cmd[0].clone().into()
         }
     };
+    let (out_tail, err_tail) = (Tail::new(), Tail::new());
+    let mut readers = Vec::new();
     let exit = match Command::new(program)
         .args(&spec.job.cmd[1..])
         .current_dir(cwd)
         .envs(&spec.job.env)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
         .spawn()
     {
-        Ok(mut child) => wait(&mut child, limit),
+        Ok(mut child) => {
+            if let Some(p) = child.stdout.take() {
+                readers.push(out_tail.capture(p));
+            }
+            if let Some(p) = child.stderr.take() {
+                readers.push(err_tail.capture(p));
+            }
+            wait(&mut child, limit)
+        }
         Err(e) => {
             fail(format!("cannot start `{}`: {e}", spec.job.cmd[0]));
             Exit::Code(127)
         }
     };
+
+    settle(&mut readers, Duration::from_millis(500));
+    let streams = results.join("streams");
+    let _ = std::fs::create_dir_all(&streams);
+    let _ = std::fs::write(streams.join("stdout.tail"), out_tail.snapshot());
+    let _ = std::fs::write(streams.join("stderr.tail"), err_tail.snapshot());
 
     let out = results.join("out");
     for o in &spec.outputs {

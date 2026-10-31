@@ -165,6 +165,10 @@ pub enum SpecError {
     BadMount { guest: String, why: &'static str },
     #[error("output name `{0}` must be a single path segment")]
     BadOutputName(String),
+    #[error(
+        "output name `{0}` is reserved for the files `spawn run` writes into the results folder"
+    )]
+    ReservedOutputName(String),
 }
 
 /// What a spec needs from a launcher, as a set of capabilities.
@@ -215,6 +219,9 @@ impl JobSpec {
             if o.name.is_empty() || o.name.contains(['/', '\\']) || o.name == ".." || o.name == "."
             {
                 return Err(SpecError::BadOutputName(o.name.clone()));
+            }
+            if crate::streams::RESERVED_RESULT_NAMES.contains(&o.name.as_str()) {
+                return Err(SpecError::ReservedOutputName(o.name.clone()));
             }
         }
         Ok(())
@@ -310,6 +317,17 @@ cmd = ["slangc", "--version"]
         assert!(matches!(
             JobSpec::from_toml(bad_out),
             Err(SpecError::BadOutputName(_))
+        ));
+        let reserved = "[job]
+name='a'
+cmd=['x']
+[[output]]
+guest='/o'
+name='spawn-result.json'
+";
+        assert!(matches!(
+            JobSpec::from_toml(reserved),
+            Err(SpecError::ReservedOutputName(_))
         ));
     }
 

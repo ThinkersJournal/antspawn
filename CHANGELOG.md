@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.49
+
+- **Breaking for callers of `spawn run`:** a refusal exits **125** (was 2) and another spawn-side failure **126** (was 2); job exit codes, 124 (timeout) and 137 (killed) are unchanged. New `<results>/spawn-result.json` (authoritative status), `stdout.tail` and `stderr.tail` (last 64 KiB; `windows-sandbox` combined). Output names `stdout.tail`, `stderr.tail`, `spawn-result.json` are reserved. `naive` now gives its job a null stdin and captures output instead of inheriting it. `account` streams need a redeployed `spawn-runner` (UNVERIFIED). MEASUREMENTS: the "sandbox never starts from a tool shell" statements are marked superseded (0.0.29). Version provisional (PM allocates).
+
 ## 0.0.48
 
 - docs: `docs/ACCOUNT-DISPATCH.md`, the design note for an account-backed Dispatch (ROADMAP row 21); docs only, nothing run. Records board 341 ruled A (CireSnave 2026-10-30): named ACL'd pipe and outbound network allowed on this path. Version provisional (PM allocates).

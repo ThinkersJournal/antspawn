@@ -22,6 +22,7 @@ use std::time::{Duration, Instant};
 
 use crate::launcher::{Environment, Exit, LaunchError, Launcher};
 use crate::spec::{JobSpec, MountMode};
+use crate::streams::Streams;
 
 /// Present when the optional feature is enabled; the launcher checks it and never enables it.
 pub const SANDBOX_EXE: &str = r"C:\Windows\System32\WindowsSandbox.exe";
@@ -243,6 +244,17 @@ impl WsbEnv {
 impl Environment for WsbEnv {
     fn run(&mut self, spec: &JobSpec) -> Result<Exit, LaunchError> {
         self.run_hooked(spec.limits.time_s.map(Duration::from_secs), &mut |_| Ok(()))
+    }
+
+    fn streams(&mut self) -> Streams {
+        // The guest redirects the command's stdout and stderr into one file (`2>&1`).
+        Streams {
+            stdout: std::fs::read(self.out.join("cmd.log"))
+                .ok()
+                .map(|b| crate::streams::tail_of(&b)),
+            stderr: None,
+            combined: true,
+        }
     }
 
     fn collect(&mut self, spec: &JobSpec, results: &Path) -> Result<(), LaunchError> {
