@@ -9,6 +9,7 @@ pub mod github;
 pub mod github_client;
 pub mod handoff;
 pub mod jit_host;
+pub mod routing;
 pub mod runner_cache;
 pub mod runner_pin;
 pub mod watcher;
