@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
 # Run in an ELEVATED PowerShell as cires. Nothing here is run by a lane.
 # 1. Install the shim where the restricted account can execute it but not write it.
 New-Item -ItemType Directory -Force 'C:\Program Files\antspawn' | Out-Null

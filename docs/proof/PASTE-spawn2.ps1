@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
 # SECOND runner account, for negative controls A and B (docs/ACCOUNT-DISPATCH.md). ELEVATED PowerShell as cires.
 # Needs scripts/AntSpawnTaskSd.ps1 on main (PR fix/task-sd-check) or the task-SD check gives the same false FAIL as for spawn1.
 $s = 'C:\Projects\antspawn\scripts\runner-account-setup.ps1'
