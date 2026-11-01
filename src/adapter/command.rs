@@ -229,8 +229,8 @@ fn unix_now() -> u64 {
 }
 
 fn print_tick(t: &TickReport) {
-    for (id, account) in &t.ended_ok {
-        eprintln!("spawn adapter: job {id}: runner ended: {account}");
+    for (id, task_status) in &t.ended_ok {
+        eprintln!("spawn adapter: job {id}: runner ended: {task_status}");
     }
     for (id, why, retry) in &t.ended_failed {
         let next = if *retry {

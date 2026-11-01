@@ -94,7 +94,7 @@ pub struct TickReport {
     pub dispatched: Vec<u64>,
     /// `(job id, reason)`: a runner was minted but the dispatch failed (operator needed).
     pub dispatch_failed: Vec<(u64, String)>,
-    /// `(job id, one-line account)`: a dispatched runner ended well.
+    /// `(job id, task status)`: a dispatched runner ended well. The text is the scheduled task's status, e.g. `task ended (Ready)`; never a credential.
     pub ended_ok: Vec<(u64, String)>,
     /// `(job id, reason, will retry)`: a dispatched job ended in an error. `will retry` is true only when
     /// nothing ran and attempts remain; the job is then minted for again after the cooldown.
@@ -139,7 +139,7 @@ impl<A: GithubApi, S: JobSource, D: Dispatch> Watcher<A, S, D> {
     fn absorb(&mut self, now_s: u64, report: &mut TickReport) {
         for o in self.dispatch.finished() {
             match o.result {
-                Ok(account) => report.ended_ok.push((o.job_id, account)),
+                Ok(task_status) => report.ended_ok.push((o.job_id, task_status)),
                 Err(why) => {
                     let will_retry = match self.jobs.get_mut(&o.job_id) {
                         Some(st) if o.nothing_ran && st.attempts < self.retry.max_attempts => {
