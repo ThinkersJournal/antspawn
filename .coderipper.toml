@@ -23,7 +23,6 @@ reason = "History hit only: commits 7e21e131 and 104cdadb quoted, in this file's
 # ahead of the wiring that boards 321/322 and the `spawn adapter` account path still need (docs/ADAPTER-DECISIONS.md line 9 lists them).
 [reachability]
 public_api = [
-  { file = "src/adapter/dispatch.rs", symbol = "take_outcomes", reason = "`SandboxDispatch::take_outcomes` is how a caller reads the finished jobs; only tests call it until the sandbox path is wired into `spawn adapter` (boards 321/322). Owner: antspawn lane." },
   { file = "src/adapter/dispatch.rs", symbol = "WsbBackend", reason = "the real Windows Sandbox `RunnerBackend`, built on `RunnerVm`; not constructed by the binary until the sandbox path is wired (boards 321/322; docs/ADAPTER-DECISIONS.md). Owner: antspawn lane." },
   { file = "src/adapter/github.rs", symbol = "clamp_time", reason = "`AdapterConfig::clamp_time` grants a job its time limit (docs/ADAPTER-GITHUB.md); the account and sandbox backends take its result, and only tests call it directly today. Owner: antspawn lane." },
   { file = "src/adapter/jit_host.rs", symbol = "ListenerTransport", reason = "the TCP `JitTransport` for the Windows Sandbox guest; used only by tests until the sandbox path is wired (boards 321/322). Owner: antspawn lane." },

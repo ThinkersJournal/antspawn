@@ -339,3 +339,14 @@ Two probes, same dummy 16-byte base64 text, each run after a `schtasks /Run`, ta
 Exit 2 in the shim is `refuse()` (empty, oversized or not-base64 config, `src/bin/spawn-jit-shim.rs`). Consistent with, but not proven by, `Test-Path` itself opening the one allowed connection and
 closing it empty; the shim's stderr was not captured and the pipe's access mask was not read, so the cause is **unmeasured**. Either way the shim took exactly one connection and left nothing behind (no shim, no pipe, task Ready).
 Not measured: the shim's reaction to a real config, whether the runner started, any GitHub contact.
+
+## 2026-10-31: failed account dispatch, how it ends (ref: branch off main d446332; standard user cires; `ghr-spawn1`; one sample per case)
+
+`cargo run --example dispatch_failure -- AntSpawnRunner-spawn1 antspawn-spawn1`, through the real `SandboxDispatch` + `AccountBackend` + `SchtasksTask` + `PipeTransport`, dummy config never delivered:
+
+| Case | Outcome | `nothing_ran` | Took | Left behind (immediately and +5 s) |
+|---|---|---|---|---|
+| task name does not exist | `Err("`schtasks /Run /TN AntSpawnRunner-no-such-task` failed (exit code: 1): ERROR: The system cannot find the file specified...")` | true | 0.2 s | task absent; no pipe; 0 shim processes |
+| real task started, transport told a pipe the shim does not create (3 s window) | `Err("could not open pipe antspawn-no-such-pipe: entity not found")` | true | 4.1 s | task Ready; pipe `antspawn-spawn1` not listed; 0 shim processes |
+
+So both leave nothing running, which is what the retry rule needs. **Not measured:** that the shim was actually running during the second case (only that none remained, so `end()` stopped it or it had exited); a pipe that is busy or refuses the user; a failure AFTER delivery (the runner starting and dying), which the code treats as final and which no run here produced; what `wait` reports when the shim refuses a config (the earlier probe B ended with `LastTaskResult` 0, and `wait` only reads the task status, so it would report `Ok`).
