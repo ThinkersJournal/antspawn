@@ -8,6 +8,7 @@
 
 use std::collections::BTreeMap;
 
+use super::dispatch::Outcome;
 use super::github::{RunnerGroup, Secret};
 use super::watcher::{Dispatch, QueuedJob};
 
@@ -34,6 +35,13 @@ impl RoutingDispatch {
 impl Dispatch for RoutingDispatch {
     fn busy(&self) -> bool {
         self.by_launcher.values().any(|d| d.busy())
+    }
+
+    fn finished(&mut self) -> Vec<Outcome> {
+        self.by_launcher
+            .values_mut()
+            .flat_map(|d| d.finished())
+            .collect()
     }
 
     fn dispatch(
