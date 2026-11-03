@@ -52,6 +52,7 @@ $ErrorActionPreference = 'Stop'
 try {
 
 . (Join-Path $PSScriptRoot 'AntSpawnTaskSd.ps1')
+. (Join-Path $PSScriptRoot 'AntSpawnSandboxPkg.ps1')
 $AccountName = "ghr-$Name"
 # New-LocalUser limits -Description to 48 characters, whatever -Name is (the first real run failed on 59).
 $AccountDescription = 'AntSpawn runner; nobody holds its password'
@@ -93,7 +94,8 @@ function SidOf([string]$User) { ([Security.Principal.NTAccount]$User).Translate(
 $account = Get-LocalUser -Name $AccountName -ErrorAction SilentlyContinue
 $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 $plain = $null
-if ($Apply -and ((-not $account) -or (-not $task))) {
+# -Apply always sets a new password: registering the Windows Sandbox package below needs it, and the task is then re-registered with it.
+if ($Apply) {
     # Local password policy wants 3 of 4 character classes; base64 usually has them, so insist on it rather than hope.
     do {
         $bytes = [byte[]]::new(48)
@@ -108,13 +110,20 @@ Step "create local user $AccountName (random password, never expires, cannot cha
         New-LocalUser -Name $AccountName -Password (ConvertTo-SecureString $plain -AsPlainText -Force) `
             -PasswordNeverExpires -UserMayNotChangePassword -AccountNeverExpires `
             -Description $AccountDescription | Out-Null
-    } elseif (-not $task) {
+    } else {
         Set-LocalUser -Name $AccountName -Password (ConvertTo-SecureString $plain -AsPlainText -Force)
     }
 }
 $account = Get-LocalUser -Name $AccountName -ErrorAction SilentlyContinue
 $sid = if ($account) { $account.SID.Value } else { '<account SID>' }
 $launcherSid = if ($Apply) { SidOf $LauncherUser } else { '<launcher SID>' }
+
+# --- Windows Sandbox package (wsb.exe) for this account: needs the password, so it runs now and before any logon hardening --
+$sbx = $null
+Step "register the Windows Sandbox package (wsb.exe) for $AccountName by running Add-AppxPackage -RegisterByFamilyName AS that account (Start-Process -Credential -LoadUserProfile), then read back InstallState and wsb.exe" {
+    $script:sbx = Register-SandboxPackageAs -AccountName $AccountName -Plain $plain
+    Write-Host ("       registration child: Registered={0} TimedOut={1}" -f $script:sbx.Registered, $script:sbx.TimedOut)
+}
 
 # --- the private root and the runner copy ----------------------------------------------------------
 Step "create $Root; ACL: SYSTEM + Administrators full, $AccountName modify, nobody else (not $LauncherUser)" {
@@ -164,14 +173,13 @@ Step "grant $AccountName the right 'Log on as a batch job' (SeBatchLogonRight)" 
 # --- the task, run AS the account; the launcher may run it but not change it -----------------------
 $shimArgs = "--pipe $PipeName --allow-sid $launcherSid --fresh `"$Template`" `"$Root\runs`" run.cmd"
 Step "register task ${TaskName}: `"$Shim`" $shimArgs, as ${AccountName}; ${LauncherUser} may run it" {
-    if (-not $task) {
-        $action = New-ScheduledTaskAction -Execute $Shim -Argument $shimArgs
-        $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 7) `
-            -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-        $def = New-ScheduledTask -Action $action -Settings $settings
-        Register-ScheduledTask -TaskName $TaskName -InputObject $def -User "$env:COMPUTERNAME\$AccountName" `
-            -Password $plain | Out-Null
-    }
+    # Always (re-)registered: the password was just replaced, so an old task would hold a stale one. -Force overwrites it.
+    $action = New-ScheduledTaskAction -Execute $Shim -Argument $shimArgs
+    $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 7) `
+        -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+    $def = New-ScheduledTask -Action $action -Settings $settings
+    Register-ScheduledTask -TaskName $TaskName -InputObject $def -User "$env:COMPUTERNAME\$AccountName" `
+        -Password $plain -Force | Out-Null
     $svc = New-Object -ComObject Schedule.Service
     $svc.Connect()
     $t = $svc.GetFolder('\').GetTask($TaskName)
@@ -226,6 +234,19 @@ Check "the account can execute $Shim (read+execute granted, none denied)" {
     $deny = $acl | Where-Object { $_.AccessControlType -eq 'Deny' -and $_.IdentityReference.Value -match "$AccountName$" }
     $allow -and -not $deny
 }
+Check "Windows Sandbox package: InstallState for $AccountName is Installed (Get-AppxPackage -AllUsers)" {
+    $st = Get-SandboxPackageState -Sid $sid
+    Write-Host "      InstallState=[$st]"
+    $st -eq 'Installed'
+}
+Check "wsb.exe exists under $AccountName's own profile" {
+    $w = Get-SandboxExePath -Sid $sid
+    Write-Host "      expected=[$w] child saw=[$($sbx.WsbExe)]"
+    $w -and (Test-Path $w)
+}
+# `wsb list` as the account is reported, not gated: it printed Cancelled on a throwaway account (UNEXPLAINED), so a FAIL here would only restate that.
+Write-Host ("INFO  wsb list as ${AccountName}: exit={0}; output follows (a Cancelled status is the known, unexplained result)" -f $sbx.ListExit)
+Write-Host ($sbx.Raw -replace '(?m)^', '        ')
 
 if ($results | Where-Object { -not $_.Ok }) { Write-Host "`nFAILED: see the FAIL lines above."; exit 1 }
 Write-Host "`nAll properties read back as expected. Next: the negative controls (docs/ACCOUNT-DISPATCH.md), then the 3-run proof."

@@ -32,6 +32,7 @@ param(
     [int]$MaxRamMb = 4096
 )
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'AntSpawnSandboxPkg.ps1')
 
 $AccountName = 'antspawn-run'
 $TaskName = 'AntSpawnRunner'      # must equal antspawn::runner::TASK_NAME
@@ -66,25 +67,37 @@ function Acl([string]$Path, [string[]]$IcaclsArgs) {
 # --- the account (password: random, used once below, never stored) ---------------------------------
 $account = Get-LocalUser -Name $AccountName -ErrorAction SilentlyContinue
 $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-$needPassword = (-not $account) -or (-not $task)
 $plain = $null
-if ($Apply -and $needPassword) {
-    $bytes = [byte[]]::new(48)
-    [Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
-    $plain = [Convert]::ToBase64String($bytes)
+# -Apply always sets a new password: registering the Windows Sandbox package below needs it, and the task is then re-registered with it.
+if ($Apply) {
+    # Password policy wants 3 of 4 character classes; insist on them. (RandomNumberGenerator.Fill is .NET Core only: not in Windows PowerShell 5.1.)
+    do {
+        $bytes = [byte[]]::new(48)
+        $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+        $rng.GetBytes($bytes)
+        $rng.Dispose()
+        $plain = [Convert]::ToBase64String($bytes)
+    } until (($plain -cmatch '[A-Z]') -and ($plain -cmatch '[a-z]') -and ($plain -match '[0-9]'))
 }
 Step "create local user $AccountName (random password, never expires, cannot change it)" {
     if (-not $account) {
         New-LocalUser -Name $AccountName -Password (ConvertTo-SecureString $plain -AsPlainText -Force) `
             -PasswordNeverExpires -UserMayNotChangePassword -AccountNeverExpires `
             -Description 'AntSpawn job runner. Nobody holds this password.' | Out-Null
-    } elseif (-not $task) {
-        # The task must be re-registered, which needs a password; a new random one replaces the old.
+    } else {
+        # The task is re-registered below, which needs a password; a new random one replaces the old.
         Set-LocalUser -Name $AccountName -Password (ConvertTo-SecureString $plain -AsPlainText -Force)
     }
 }
 $account = Get-LocalUser -Name $AccountName -ErrorAction SilentlyContinue
 $sid = if ($account) { $account.SID.Value } else { $null }
+
+# --- Windows Sandbox package (wsb.exe) for this account: needs the password, so it runs now ---------
+$sbx = $null
+Step "register the Windows Sandbox package (wsb.exe) for $AccountName by running Add-AppxPackage -RegisterByFamilyName AS that account (Start-Process -Credential -LoadUserProfile), then read back InstallState and wsb.exe" {
+    $script:sbx = Register-SandboxPackageAs -AccountName $AccountName -Plain $plain
+    Write-Host ("       registration child: Registered={0} TimedOut={1}" -f $script:sbx.Registered, $script:sbx.TimedOut)
+}
 
 # --- directories and ACLs --------------------------------------------------------------------------
 Step "create $Root with spool, results, work" {
@@ -157,14 +170,13 @@ Step "firewall: block outbound for the account ($fw)" {
 
 # --- the task, run AS the account; $LauncherUser may run it but not change it ----------------------
 Step "register task ${TaskName} (serve as ${AccountName}); ${LauncherUser} may run it" {
-    if (-not $task) {
-        $action = New-ScheduledTaskAction -Execute $Exe -Argument 'serve'
-        $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 2) `
-            -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-        $def = New-ScheduledTask -Action $action -Settings $settings
-        Register-ScheduledTask -TaskName $TaskName -InputObject $def -User "$env:COMPUTERNAME\$AccountName" `
-            -Password $plain | Out-Null
-    }
+    # Always (re-)registered: the password was just replaced, so an old task would hold a stale one. -Force overwrites it.
+    $action = New-ScheduledTaskAction -Execute $Exe -Argument 'serve'
+    $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 2) `
+        -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+    $def = New-ScheduledTask -Action $action -Settings $settings
+    Register-ScheduledTask -TaskName $TaskName -InputObject $def -User "$env:COMPUTERNAME\$AccountName" `
+        -Password $plain -Force | Out-Null
     $launcherSid = ([Security.Principal.NTAccount]$LauncherUser).Translate([Security.Principal.SecurityIdentifier]).Value
     $svc2 = New-Object -ComObject Schedule.Service
     $svc2.Connect()
@@ -228,6 +240,21 @@ foreach ($p in $DenyPath) {
     }
 }
 Check "firewall blocks outbound for the account" { Get-NetFirewallRule -DisplayName $fw -ErrorAction Stop | Where-Object { $_.Action -eq 'Block' } }
+Check "Windows Sandbox package: InstallState for $AccountName is Installed (Get-AppxPackage -AllUsers)" {
+    $st = Get-SandboxPackageState -Sid $sid
+    Write-Host "      InstallState=[$st]"
+    $st -eq 'Installed'
+}
+Check "wsb.exe exists under $AccountName's own profile" {
+    $w = Get-SandboxExePath -Sid $sid
+    Write-Host "      expected=[$w] child saw=[$($sbx.WsbExe)]"
+    $w -and (Test-Path $w)
+}
+# `wsb list` as the account is reported, not gated: it printed Cancelled on a throwaway account (UNEXPLAINED).
+if ($Apply) {
+    Write-Host ("INFO  wsb list as ${AccountName}: exit={0}; output follows (a Cancelled status is the known, unexplained result)" -f $sbx.ListExit)
+    Write-Host ($sbx.Raw -replace '(?m)^', '        ')
+}
 
 if (-not $Apply) { Write-Host "`nDry run: nothing was changed. Re-run with -Apply in an elevated shell." ; exit 0 }
 if ($results | Where-Object { -not $_.Ok }) { Write-Host "`nFAILED: see the FAIL lines above."; exit 1 }
