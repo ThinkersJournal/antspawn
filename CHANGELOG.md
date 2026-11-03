@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.0.72
+
+- `docs/SESSION-OPTIONS.md`: options note sizing the agent-loop asks A1 (long-lived job), A2 (in-place workspace) and A3 (N concurrent sessions) per launcher: slices, what each costs in isolation, what is unmeasured, and the A2 questions for CireSnave (listed, not decided). Docs only; nothing is built. Version provisional (PM allocates); stacked on #66.
 ## 0.0.71
 
 - Board 371, C2 option A (PM task): `docs/proof/gpu-probe.ps1` + generated `gpu-probe.yml` (s3: is the GPU usable from a restricted runner account) and `docs/proof/run-proof.ps1` (s1: one command after C1). MEASURED here as the interactive user: the probe passes (RTX 4070 Laptop, driver 617.42), the known-bad control (tools hidden) is refused, the two extracted yml steps give the same results, and `run-proof.ps1` aborts with a FAIL row when the `spawn` binary is missing. UNMEASURED: the probe as `ghr-*` (that is its purpose), the control only hides the tool by flag (it shows the probe can fail, not that a GPU-less account would fail), and `run-proof.ps1` end to end (needs C1, the runner group and the pushed workflows). `--fresh` stays the default; s4 (a persistent cache dir) waits on CireSnave. Version provisional (PM allocates).
