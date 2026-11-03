@@ -33,6 +33,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'AntSpawnSandboxPkg.ps1')
+. (Join-Path $PSScriptRoot 'AntSpawnTaskSd.ps1')
 
 $AccountName = 'antspawn-run'
 $TaskName = 'AntSpawnRunner'      # must equal antspawn::runner::TASK_NAME
@@ -91,6 +92,7 @@ Step "create local user $AccountName (random password, never expires, cannot cha
 }
 $account = Get-LocalUser -Name $AccountName -ErrorAction SilentlyContinue
 $sid = if ($account) { $account.SID.Value } else { $null }
+$launcherSid = ([Security.Principal.NTAccount]$LauncherUser).Translate([Security.Principal.SecurityIdentifier]).Value
 
 # --- Windows Sandbox package (wsb.exe) for this account: needs the password, so it runs now ---------
 $sbx = $null
@@ -177,7 +179,6 @@ Step "register task ${TaskName} (serve as ${AccountName}); ${LauncherUser} may r
     $def = New-ScheduledTask -Action $action -Settings $settings
     Register-ScheduledTask -TaskName $TaskName -InputObject $def -User "$env:COMPUTERNAME\$AccountName" `
         -Password $plain -Force | Out-Null
-    $launcherSid = ([Security.Principal.NTAccount]$LauncherUser).Translate([Security.Principal.SecurityIdentifier]).Value
     $svc2 = New-Object -ComObject Schedule.Service
     $svc2.Connect()
     $t = $svc2.GetFolder('\').GetTask($TaskName)
@@ -189,7 +190,10 @@ $plain = $null
 # --- start the task once: registered is not the same as able to log on and run ---------------------
 $t0 = [datetime]::MinValue
 Step "start task $TaskName once (empty spool, so it should exit 0) and read LastTaskResult; needs the account to be allowed 'Log on as a batch job'" {
-    $script:t0 = Get-Date
+    # LastRunTime has whole-second resolution: a start time with a fraction of a second is LATER than the LastRunTime of a task started in
+    # that same second, so the run was missed (2026-11-02: the task ran and exited 0, the check FAILed). Truncate to the second.
+    $now = Get-Date
+    $script:t0 = $now.AddTicks(-($now.Ticks % [TimeSpan]::TicksPerSecond))
     Start-ScheduledTask -TaskName $TaskName
     $deadline = (Get-Date).AddSeconds(60)
     do {
@@ -212,7 +216,10 @@ Check "task $TaskName runs as $AccountName" { (Get-ScheduledTask -TaskName $Task
 Check "task action is `"$Exe`" serve" { $a = (Get-ScheduledTask -TaskName $TaskName).Actions[0]; ($a.Execute -eq $Exe) -and ($a.Arguments -eq 'serve') }
 Check "task allows $LauncherUser to run it" {
     $sd = (New-Object -ComObject Schedule.Service | ForEach-Object { $_.Connect(); $_.GetFolder('\').GetTask($TaskName) }).GetSecurityDescriptor(4)
-    $sd -match 'GRGX'
+    # Numeric, not the text 'GRGX': Windows prints the mask it was given back as 0x1200a9 once the task is re-registered (same fix as runner-account-setup.ps1, 0.0.61).
+    $bad = @(Get-TaskSdProblems -Sddl $sd -LauncherSid $launcherSid -RunAsSid $sid)
+    foreach ($b in $bad) { Write-Host "      $b" }
+    $bad.Count -eq 0
 }
 Check "$AccountName holds SeBatchLogonRight" { @(Get-BatchRightSids) -contains "*$sid" }
 Check "the account can execute $Exe (read+execute granted, none denied)" {
