@@ -1,8 +1,11 @@
 # Changelog
 
-## 0.0.68
+## 0.0.70
 
 - `docs/SESSION-OPTIONS.md`: options note sizing the agent-loop asks A1 (long-lived job), A2 (in-place workspace) and A3 (N concurrent sessions) per launcher: slices, what each costs in isolation, what is unmeasured, and the A2 questions for CireSnave (listed, not decided). Docs only; nothing is built. Version provisional (PM allocates); stacked on #66.
+## 0.0.69
+
+- `account-setup.ps1`: two read-back checks that FAILed on the 2026-11-02 elevated re-run (log `C:\Users\Public\wsb-register-20261102-211456.log`) while the account was fine. Cause found in the Task Scheduler log (`Microsoft-Windows-TaskScheduler/Operational`) and the live task: **(1) "task actually started ... exited 0"**: the task started and completed at 21:23:50 with result 0, but `LastRunTime` has whole-second resolution and the start time `t0` had a fraction, so `LastRunTime -ge t0` was false for a task started in that same second (the wait also ran its full 60 s); `t0` is now truncated to the second. **(2) "task allows <launcher> to run it"**: matched the text `GRGX`, which Windows prints as `0x1200a9` once a task is re-registered (the false FAIL `runner-account-setup.ps1` fixed in 0.0.61); it now uses `Get-TaskSdProblems`. Both exposed by 0.0.67 because a re-run now re-registers the task. MEASURED here: the live `AntSpawnRunner` descriptor gives 0 problems with the new check and the text match is False; a wrong launcher SID gives a problem (control); the truncation compare is False before and True after for a run and start in the same second. UNMEASURED: a second elevated run of the script. Also seen in that run: `wsb list` is Cancelled for `antspawn-run` too, so all three runner accounts behave alike (still unexplained). Version provisional (PM allocates).
 
 ## 0.0.67
 
