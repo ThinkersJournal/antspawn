@@ -9,6 +9,8 @@ Design and the controls: `docs/ACCOUNT-DISPATCH.md`. Nothing in this folder has 
 | `make-dpapi-key.ps1` | PEM -> the DPAPI key file; only if the key is missing or rotated | cires, not elevated, dry-run first |
 | `adapter.toml` | two account groups, one per runner account | cires |
 | `proof.yml` | the workflow the PM pushes to `antspawn-proof/.github/workflows/` | PM pushes; `workflow_dispatch` |
+| `gpu-probe.ps1`, `gpu-probe.yml` | board 371 C2 s3: can a job as a restricted runner account see the GPU (`nvidia-smi -L` and a query)? The yml is generated from the ps1 by `make-gpu-probe-yml.py`; its first step is a known-bad control (driver tools hidden) that passes only if the probe failed | PM pushes the yml; the ps1 runs by hand |
+| `run-proof.ps1` | ONE command after C1: `--check`, the GitHub probe, preconditions (runner group, both workflows pushed), then with `-Go` three proof runs and the GPU probe, PASS/FAIL per run. Not run yet | cires, not elevated |
 
 ## Order
 
