@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.76
+
+- `docs/MEASUREMENTS.md` 2026-11-06 (board 321 task): `wsb list` and `wsb start` run AS `antspawn-run` (non-interactive, package registered) both return `Cancelled`; the same call works interactively. Candidate cause, untested: `antspawn-run` is not in `Hyper-V Administrators` (`gh-runner` is). Cheapest discriminating experiment and the cost of the group fix are in the entry. Docs only. Version provisional (PM allocates).
+
 ## 0.0.73
 
 - `docs/SESSION-PLAN.md`: slice plan for the PM's task A1/A2/A3 (agent-loop Tier S): session on `account` over a named pipe (S1-S5), pool of N accounts (P1-P4), both A2 workspace modes per CireSnave's board 373 ruling (`bind` and `copy`, one setting; W0-W5, with W0 measuring ACL ordering first). Docs only; nothing is built, every cost and unmeasured item is listed. Also W0 measured (`docs/MEASUREMENTS.md` 2026-11-06, one sample): an explicit grant on a subtree beats the inherited `C:\Projects` deny, an explicit exact-rights deny on a subpath beats the grant, and icacls `W` also denies reads, so exact rights are needed. Version provisional (PM allocates).

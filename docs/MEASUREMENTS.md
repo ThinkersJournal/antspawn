@@ -367,3 +367,20 @@ Throwaway tree `C:\Projects\antspawn-w0-scratch\{tree\src,tree\.git,other}` (inh
 - **An explicit deny on a subpath beats the grant**, so protected paths (`.git`, `.github`, `.claude`, `CLAUDE.md`, hooks) can be kept read-only inside a bound tree.
 - **Use exact rights, not icacls `W`:** `W` includes SYNCHRONIZE, so `(W,D,DC)` also made `.git` unreadable (a `git status` inside the session would fail). The working deny was `WriteData, AppendData, WriteExtendedAttributes, WriteAttributes, Delete, DeleteSubdirectoriesAndFiles` set through `Set-Acl`; `icacls /deny` merges into an existing deny ACE, so re-running with narrower rights silently kept the wide one (one invalid run discarded for that reason).
 - **Not measured:** rename or create-directory inside the denied path, `.git` replaced by a file or junction, files created by the account (their owner and inherited ACL as seen by the launcher user), grant cost on a large tree, and a grant surviving a crashed launcher (the journal in `docs/SESSION-PLAN.md` W4).
+
+## 2026-11-06: can `wsb.exe` start Windows Sandbox as a restricted account? (PM board 321 task; ref: main `9658e68`; `spawn.exe` built 2026-10-31; one sample per case)
+
+Method: `spawn run --launcher account` runs `cmd /c probe.cmd` AS `antspawn-run` (non-interactive: started by the `AntSpawnRunner` scheduled task; `query session` answers "No session exists", `%SESSIONNAME%` empty).
+
+| As | Command | Result |
+|---|---|---|
+| `antspawn-run` | `where wsb` | `C:\Users\antspawn-run\AppData\Local\Microsoft\WindowsApps\wsb.exe` (the package registration from 2026-11-02/03 is in effect) |
+| `antspawn-run` | `wsb list` | `Status(StatusCode="Cancelled" ... System.OperationCanceledException: The operation was canceled.)`, exit -2146233088 |
+| `antspawn-run` | `wsb start -c "<Configuration><vGPU>Disable</vGPU><Networking>Disable</Networking></Configuration>"` | the same `Cancelled`, exit -2146233088; no VM was created (a `WindowsSandbox*` process listing afterwards shows only the interactive session's `WindowsSandboxServer.exe`) |
+| `cires` (interactive; control) | `wsb list` | succeeds (prints an empty list) |
+
+- **So the answer to "can it start at all as the account" is: not today.** Registering the package makes `wsb.exe` resolve, but every call that reaches the Sandbox service is cancelled. Not tested: `WindowsSandbox.exe <file>.wsb` as the account (the 2026-10-29 entry already records that stub starting without package identity and its client crashing as the interactive user).
+- **Candidate cause, untested: membership of `BUILTIN\Hyper-V Administrators`.** `net localgroup "Hyper-V Administrators"` lists exactly `cires` and `gh-runner`; `antspawn-run` is not in it (the other runner accounts were not read here). That is correlation on one machine, not a cause. The other candidate is the absence of an interactive session. These two are not told apart by anything measured so far.
+- **Cheapest discriminating experiment (needs the PM's elevated step, not run):** `gh-runner` is already in the group and has no session either. Register the Sandbox package for `gh-runner` (the same step done for `antspawn-run`) and run the probe as it: if `wsb list` works there, group membership is the cause and no interactive session is needed; if it is also cancelled, the session (or something else) is. Adding `antspawn-run` to the group would also test it, but see the cost.
+- **Cost of the group fix:** Hyper-V Administrators means complete control of Hyper-V on this machine. Granting it to the account that runs untrusted jobs widens that account's reach beyond "restricted"; it would need CireSnave's ruling and the `account` isolation rows re-probed.
+- **Not measured:** why the service cancels (its log or ETW was not read), a start as `ghr-spawn1`/`ghr-spawn2` (the HANDOFF says all three behave alike), and anything about the group fix itself.
