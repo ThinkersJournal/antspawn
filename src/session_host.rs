@@ -463,9 +463,9 @@ mod tests {
     fn a_command_past_its_limit_is_reported_timed_out_and_a_missing_program_is_127() {
         let work = temp_work("limit");
         let mut slow = if cfg!(windows) {
-            ExecRequest::new(["ping", "-n", "6", "127.0.0.1"])
+            ExecRequest::new(["ping", "-n", "30", "127.0.0.1"])
         } else {
-            ExecRequest::new(["sleep", "5"])
+            ExecRequest::new(["sleep", "29"])
         };
         slow.time_s = Some(1);
         let t = Instant::now();
@@ -473,7 +473,9 @@ mod tests {
             run_command(&work, &scratch_of(&work), &slow, 30, 30, &mut || true).exit,
             Exit::TimedOut
         );
-        assert!(t.elapsed() < Duration::from_secs(4));
+        // The command would run ~29 s; cut at its 1 s limit it is far under 20 s even when process start
+        // and kill are slow on a loaded box (the old 4 s bound against a 5 s command was not).
+        assert!(t.elapsed() < Duration::from_secs(20), "{:?}", t.elapsed());
         // The ceiling wins over a larger ask.
         slow.time_s = Some(100);
         assert_eq!(
