@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.75
+
+- Sessions, slice S2 (`docs/SESSION-PLAN.md`): `session_proto`, the pure wire format between a launcher and a session host. A frame is a 4-byte little-endian length then JSON; the length is checked before anything is allocated or read (0 and above 1 MiB refused; a test fails if the reader is asked for a byte beyond the header). `Request` is `exec` or `close`, `Response` is `exec`, `closed` or `error`; unknown ops and unknown fields are errors, so the later `cancel` and `output` requests are refused by an older host, not ignored. The host re-runs `ExecRequest::validate` on what it receives. No pipe, no process, no account: nothing here is exercised against a real peer (S3). Stacked on #71. Version provisional (PM allocates).
+
 ## 0.0.74
 
 - Sessions, slice S1 (`docs/SESSION-PLAN.md`): the `Session` trait (`exec`, `close`), `ExecRequest` with validation, `Launcher::open_session` (default: "does not provide sessions") and `Registry::open_session`, which re-checks the matrix for the needs plus `session` and refuses with the unmet capability named, never falling back. Three capabilities, all off: `session`, `clean-slate-next-session`, `no-read-other-session`. `naive` gets a deliberately leaky session (one fixed directory, `close` wipes nothing) as the known-bad control: `Probes::session_keeps_state` (positive control) and `violates_clean_slate_session` run against it and the matrix records `clean-slate-next-session` = `no` for `naive` (MEASURED here; `matrix --check` fails when that row is mutated to `yes`). No launcher that isolates has a session yet: `account` and `windows-sandbox` rows are `no` with no probe, so `Registry::open_session` refuses them. UNMEASURED: everything about `account` sessions (S2-S5). Version provisional (PM allocates).
