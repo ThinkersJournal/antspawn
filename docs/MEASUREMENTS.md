@@ -350,3 +350,20 @@ Not measured: the shim's reaction to a real config, whether the runner started, 
 | real task started, transport told a pipe the shim does not create (3 s window) | `Err("could not open pipe antspawn-no-such-pipe: entity not found")` | true | 4.1 s | task Ready; pipe `antspawn-spawn1` not listed; 0 shim processes |
 
 So both leave nothing running, which is what the retry rule needs. **Not measured:** that the shim was actually running during the second case (only that none remained, so `end()` stopped it or it had exited); a pipe that is busy or refuses the user; a failure AFTER delivery (the runner starting and dying), which the code treats as final and which no run here produced; what `wait` reports when the shim refuses a config (the earlier probe B ended with `LastTaskResult` 0, and `wait` only reads the task status, so it would report `Ok`).
+
+## 2026-11-06: W0, does an explicit grant beat the inherited `C:\Projects` deny (ref: main `cdcd1c8`; `spawn.exe` built 2026-10-31 from main of that date; standard user cires; `antspawn-run`; one sample per case)
+
+Throwaway tree `C:\Projects\antspawn-w0-scratch\{tree\src,tree\.git,other}` (inherits the account's `(OI)(CI)(N)` deny from `C:\Projects`; removed afterwards). Probe `cmd /c` run AS the account through `spawn run --launcher account`; each operation names an absolute host path. "Delete" is judged from the host's view after, because the account's own `if exist` is false for a file it cannot see.
+
+| Operation | Baseline (no grant) | Explicit `(OI)(CI)(M)` on `tree` | plus explicit deny on `tree\.git`: icacls `(W,D,DC)` | plus explicit deny on `tree\.git`: exact rights (no Synchronize) |
+|---|---|---|---|---|
+| `src` create / read / append | denied / denied / denied | **ok / ok / ok** | ok / ok / ok | ok / ok / ok |
+| `src` delete | not tested | **ok** (file gone on the host) | ok | ok |
+| `.git` create / append / delete | denied | (not run separately) | denied / denied / denied | denied / denied / denied (file still present on the host) |
+| `.git` read | denied | (not run separately) | **denied** | **ok** |
+| sibling `other` read / write | denied / denied | denied / denied | denied / denied | denied / denied |
+
+- **An explicit grant on the subtree beats the inherited deny** (ordering confirmed for this tree, one sample). The deny still bites a sibling, so a bind grant reaches only the granted tree.
+- **An explicit deny on a subpath beats the grant**, so protected paths (`.git`, `.github`, `.claude`, `CLAUDE.md`, hooks) can be kept read-only inside a bound tree.
+- **Use exact rights, not icacls `W`:** `W` includes SYNCHRONIZE, so `(W,D,DC)` also made `.git` unreadable (a `git status` inside the session would fail). The working deny was `WriteData, AppendData, WriteExtendedAttributes, WriteAttributes, Delete, DeleteSubdirectoriesAndFiles` set through `Set-Acl`; `icacls /deny` merges into an existing deny ACE, so re-running with narrower rights silently kept the wide one (one invalid run discarded for that reason).
+- **Not measured:** rename or create-directory inside the denied path, `.git` replaced by a file or junction, files created by the account (their owner and inherited ACL as seen by the launcher user), grant cost on a large tree, and a grant surviving a crashed launcher (the journal in `docs/SESSION-PLAN.md` W4).
