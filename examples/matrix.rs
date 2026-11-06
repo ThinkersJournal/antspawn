@@ -119,6 +119,11 @@ impl Matrixer {
                 "a forked process survived the environment",
             ),
             Capability::NetworkOff => network(p.violates_network(l, NET_ADDR)),
+            Capability::CleanSlateNextSession => verdict(
+                p.violates_clean_slate_session(l),
+                "session-write+exists",
+                "a file written in one session existed in the next, after close",
+            ),
             _ => untested(),
         }
     }

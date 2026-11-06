@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::{Exit, JobSpec, Launcher};
+use crate::{ExecRequest, Exit, JobSpec, Launcher, Session};
 
 /// A probe binary and the launcher run it is used for.
 pub struct Probes {
@@ -59,6 +59,41 @@ impl Probes {
             "first job must be able to write"
         );
         self.succeeds(l, &["exists", "leftover.txt"])
+    }
+
+    fn exec_succeeds(&self, s: &mut dyn Session, args: &[&str]) -> bool {
+        let cmd = std::iter::once(self.exe.to_str().expect("utf-8 probe path"))
+            .chain(args.iter().copied());
+        s.exec(&ExecRequest::new(cmd)).unwrap().exit == Exit::Code(0)
+    }
+
+    /// The positive control for the session probes: does a file written by one exec exist for the
+    /// next exec of the SAME session? A launcher where this is `false` has no session state, and
+    /// `violates_clean_slate_session` would pass for the wrong reason.
+    pub fn session_keeps_state(&self, l: &dyn Launcher) -> bool {
+        let mut s = l.open_session().unwrap();
+        let wrote = self.exec_succeeds(s.as_mut(), &["write", "kept.txt"]);
+        let seen = self.exec_succeeds(s.as_mut(), &["exists", "kept.txt"]);
+        s.close().unwrap();
+        wrote && seen
+    }
+
+    /// Does a file written in one session exist in the next one, after `close`?
+    pub fn violates_clean_slate_session(&self, l: &dyn Launcher) -> bool {
+        assert!(
+            self.session_keeps_state(l),
+            "state must persist within a session, or this probe proves nothing"
+        );
+        let mut first = l.open_session().unwrap();
+        assert!(
+            self.exec_succeeds(first.as_mut(), &["write", "leftover.txt"]),
+            "first session must be able to write"
+        );
+        first.close().unwrap();
+        let mut second = l.open_session().unwrap();
+        let seen = self.exec_succeeds(second.as_mut(), &["exists", "leftover.txt"]);
+        second.close().unwrap();
+        seen
     }
 
     /// Can a job open a TCP connection to `addr`? `None` when the host itself cannot (no network

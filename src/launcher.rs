@@ -12,6 +12,7 @@ use std::path::Path;
 
 use crate::capability::Capability;
 use crate::matrix::Matrix;
+use crate::session::Session;
 use crate::spec::{JobSpec, Needs};
 
 /// The exit status of the job's command.
@@ -56,6 +57,14 @@ pub trait Launcher {
     fn id(&self) -> &str;
     /// Create the environment for `spec`.
     fn provision(&self, spec: &JobSpec) -> Result<Box<dyn Environment>, LaunchError>;
+    /// Open a session (state kept across many execs, see [`crate::session`]). A launcher without
+    /// sessions keeps this default and says so; the registry also refuses it before asking.
+    fn open_session(&self) -> Result<Box<dyn Session>, LaunchError> {
+        Err(LaunchError::Other(format!(
+            "launcher `{}` does not provide sessions",
+            self.id()
+        )))
+    }
 }
 
 /// A launcher that was considered for some needs.
@@ -79,6 +88,16 @@ pub enum OpenError {
     Unknown(String),
     #[error("launcher `{id}` is not certified for: {}", list(.unmet))]
     Unmet { id: String, unmet: Vec<Capability> },
+}
+
+/// Why a session could not be opened.
+#[derive(Debug, thiserror::Error)]
+pub enum OpenSessionError {
+    /// The launcher is unknown or not certified for the needs plus `session`. Never a fallback.
+    #[error("{0}")]
+    Refused(#[from] OpenError),
+    #[error("{0}")]
+    Launch(#[from] LaunchError),
 }
 
 fn list(caps: &[Capability]) -> String {
@@ -162,6 +181,21 @@ impl Registry {
             }),
             Err(_) => Err(OpenError::Unknown(id.to_owned())),
         }
+    }
+
+    /// Open a session on the named launcher. `needs` plus [`Capability::Session`] are re-checked
+    /// against the matrix first: a launcher the matrix does not certify for sessions is refused with
+    /// the unmet capabilities named, and nothing else is tried in its place.
+    pub fn open_session(
+        &self,
+        id: &str,
+        needs: &Needs,
+    ) -> Result<Box<dyn Session>, OpenSessionError> {
+        let mut needs = needs.clone();
+        if !needs.capabilities.contains(&Capability::Session) {
+            needs.capabilities.push(Capability::Session);
+        }
+        Ok(self.open_named(id, &needs)?.open_session()?)
     }
 }
 
@@ -261,6 +295,74 @@ mod tests {
             prefer: vec![],
         };
         assert_eq!(r.providers(&n)[0].unmet, vec![Capability::NetworkOff]);
+    }
+
+    struct Nop;
+    impl Session for Nop {
+        fn exec(&mut self, _: &crate::ExecRequest) -> Result<crate::ExecOutcome, LaunchError> {
+            Err(LaunchError::Other("nop".into()))
+        }
+        fn close(self: Box<Self>) -> Result<(), LaunchError> {
+            Ok(())
+        }
+    }
+    struct Hosting;
+    impl Launcher for Hosting {
+        fn id(&self) -> &str {
+            "hosting"
+        }
+        fn provision(&self, _: &JobSpec) -> Result<Box<dyn Environment>, LaunchError> {
+            Err(LaunchError::Other("stub".into()))
+        }
+        fn open_session(&self) -> Result<Box<dyn Session>, LaunchError> {
+            Ok(Box::new(Nop))
+        }
+    }
+
+    fn session_registry(session_yes: bool) -> Registry {
+        Registry::new(
+            vec![Box::new(Hosting), Box::new(Stub("plain"))],
+            Matrix::from_rows(vec![
+                row("hosting", "network.off", true),
+                row("hosting", "session", session_yes),
+                row("plain", "network.off", true),
+                row("plain", "session", true),
+            ]),
+        )
+    }
+
+    fn net_only() -> Needs {
+        Needs {
+            capabilities: vec![Capability::NetworkOff],
+            prefer: vec![],
+        }
+    }
+
+    #[test]
+    fn a_session_needs_the_session_row_and_never_falls_back() {
+        // Control: with the row `yes` the same call opens.
+        assert!(
+            session_registry(true)
+                .open_session("hosting", &net_only())
+                .is_ok()
+        );
+        // Without it the refusal names `session`, even though every other need is met.
+        let e = session_registry(false)
+            .open_session("hosting", &net_only())
+            .err()
+            .expect("refused");
+        assert!(
+            matches!(&e, OpenSessionError::Refused(OpenError::Unmet { unmet, .. })
+                if unmet == &vec![Capability::Session]),
+            "{e}"
+        );
+        // A certified launcher that has no session code says so, rather than pretending.
+        let e = session_registry(true)
+            .open_session("plain", &net_only())
+            .err()
+            .expect("no sessions");
+        assert!(matches!(e, OpenSessionError::Launch(_)), "{e}");
+        assert!(e.to_string().contains("does not provide sessions"));
     }
 
     #[test]

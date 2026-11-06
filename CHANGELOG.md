@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.74
+
+- Sessions, slice S1 (`docs/SESSION-PLAN.md`): the `Session` trait (`exec`, `close`), `ExecRequest` with validation, `Launcher::open_session` (default: "does not provide sessions") and `Registry::open_session`, which re-checks the matrix for the needs plus `session` and refuses with the unmet capability named, never falling back. Three capabilities, all off: `session`, `clean-slate-next-session`, `no-read-other-session`. `naive` gets a deliberately leaky session (one fixed directory, `close` wipes nothing) as the known-bad control: `Probes::session_keeps_state` (positive control) and `violates_clean_slate_session` run against it and the matrix records `clean-slate-next-session` = `no` for `naive` (MEASURED here; `matrix --check` fails when that row is mutated to `yes`). No launcher that isolates has a session yet: `account` and `windows-sandbox` rows are `no` with no probe, so `Registry::open_session` refuses them. UNMEASURED: everything about `account` sessions (S2-S5). Version provisional (PM allocates).
+
 ## 0.0.73
 
 - `docs/SESSION-PLAN.md`: slice plan for the PM's task A1/A2/A3 (agent-loop Tier S): session on `account` over a named pipe (S1-S5), pool of N accounts (P1-P4), both A2 workspace modes per CireSnave's board 373 ruling (`bind` and `copy`, one setting; W0-W5, with W0 measuring ACL ordering first). Docs only; nothing is built, every cost and unmeasured item is listed. Also W0 measured (`docs/MEASUREMENTS.md` 2026-11-06, one sample): an explicit grant on a subtree beats the inherited `C:\Projects` deny, an explicit exact-rights deny on a subpath beats the grant, and icacls `W` also denies reads, so exact rights are needed. Version provisional (PM allocates).

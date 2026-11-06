@@ -87,6 +87,10 @@ set only in the runner child's environment, never logged. Network is only inside
 fresh per job and runs only our code until the runner starts; the listener binds only after boot; a wrong config makes the runner fail to register rather than
 leak anything. Not run live until board 321 is settled.
 
+## Sessions (slice S1; plan in `docs/SESSION-PLAN.md`)
+
+`Launcher::open_session` returns a `Session` (`exec`, `close`; `close` also on `Drop` for launchers that implement it). State persists between execs, so `clean-slate-next-run` does not describe it: `session`, `clean-slate-next-session` and `no-read-other-session` are separate capabilities, off until a probe with a known-bad control says `yes`. `Registry::open_session` adds `session` to the needs, re-checks the matrix, and refuses naming the unmet capability; it never falls back to another launcher. Only `naive` has session code so far, as the control.
+
 ## `spawn run` result contract (ROADMAP row 22)
 
 Exit code of `spawn run`: the job's own code passes through (0 to 255; anything else becomes 1), **124** the time limit, **137** killed, **125** refused (no launcher
