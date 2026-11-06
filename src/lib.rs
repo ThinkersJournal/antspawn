@@ -11,6 +11,7 @@ pub mod probes;
 pub mod result;
 pub mod runner;
 pub mod session;
+pub mod session_host;
 pub mod session_proto;
 pub mod spec;
 pub mod streams;

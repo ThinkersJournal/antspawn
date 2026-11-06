@@ -10,13 +10,21 @@
 //!   command (its children inherit the job), copy declared outputs out, write `result.tmp`, then
 //!   terminate the job, which kills every survivor and this process with them.
 //!
+//! * `spawn-runner session <id>`: host one session (see `docs/SESSION-PLAN.md`, slice S3). It reads
+//!   `spool/<id>/session.toml`, joins a kill-on-close Job Object, creates the named pipe
+//!   `\\.\pipe\antspawn-session-<id>-<nonce>` whose DACL admits the launcher's SID only (one instance,
+//!   remote clients rejected), serves that one client until it closes or disconnects, then ends the whole
+//!   job. `serve` starts it for a session spool entry exactly as it starts `exec`, wipes the work dir
+//!   and only then publishes `exit.code`.
+//!
 //! The layout root is `ANTSPAWN_ROOT` or `%ProgramData%\antspawn` (see `antspawn::runner`).
 
 use antspawn::runner::{Layout, RunnerConfig, check_spec, copy_tree, encode_exit, valid_job_id};
+use antspawn::session_host::{Ended, SessionFile, run_command, serve_session, wait_child};
 use antspawn::streams::{Tail, settle};
 use antspawn::{Exit, JobSpec};
 use std::process::{Command, ExitCode};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -24,7 +32,8 @@ fn main() -> ExitCode {
     let r = match args.iter().map(String::as_str).collect::<Vec<_>>()[..] {
         ["serve"] => serve(&layout),
         ["exec", id] if valid_job_id(id) => exec(&layout, id),
-        _ => Err("usage: spawn-runner serve | exec <job-id>".into()),
+        ["session", id] if valid_job_id(id) => session(&layout, id),
+        _ => Err("usage: spawn-runner serve | exec <job-id> | session <session-id>".into()),
     };
     match r {
         Ok(()) => ExitCode::SUCCESS,
@@ -49,12 +58,42 @@ fn pending(layout: &Layout) -> Vec<String> {
     ids
 }
 
+/// Sessions waiting for a host: a spool entry with `session.toml` and no `exit.code` yet.
+fn pending_sessions(layout: &Layout) -> Vec<String> {
+    let mut ids: Vec<String> = std::fs::read_dir(layout.spool())
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|id| valid_job_id(id))
+        .filter(|id| layout.job_spool(id).join("session.toml").is_file())
+        .filter(|id| !layout.job_results(id).join("exit.code").exists())
+        .collect();
+    ids.sort();
+    ids
+}
+
 fn serve(layout: &Layout) -> Result<(), String> {
     let me = std::env::current_exe().map_err(|e| e.to_string())?;
     loop {
         let ids = pending(layout);
-        if ids.is_empty() {
+        let sessions = pending_sessions(layout);
+        if ids.is_empty() && sessions.is_empty() {
             return Ok(());
+        }
+        for id in sessions {
+            let results = layout.job_results(&id);
+            std::fs::create_dir_all(&results).map_err(|e| format!("{}: {e}", results.display()))?;
+            let status = Command::new(&me).args(["session", &id]).status();
+            // The host has exited, so its job (and every process in it) is dead: wipe, then publish.
+            let _ = std::fs::remove_dir_all(layout.job_work(&id));
+            let tmp = results.join("result.tmp");
+            if !tmp.exists() {
+                let why = format!("session host ended without a result ({status:?})");
+                let _ = std::fs::write(results.join("error.txt"), why);
+                std::fs::write(&tmp, encode_exit(Exit::Killed)).map_err(|e| e.to_string())?;
+            }
+            std::fs::rename(&tmp, results.join("exit.code")).map_err(|e| e.to_string())?;
         }
         for id in ids {
             let results = layout.job_results(&id);
@@ -165,20 +204,44 @@ fn exec(layout: &Layout, id: &str) -> Result<(), String> {
 }
 
 fn wait(child: &mut std::process::Child, limit: Duration) -> Exit {
-    let start = Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(s)) => return s.code().map_or(Exit::Killed, Exit::Code),
-            Ok(None) => {}
-            Err(_) => return Exit::Killed,
-        }
-        if start.elapsed() >= limit {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Exit::TimedOut;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    wait_child(child, limit)
+}
+
+fn session(layout: &Layout, id: &str) -> Result<(), String> {
+    let results = layout.job_results(id);
+    let fail = |msg: String| {
+        let _ = std::fs::write(results.join("error.txt"), &msg);
+        msg
+    };
+    let cfg_text = std::fs::read_to_string(layout.config_file())
+        .map_err(|e| fail(format!("runner.toml: {e}")))?;
+    let cfg = RunnerConfig::from_toml(&cfg_text).map_err(fail)?;
+    let text = std::fs::read_to_string(layout.job_spool(id).join("session.toml"))
+        .map_err(|e| fail(format!("session.toml: {e}")))?;
+    let file = SessionFile::from_toml(&text).map_err(fail)?;
+
+    let work = layout.job_work(id);
+    let _ = std::fs::remove_dir_all(&work);
+    std::fs::create_dir_all(&work).map_err(|e| fail(e.to_string()))?;
+    let job = sandbox::contain(None).map_err(|e| fail(format!("job object: {e}")))?;
+
+    // The pipe is created inside the job, so the host dies with everything else it started.
+    let pipe = sandbox::accept(&file.pipe_name(id), &file.launcher_sid)
+        .map_err(|e| fail(format!("pipe: {e}")))?;
+    let ended = serve_session(&mut &pipe, &mut &pipe, |req| {
+        run_command(&work, req, cfg.max_time_s, cfg.max_time_s)
+    });
+    let how = match &ended {
+        Ended::Closed => "closed".to_owned(),
+        Ended::Disconnected => "disconnected".to_owned(),
+        Ended::Broken(why) => format!("broken: {why}"),
+    };
+    drop(pipe);
+    let _ = std::fs::write(results.join("session.end"), how);
+    let _ = std::fs::write(results.join("result.tmp"), encode_exit(Exit::Code(0)));
+    // Kills every process in the job, this one included; `serve` wipes the work dir afterwards.
+    sandbox::terminate(job);
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -237,6 +300,88 @@ mod sandbox {
         }
     }
 
+    /// Create the session's one-instance duplex pipe, DACL admitting `allow_sid` only, remote clients
+    /// rejected, and wait (bounded) for its one client. The host never needs an ACE of its own.
+    pub fn accept(name: &str, allow_sid: &str) -> Result<std::fs::File, String> {
+        use std::os::windows::io::{AsRawHandle, FromRawHandle};
+        use std::sync::mpsc;
+        use windows_sys::Win32::Foundation::{INVALID_HANDLE_VALUE, TRUE};
+        use windows_sys::Win32::Security::Authorization::{
+            ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+        };
+        use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX,
+        };
+        use windows_sys::Win32::System::Pipes::{
+            ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS,
+            PIPE_TYPE_BYTE, PIPE_WAIT,
+        };
+
+        let wide = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
+        // Protected DACL, one ACE: 0x12019f is FILE_GENERIC_READ | FILE_GENERIC_WRITE spelled out as
+        // specific rights (the generic bits are not mapped in a pipe DACL; the JIT shim's pipe measured
+        // that). No inheritance, no other principal.
+        let sddl = wide(&format!("D:P(A;;0x12019f;;;{allow_sid})"));
+        let mut descriptor = std::ptr::null_mut();
+        // SAFETY: `sddl` is NUL-terminated; `descriptor` receives a LocalAlloc'd block kept for the
+        // life of this process (the pipe is created from it exactly once).
+        let ok = unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                sddl.as_ptr(),
+                SDDL_REVISION_1,
+                &mut descriptor,
+                std::ptr::null_mut(),
+            )
+        };
+        if ok == 0 {
+            return Err("could not build the pipe's access list".into());
+        }
+        let attributes = SECURITY_ATTRIBUTES {
+            nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: descriptor,
+            bInheritHandle: 0,
+        };
+        let path = wide(&format!(r"\\.\pipe\{name}"));
+        // SAFETY: `path` is NUL-terminated and `attributes` outlives the call.
+        let handle = unsafe {
+            CreateNamedPipeW(
+                path.as_ptr(),
+                PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
+                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
+                1,
+                64 * 1024,
+                64 * 1024,
+                0,
+                &attributes,
+            )
+        };
+        if handle == INVALID_HANDLE_VALUE {
+            return Err(format!(
+                "could not create the pipe (it may already exist): {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        // SAFETY: `handle` is a valid pipe handle owned by nothing else; `File` now owns it.
+        let pipe = unsafe { std::fs::File::from_raw_handle(handle as _) };
+        let raw = pipe.as_raw_handle() as usize;
+        // ConnectNamedPipe blocks, so the wait is a thread; if it never returns the process exits.
+        let (done, result) = mpsc::channel();
+        std::thread::spawn(move || {
+            // SAFETY: the handle lives until this function returns or the process exits.
+            let connected = unsafe { ConnectNamedPipe(raw as _, std::ptr::null_mut()) };
+            // ERROR_PIPE_CONNECTED (535): the client got in before this call; still connected.
+            let up = connected == TRUE
+                || matches!(std::io::Error::last_os_error().raw_os_error(), Some(535));
+            let _ = done.send(up);
+        });
+        match result.recv_timeout(std::time::Duration::from_secs(60)) {
+            Ok(true) => Ok(pipe),
+            Ok(false) => Err("accept failed".into()),
+            Err(_) => Err("no client connected in time".into()),
+        }
+    }
+
     pub fn terminate(job: Job) {
         // SAFETY: `job.0` is the live handle `contain` returned.
         unsafe {
@@ -253,4 +398,7 @@ mod sandbox {
         Err("spawn-runner containment is implemented for Windows only".into())
     }
     pub fn terminate(_: Job) {}
+    pub fn accept(_: &str, _: &str) -> Result<std::fs::File, String> {
+        Err("session pipes are implemented for Windows only".into())
+    }
 }
