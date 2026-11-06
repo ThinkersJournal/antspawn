@@ -273,3 +273,63 @@ for /l %%i in (1,1,200) do (echo x>>hb.txt & ping -n 2 127.0.0.1>nul)
     let d = heartbeat_len(&work);
     assert_eq!(c, d, "the survivor kept writing after the host's job ended");
 }
+
+#[test]
+fn an_owner_that_vanishes_during_a_long_exec_ends_the_host_then() {
+    let sid = "t-midexec";
+    let root = layout("midexec", sid, &my_sid());
+    let mut h = host(&root, sid);
+    let mut pipe = connect(sid).unwrap();
+    // 60 s of work the owner never waits for. Control for "then, not after": the exec's own limit is
+    // 30 s (runner.toml), so a host that only noticed between frames would outlive this test's wait.
+    let req = ExecRequest::new(["ping", "-n", "60", "127.0.0.1"]);
+    write_frame(&mut pipe, &Request::exec(1, &req)).unwrap();
+    std::thread::sleep(Duration::from_millis(1500));
+    let t = Instant::now();
+    drop(pipe);
+    assert!(
+        wait_exit(&mut h, 10),
+        "the host kept running a command for a dead owner"
+    );
+    assert!(t.elapsed() < Duration::from_secs(10), "{:?}", t.elapsed());
+    assert_eq!(ended(&root, sid), "disconnected");
+}
+
+#[test]
+fn temp_is_the_sessions_scratch_dir_and_serve_wipes_work_and_scratch_before_exit_code() {
+    let sid = "t-serve";
+    let root = layout("serve", sid, &my_sid());
+    let mut serve = Command::new(RUNNER)
+        .arg("serve")
+        .env("ANTSPAWN_ROOT", &root.0)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut pipe = connect(sid).expect("serve starts the host");
+    let r = exec(
+        &mut pipe,
+        1,
+        &["cmd", "/c", "echo %TEMP%& echo hi> %TEMP%\\t.txt"],
+    );
+    let scratch = root.0.join("work").join(format!("{sid}.tmp"));
+    assert!(
+        stdout_of(&r)
+            .to_lowercase()
+            .contains(&scratch.to_string_lossy().to_lowercase()),
+        "TEMP is not the scratch dir: {r:?}"
+    );
+    // Control: the file the command wrote is really there while the session is up.
+    assert!(scratch.join("t.txt").is_file(), "{scratch:?}");
+    exec(&mut pipe, 2, &["cmd", "/c", "echo kept> f.txt"]);
+    write_frame(&mut pipe, &Request::Close {}).unwrap();
+    assert_eq!(
+        read_frame::<_, Response>(&mut pipe).unwrap(),
+        Some(Response::Closed {})
+    );
+    assert!(wait_exit(&mut serve, 30), "serve did not finish");
+    let code = root.0.join("results").join(sid).join("exit.code");
+    assert!(code.is_file(), "exit.code is published after the wipe");
+    assert!(!root.0.join("work").join(sid).exists(), "work dir survived");
+    assert!(!scratch.exists(), "scratch dir survived");
+}

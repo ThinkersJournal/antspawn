@@ -12,6 +12,7 @@
 //! spool/<id>/          written by the launcher user only: spec.toml, in/<n>
 //! results/<id>/        written by the runner: out/<name>, result.tmp, then exit.code last
 //! work/<id>/           the runner's private work dir, wiped before and after each job
+//! work/<id>.tmp/       a session's TEMP/TMP, wiped with its work dir
 //! ```
 
 use std::path::{Component, Path, PathBuf};
@@ -65,6 +66,45 @@ impl Layout {
     pub fn job_work(&self, id: &str) -> PathBuf {
         self.work().join(id)
     }
+    /// A session's `TEMP`/`TMP`: beside its work dir, wiped with it (`valid_job_id` has no `.`, so
+    /// this can never be another job's work dir).
+    pub fn job_scratch(&self, id: &str) -> PathBuf {
+        self.work().join(format!("{id}.tmp"))
+    }
+}
+
+/// Remove the spool and results entries of **sessions** that ended (`exit.code` published) at least
+/// `min_age` ago and that nobody collected: their owner died before it could. Returns the ids
+/// removed. A job's entry (`spec.toml`) is never touched here, a session that has not ended has no
+/// `exit.code`, and a recent one is left to its owner, whose `close` is still reading it.
+pub fn reap_ended_sessions(layout: &Layout, min_age: std::time::Duration) -> Vec<String> {
+    let mut reaped = Vec::new();
+    let Ok(entries) = std::fs::read_dir(layout.spool()) else {
+        return reaped;
+    };
+    for id in entries
+        .flatten()
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|id| valid_job_id(id))
+    {
+        if !layout.job_spool(&id).join("session.toml").is_file() {
+            continue;
+        }
+        let ended = std::fs::metadata(layout.job_results(&id).join("exit.code"))
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok());
+        if !ended.is_some_and(|age| age >= min_age) {
+            continue;
+        }
+        let spool = std::fs::remove_dir_all(layout.job_spool(&id));
+        let results = std::fs::remove_dir_all(layout.job_results(&id));
+        if spool.is_ok() && results.is_ok() {
+            reaped.push(id);
+        }
+    }
+    reaped.sort();
+    reaped
 }
 
 /// A job id is a directory name the runner will join onto paths: letters, digits and `-` only.
@@ -213,6 +253,56 @@ mod tests {
 
     fn spec(extra: &str) -> JobSpec {
         JobSpec::from_toml(&format!("[job]\nname = \"t\"\ncmd = [\"x\"]\n{extra}")).unwrap()
+    }
+
+    fn temp_layout(tag: &str) -> Layout {
+        let d = std::env::temp_dir().join(format!("antspawn-reap-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        Layout::new(d)
+    }
+
+    /// Make `spool/<id>/<marker>` and, when `ended_ago` is given, `results/<id>/exit.code` of that age.
+    fn entry(l: &Layout, id: &str, marker: &str, ended_ago: Option<std::time::Duration>) {
+        std::fs::create_dir_all(l.job_spool(id)).unwrap();
+        std::fs::write(l.job_spool(id).join(marker), "x").unwrap();
+        if let Some(ago) = ended_ago {
+            std::fs::create_dir_all(l.job_results(id)).unwrap();
+            let f = std::fs::File::create(l.job_results(id).join("exit.code")).unwrap();
+            f.set_modified(std::time::SystemTime::now() - ago).unwrap();
+        }
+    }
+
+    #[test]
+    fn only_old_ended_sessions_are_reaped() {
+        use std::time::Duration;
+        let l = temp_layout("reap");
+        let old = Some(Duration::from_secs(3600));
+        entry(&l, "s-old", "session.toml", old);
+        entry(&l, "s-young", "session.toml", Some(Duration::from_secs(1)));
+        entry(&l, "s-running", "session.toml", None);
+        entry(&l, "job-old", "spec.toml", old);
+        let min = Duration::from_secs(60);
+        assert_eq!(reap_ended_sessions(&l, min), ["s-old"]);
+        assert!(!l.job_spool("s-old").exists() && !l.job_results("s-old").exists());
+        for kept in ["s-young", "s-running", "job-old"] {
+            assert!(l.job_spool(kept).exists(), "{kept} must stay");
+        }
+        // Control: the same call reaps the others once they qualify (age is the only difference).
+        assert_eq!(reap_ended_sessions(&l, Duration::ZERO), ["s-young"]);
+        assert!(l.job_spool("s-running").exists() && l.job_spool("job-old").exists());
+        // A second pass finds nothing left to reap.
+        assert!(reap_ended_sessions(&l, Duration::ZERO).is_empty());
+        let _ = std::fs::remove_dir_all(&l.root);
+    }
+
+    #[test]
+    fn a_session_scratch_dir_is_never_another_jobs_work_dir() {
+        let l = Layout::new("R");
+        assert_ne!(l.job_scratch("a"), l.job_work("a"));
+        assert!(
+            !valid_job_id("a.tmp"),
+            "so no job id can name a scratch dir"
+        );
     }
 
     #[test]

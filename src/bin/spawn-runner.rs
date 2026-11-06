@@ -15,7 +15,8 @@
 //!   `\\.\pipe\antspawn-session-<id>-<nonce>` whose DACL admits the launcher's SID only (one instance,
 //!   remote clients rejected), serves that one client until it closes or disconnects, then ends the whole
 //!   job. `serve` starts it for a session spool entry exactly as it starts `exec`, wipes the work dir
-//!   and only then publishes `exit.code`.
+//!   and the session's scratch dir (its commands' `TEMP`/`TMP`) and only then publishes `exit.code`.
+//!   A command in flight is killed the moment the pipe's client is gone, not after it finishes.
 //!
 //! The layout root is `ANTSPAWN_ROOT` or `%ProgramData%\antspawn` (see `antspawn::runner`).
 
@@ -24,6 +25,7 @@ use antspawn::session_host::{Ended, SessionFile, run_command, serve_session, wai
 use antspawn::streams::{Tail, settle};
 use antspawn::{Exit, JobSpec};
 use std::process::{Command, ExitCode};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 fn main() -> ExitCode {
@@ -87,6 +89,7 @@ fn serve(layout: &Layout) -> Result<(), String> {
             let status = Command::new(&me).args(["session", &id]).status();
             // The host has exited, so its job (and every process in it) is dead: wipe, then publish.
             let _ = std::fs::remove_dir_all(layout.job_work(&id));
+            let _ = std::fs::remove_dir_all(layout.job_scratch(&id));
             let tmp = results.join("result.tmp");
             if !tmp.exists() {
                 let why = format!("session host ended without a result ({status:?})");
@@ -221,17 +224,37 @@ fn session(layout: &Layout, id: &str) -> Result<(), String> {
     let file = SessionFile::from_toml(&text).map_err(fail)?;
 
     let work = layout.job_work(id);
-    let _ = std::fs::remove_dir_all(&work);
+    let scratch = layout.job_scratch(id);
+    for d in [&work, &scratch] {
+        let _ = std::fs::remove_dir_all(d);
+    }
     std::fs::create_dir_all(&work).map_err(|e| fail(e.to_string()))?;
     let job = sandbox::contain(None).map_err(|e| fail(format!("job object: {e}")))?;
 
     // The pipe is created inside the job, so the host dies with everything else it started.
     let pipe = sandbox::accept(&file.pipe_name(id), &file.launcher_sid)
         .map_err(|e| fail(format!("pipe: {e}")))?;
+    let owner_gone = AtomicBool::new(false);
     let ended = serve_session(&mut &pipe, &mut &pipe, |req| {
-        run_command(&work, req, cfg.max_time_s, cfg.max_time_s)
+        run_command(
+            &work,
+            &scratch,
+            req,
+            cfg.max_time_s,
+            cfg.max_time_s,
+            &mut || {
+                let up = sandbox::peer_alive(&pipe);
+                if !up {
+                    owner_gone.store(true, Ordering::SeqCst);
+                }
+                up
+            },
+        )
     });
     let how = match &ended {
+        // The owner went away while a command ran: the command was killed, and the answer that
+        // could not be delivered surfaces as a broken pipe. It is a disconnect all the same.
+        _ if owner_gone.load(Ordering::SeqCst) => "disconnected".to_owned(),
         Ended::Closed => "closed".to_owned(),
         Ended::Disconnected => "disconnected".to_owned(),
         Ended::Broken(why) => format!("broken: {why}"),
@@ -382,6 +405,25 @@ mod sandbox {
         }
     }
 
+    /// Is the pipe's client still connected? `PeekNamedPipe` reads nothing and fails (broken pipe)
+    /// once the client's end is closed, which is also what an OS-closed handle of a killed owner does.
+    pub fn peer_alive(pipe: &std::fs::File) -> bool {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::System::Pipes::PeekNamedPipe;
+        // SAFETY: the handle is a live pipe handle owned by `pipe`; every out-pointer is null, which
+        // the call allows when only the success of the peek is wanted.
+        unsafe {
+            PeekNamedPipe(
+                pipe.as_raw_handle() as _,
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            ) != 0
+        }
+    }
+
     pub fn terminate(job: Job) {
         // SAFETY: `job.0` is the live handle `contain` returned.
         unsafe {
@@ -398,6 +440,9 @@ mod sandbox {
         Err("spawn-runner containment is implemented for Windows only".into())
     }
     pub fn terminate(_: Job) {}
+    pub fn peer_alive(_: &std::fs::File) -> bool {
+        true
+    }
     pub fn accept(_: &str, _: &str) -> Result<std::fs::File, String> {
         Err("session pipes are implemented for Windows only".into())
     }

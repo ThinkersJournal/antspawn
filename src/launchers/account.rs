@@ -30,7 +30,9 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use crate::launcher::{Environment, Exit, LaunchError, Launcher};
-use crate::runner::{Layout, RunnerConfig, TASK_NAME, check_spec, decode_exit};
+use crate::runner::{
+    Layout, RunnerConfig, TASK_NAME, check_spec, decode_exit, reap_ended_sessions,
+};
 use crate::session::{ExecOutcome, ExecRequest, Session};
 use crate::session_host::SessionFile;
 use crate::session_proto::{Request, Response, read_frame, write_frame};
@@ -39,6 +41,8 @@ use crate::streams::Streams;
 
 /// How long the runner gets to pick a job up and answer, beyond the job's own time limit.
 const GRACE: Duration = Duration::from_secs(60);
+/// How long an ended session may sit uncollected before the next `open_session` reaps it.
+const ORPHAN_AGE: Duration = Duration::from_secs(120);
 
 /// The restricted-account launcher.
 #[derive(Debug, Clone)]
@@ -122,6 +126,10 @@ impl Launcher for Account {
 
     fn open_session(&self) -> Result<Box<dyn Session>, LaunchError> {
         self.config()?;
+        // Sessions whose owner died before it could collect them: ended long enough ago that no
+        // live owner is still reading the entry. Best effort; a stuck one is reported by its absence
+        // from the next call's list, never by failing this open.
+        let _ = reap_ended_sessions(&self.layout, ORPHAN_AGE);
         let id = new_job_id();
         let file = SessionFile {
             launcher_sid: current_sid()?,
