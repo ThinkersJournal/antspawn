@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.79
+
+- CI: job `runner-exe` builds `spawn-runner.exe` (release, `--locked`) on GitHub-hosted `windows-latest`, prints its sha256 and uploads it with a `.sha256` file as artifact `spawn-runner-windows-x64` (PM ruling 2026-11-06: the redeploy installs the CI-built artifact, never a lane- or box-built exe, and the artifact hash is compared with the installed file). `actions/upload-artifact` pinned to v7.0.2 by SHA. UNMEASURED until it runs on GitHub: that the artifact builds and downloads, and that its bytes match across two builds of one commit (no reproducible-build claim is made). Version provisional (PM allocates).
+
 ## 0.0.74
 
 - Sessions, slice S1 (`docs/SESSION-PLAN.md`): the `Session` trait (`exec`, `close`), `ExecRequest` with validation, `Launcher::open_session` (default: "does not provide sessions") and `Registry::open_session`, which re-checks the matrix for the needs plus `session` and refuses with the unmet capability named, never falling back. Three capabilities, all off: `session`, `clean-slate-next-session`, `no-read-other-session`. `naive` gets a deliberately leaky session (one fixed directory, `close` wipes nothing) as the known-bad control: `Probes::session_keeps_state` (positive control) and `violates_clean_slate_session` run against it and the matrix records `clean-slate-next-session` = `no` for `naive` (MEASURED here; `matrix --check` fails when that row is mutated to `yes`). No launcher that isolates has a session yet: `account` and `windows-sandbox` rows are `no` with no probe, so `Registry::open_session` refuses them. UNMEASURED: everything about `account` sessions (S2-S5). Version provisional (PM allocates).
