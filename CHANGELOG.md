@@ -1,9 +1,13 @@
 # Changelog
 
-## 0.0.81
+## 0.0.83
 
 - Sessions, slice S2 (`docs/SESSION-PLAN.md`): `session_proto`, the pure wire format between a launcher and a session host. A frame is a 4-byte little-endian length then JSON; the length is checked before anything is allocated or read (0 and above 1 MiB refused; a test fails if the reader is asked for a byte beyond the header). `Request` is `exec` or `close`, `Response` is `exec`, `closed` or `error`; unknown ops and unknown fields are errors, so the later `cancel` and `output` requests are refused by an older host, not ignored. The host re-runs `ExecRequest::validate` on what it receives. No pipe, no process, no account: nothing here is exercised against a real peer (S3). Stacked on #71. Version provisional (PM allocates).
 - Review fix (pip): `Response::Exec` now carries `combined` (omitted when false, so older frames still read as not combined); it was dropped to `false` on the wire. A test round-trips a combined outcome and reads a frame without the field.
+
+## 0.0.82
+
+- `docs/MEASUREMENTS.md` 2026-11-06 (board 321 task): `wsb list` and `wsb start` run AS `antspawn-run` (non-interactive, package registered) both return `Cancelled`; the same call works interactively. Candidate cause, untested: `antspawn-run` is not in `Hyper-V Administrators` (`gh-runner` is). Cheapest discriminating experiment and the cost of the group fix are in the entry. Docs only. Version provisional (PM allocates).
 
 ## 0.0.80
 
