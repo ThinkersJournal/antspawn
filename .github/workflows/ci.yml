@@ -45,6 +45,40 @@ jobs:
         if: runner.os == 'Linux'
         run: cargo run --locked --example matrix -- --check
 
+  # The exe the PM installs into Program Files: built here, on a GitHub-hosted runner, never on the
+  # machine that will run it. Compare the printed/uploaded sha256 with the installed file afterwards.
+  runner-exe:
+    name: runner-exe (spawn-runner.exe artifact)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: stable
+
+      - name: Build spawn-runner (release)
+        run: cargo build --release --locked --bin spawn-runner
+
+      - name: Hash it and stage the artifact
+        shell: pwsh
+        run: |
+          $exe = 'target/release/spawn-runner.exe'
+          if (-not (Test-Path $exe)) { throw "$exe was not built" }
+          $hash = (Get-FileHash -Algorithm SHA256 $exe).Hash
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item $exe dist/spawn-runner.exe
+          "$hash  spawn-runner.exe" | Set-Content -Encoding ascii dist/spawn-runner.exe.sha256
+          "sha256 $hash  size $((Get-Item $exe).Length)  commit $env:GITHUB_SHA"
+          "spawn-runner.exe sha256 ``$hash`` (commit $env:GITHUB_SHA)" >> $env:GITHUB_STEP_SUMMARY
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: spawn-runner-windows-x64
+          path: dist/
+          if-no-files-found: error
+
   msrv:
     name: msrv
     runs-on: ubuntu-latest
