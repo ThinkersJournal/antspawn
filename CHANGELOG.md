@@ -2,6 +2,7 @@
 
 ## 0.0.79
 
+- Row 9 re-run (MEASUREMENTS 2026-11-07): `windows_sandbox` 5/5 green, the stale SAC control bites again (one run, interactive, KB5127936 present); ROADMAP row 26 step 1 done. Docs only.
 - CI: job `runner-exe` builds `spawn-runner.exe` (release, `--locked`) on GitHub-hosted `windows-latest`, prints its sha256 and uploads it with a `.sha256` file as artifact `spawn-runner-windows-x64` (PM ruling 2026-11-06: the redeploy installs the CI-built artifact, never a lane- or box-built exe, and the artifact hash is compared with the installed file). `actions/upload-artifact` pinned to v7.0.2 by SHA. UNMEASURED until it runs on GitHub: that the artifact builds and downloads, and that its bytes match across two builds of one commit (no reproducible-build claim is made). Version provisional (PM allocates).
 
 ## 0.0.74
