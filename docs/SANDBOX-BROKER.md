@@ -1,8 +1,8 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
-# A VM broker: any runner may ask for a VM, none may touch Hyper-V (options note, revision 2)
+# A VM broker: any runner may ask for a VM, none may touch Hyper-V (options note, revision 3)
 
 Tasked by the PM 2026-11-07 (`[TASK] sandbox-broker-options`, revised by `[TASK] vm-broker-revision`). **Design and options only: nothing here is built, nothing is decided.**
-Written at main `3df0a14`; S2 to S4 (`session_proto`, the host pipe, the owner watcher) are open PRs #72, #74, #75, not on main. Revision 1 (a broker for Windows Sandbox only) is in this
+Written at main `3df0a14`; S2 to S4 (`session_proto`, the host pipe, the owner watcher) are open PRs #72, #74, #75, not on main. Revision 3 (PM `[TASK] windows-guest-profile`) corrects revision 2's claim that Windows guests are out of scope. Revision 1 (a broker for Windows Sandbox only) is in this
 file's history; it is kept below as the **Windows Sandbox path**, shorter.
 
 CireSnave, 2026-11-07, verbatim (relayed by the PM), first message: *"Aren't those accounts the runners themselves?  Should they have the ability to set up their own sandbox or should some other account set them up and they run inside them?"*
@@ -89,9 +89,24 @@ Residue, stated plainly: a guest can attack the **host's hypervisor surface** (a
 Five broker verbs (`create`, `start`, `stop{force}`, `delete`, `status`/`list` own), and the connection owning the VM across them is what makes "disk survives a power-cut, dies at kill" both true.
 
 ### Does it replace the Windows Sandbox path?
+CireSnave, 2026-11-07, verbatim (relayed by the PM): *"Windows Hyper-V can't create a Windows guest?"* **It can.** Revision 2 of this note said the VM broker does not replace Windows Sandbox for Windows-toolchain jobs; that overstated it, and is replaced by this section. Hyper-V runs Windows guests; what differs is practical (below).
 - **For Linux guests and anything that wants real SSH and real hardware-style faults (power cuts, kernel, filesystems): yes, this is the better tool,** and it has no one-VM-at-a-time ceiling (Windows Sandbox's is its own; more than one Hyper-V VM is ordinary). It would also make an A3-style pool of long-lived sessions possible for Linux work.
-- **For Windows-toolchain jobs (Rust/MSVC, `slangc`, the Windows build matrix): not replaced.** Those need a Windows guest; a Hyper-V Windows image is a licensed, large, slower thing and nothing here measures it. The `account` launcher (no VM) and Windows Sandbox stay.
-- **`wsb`'s cancellation is untouched by this design**: it does not start a Sandbox VM for a restricted account.
+- **For Windows-toolchain jobs (Rust/MSVC, `slangc`, the Windows build matrix): possibly, by a Windows guest profile** (next section). Nothing is claimed either way until slice V6 measures it. The `account` launcher and Windows Sandbox stay as they are until then.
+- **`wsb`'s cancellation is untouched by this design**: it does not start a Sandbox VM for a restricted account. A Hyper-V guest does not go through the Sandbox package at all, so the cancellation would not apply to it (unmeasured: item 2 above, as a non-interactive account).
+
+### A Windows guest profile (design, every cost stated as measured or unmeasured)
+Same engine, same verbs, a second `profile`: a **fixed prepared Windows base image** (VHDX, generation 2, read-only parent), a differencing disk per job, the same pool switch with no route off the host, the same connection-owned lifetime and caps. The request still names only an image and a profile.
+
+| Question | Answer today |
+|---|---|
+| **Where the image comes from, and its licence** | Not decided; **CireSnave's call**, and nothing in this repo supplies one. Two kinds: a Microsoft **evaluation** image (free, time-limited, so it needs rebuilding on a schedule and its terms restrict production use) or a **licensed** Windows image (a licence per guest as Microsoft's terms define it; the host is Windows 11 Pro, and a Pro host licence is not assumed to cover guests). These licence points are from memory of Microsoft's published terms, **not checked here**; check them before a choice. Unmeasured: whether any image already exists on this box (none is known; `C:\ProgramData\Microsoft\Windows\Containers\BaseImages` is the Sandbox's own, not ours). |
+| **Disk size** | Unmeasured. The host has 596.1 GB free of about 3.8 TB on `C:` (measured 2026-11-07). A prepared Windows base with a toolchain is tens of GB; per-job differencing disks grow with what a job writes and are deleted at kill. The broker's free-space floor (controls table) applies. |
+| **Boot time per job, against Sandbox** | **Unmeasured for both.** This repo has no clean Sandbox boot time: an early `run=61 s` was the harness's own 60 s limit expiring and is marked ignorable in MEASUREMENTS, and the later `windows_sandbox` suite took about 303 s for 5 tests (2026-11-07), which is not a per-job figure. V6 therefore measures both a Sandbox job and a Hyper-V Windows guest on the same box, same day. A checkpointed start state is an option only if measured to help, and it conflicts with "no checkpoints" above. |
+| **How the runner gets in** | Two candidates. **OpenSSH Server in the image**, key from the seed (Windows has no cloud-init: the key and address come from a first-boot script or `unattend.xml` on the seed disk, which is more fragile than Linux's), reached over the pool switch like Linux. Or **the broker's own channel**: PowerShell Direct (`Invoke-Command -VMName`) runs over the VM bus with no network, but it **needs host admin**, so only the broker could use it and it would have to proxy every command (a larger broker). Neither is tested; SSH keeps the runner and the broker separate and is the default choice. |
+| **Updates and activation** | Unmeasured. A read-only base is never updated in place: a new base is built (updates applied, toolchain installed, sysprepped or not) and the broker's recorded hash is bumped, by CireSnave's setup. Activation depends on the licence choice above (an evaluation image counts down; a licensed one needs a key or KMS/AVMA, none assumed here). A differencing disk that boots an un-sysprepped parent shares its identity (name, SID) across concurrent VMs; whether that matters for jobs is unmeasured. |
+| **What Windows Sandbox still does better** | It **boots a copy of the host**, so there is no image to obtain, license, build or update, and its toolchain is the host's. It is lightweight and ships with Windows. Its costs: one at a time (`CO_E_APPSINGLEUSE`), and cancelled for a restricted account. If the VM path's boot and upkeep cost more than that ceiling hurts, Sandbox wins for Windows jobs. |
+
+No claim either way until V6 has numbers.
 
 ## The Windows Sandbox path (revision 1, kept short, "P0 to P2")
 Still relevant only if a restricted account needs a **Windows** throwaway VM. A broker for it needs the same pipe, validator and cleanup, plus one thing the Hyper-V broker does not: `wsb` is started by a package whose service answered `Cancelled` to a non-interactive account.
@@ -99,6 +114,18 @@ Still relevant only if a restricted account needs a **Windows** throwaway VM. A 
 - **P1** the same `antspawn-broker` account, if the 321 experiment shows `wsb start` works there non-interactively (needs its own package registration).
 - **P2** a dedicated low-privilege account with a login session (never `cires`); autologon stores a secret and is CireSnave's.
 The board-321 experiment on `gh-runner` (register the package, run the probe) tells: `wsb list` works as `gh-runner` means the group is enough for `list` (not for `start`; run `start` and `exec -r System` too); cancelled means the session is the cause. It does not show a fresh low-privilege account behaves the same. Do not grant the group to `antspawn-run`.
+
+## Track 2: a Windows Sandbox broker in CireSnave's own session (SB0 to SB3)
+CireSnave, 2026-11-07, verbatim (relayed by the PM): *"If it can't be used by the runners, are you still thinking about setting up a broker on my account for Windows Sandbox work?  If so, that isn't really "Keep Windows Sandbox untouched"...it's creating a broker for Windows Sandbox and seeing if it can work that way.  If that's what you meant, yes.  Go ahead and start the work toward getting the broker(s) for VMs and Windows Sandbox up and running.  We can compare Windows Sandbox versus a VM with a Windows guest once we get it built."*
+A small broker process runs in **his interactive session** (his account) and starts Windows Sandbox when a restricted runner asks over a pipe. Same pipe, validator and cleanup as the VM broker; it replaces "P1/P2" below with something to try first.
+**Risk, stated and not blocking:** a broker in his session holds his account's rights, so its **request validation is the whole security boundary** (fixed template, no host paths, caps, per-connection lifetime). The dedicated interactive account (P2) stays as the alternative to measure after SB0.
+| # | Slice | Proof |
+|---|---|---|
+| SB0 | **Measure:** a pipe between two accounts (broker as the user, client as `antspawn-run`); whether a Sandbox starts from the broker's session on a pipe client's request; boot to ready time; one-at-a-time behaviour (`CO_E_APPSINGLEUSE`) when two clients ask | recorded with date and ref; no elevation needed for the pipe and Sandbox parts |
+| SB1 | Request validation, the same refusals as the VM broker (fixed template, no host path, caps, connection-owned lifetime), pure, runs on every CI leg | a validator that accepts a host path must FAIL its test |
+| SB2 | The real run under a restricted runner account | runner-only, UNVERIFIED until it runs; recorded with date and ref |
+| SB3 | **Hardening:** the same tests with the broker under a new, dedicated, minimally privileged account (no admin; an interactive session only if Sandbox needs one, which SB0 says), folder ACLs for staging only | a works/fails/degrades table for CireSnave; the account is made by his elevated paste |
+**Comparison** (PM brings it to CireSnave): the same job on Windows Sandbox via this broker and on a Windows-guest VM via V6: boot time, disk, failure modes.
 
 ## What changes in the existing code and slices
 - `windows_sandbox.rs`, `account.rs`: unchanged by the VM broker. A `vm` launcher (or a `vm` client module) is **new**, with its own id and matrix rows; nothing is claimed by reusing existing rows.
@@ -124,10 +151,12 @@ The board-321 experiment on `gh-runner` (register the package, run the probe) te
 | V3 | Real driver (PowerShell/WMI), seed ISO, pool switches, base hash check | runner-only, UNVERIFIED until V0 |
 | V4 | A client module and the PersistAnt power-cut as the first user | the test runs as a non-member runner account |
 | V5 | Setup script additions | **CireSnave's, elevated; antspawn never creates accounts or elevates**; dry-run here |
+| V6 | **Windows guest profile, after the Linux path (V4), measured** (needs a CireSnave-chosen image: evaluation or licensed): build one prepared base, boot it through the broker, record boot time to a ready SSH port against a Sandbox job on the same box, disk size of base and of a job's differencing disk, the first-boot key/address path, two guests at once, and a run as a non-interactive non-admin account | decides whether the VM path replaces Windows Sandbox for Windows jobs; recorded with date and ref; if it does not beat Sandbox, Sandbox and the `account` launcher stay |
+| V7 | **Hardening: the broker under a new, dedicated, minimally privileged account** (CireSnave 2026-11-07: *"It's better to be safe than sorry.  Once we've built the broker(s), creating a new, more limited account for them to run under is a good security idea.  We'll just have to check if that hampers other aspects of the VMs it can create because of limits on that account."*). Re-run V0 and V4's tests with the broker as that account: Hyper-V rights only through the one group, no admin, no interactive session, folder ACLs for images and staging only, switch creation, PowerShell Direct (Windows guest), guest reachability. The account is created by CireSnave's elevated paste, never by antspawn | a table: each capability **works / fails / degrades**, with date and ref, so CireSnave can choose |
 Then: remove `gh-runner` from Hyper-V Administrators (elevated, CireSnave's), and re-probe the `account` rows.
 
 ## Recommendation
 1. Do **V0 first**; it is cheap and it settles unmeasured items 1, 2, 4 and the firewall defaults before anything is built. The earlier board-321 `wsb` experiment is still useful but no longer on the critical path.
 2. Build the **general VM broker (V1 to V4)** with a dedicated `antspawn-broker` account, the connection-owned lifetime, fixed images and profiles, a pre-created switch pool with no route off the host, and the caps above. It answers CireSnave's question directly: runners ask, another account does it, and they run inside.
-3. Keep the **Windows Sandbox path** as is (P0) until a restricted account actually needs a Windows throwaway VM; then re-open P1/P2.
-4. Questions for CireSnave (via the PM), after V0: (a) may one dedicated account hold Hyper-V Administrators; (b) the caps (VM count, memory, CPUs, disk, lifetime); (c) which Linux image(s) are the fixed set.
+3. Keep Windows Sandbox and the `account` launcher as they are until **V6** measures a Windows guest profile; do not claim either way before. The Sandbox broker (P0 to P2) is re-opened only if a restricted account needs Windows Sandbox itself.
+4. Questions for CireSnave (via the PM), after V0: (a) may one dedicated account hold Hyper-V Administrators; (b) the caps (VM count, memory, CPUs, disk, lifetime); (c) which Linux image(s) are the fixed set. And, for V6: (d) where the Windows base image comes from (evaluation or licensed) and who pays for the licence.
