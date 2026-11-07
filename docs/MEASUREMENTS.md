@@ -386,7 +386,7 @@ Setup: `sb0-broker.ps1` runs as `cires` (PowerShell 7, hidden window) and serves
 | **Control: a DACL that does not name the client** | The same client, with the DACL naming `gh-runner` instead, got `Access to the path is denied` (1 sample). |
 | **A Sandbox starts from the broker's session on a restricted account's request** | **Yes**, 4 of 4 runs, while a direct `wsb start` as `antspawn-run` is Cancelled (#73). The Sandbox belongs to the broker's session, not the client's. |
 | **`wsb start` returns after (broker side)** | 16.9 s, 11.3 s, 11.3 s, 10.9 s |
-| **Ready (`exec` works inside) after the request** | 20.1 s (first, after a PowerShell hiccup: the pipe client path and an earlier failed attempt had just run), 12.1 s, 13.2 s, 12.6 s. Ready came 1 to 3 s after `wsb start` returned. This is the whole boot as measured here, not Sandbox's best case; the host was otherwise lightly loaded and not controlled. |
+| **Ready (`exec` works inside) after the request** | 20.1 s (the first request; why it was slower is not established, a cold start is one possibility), 12.1 s, 13.2 s, 12.6 s. Ready came 1 to 3 s after `wsb start` returned. This is the whole boot as measured here, not Sandbox's best case; the host was otherwise lightly loaded and not controlled. |
 | **Lifetime follows the client** | In all 4 runs `wsb list` was empty and the broker logged `wsb stop` within about 4 s of the client exiting; after the last run `wsb list` was empty. |
 | **One at a time** | **Not measured here.** The broker serves one pipe instance, so a second client waits on the pipe; whether a second `wsb start` during a first is refused was measured earlier (`CO_E_APPSINGLEUSE`). |
 
