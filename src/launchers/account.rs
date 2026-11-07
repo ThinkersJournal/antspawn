@@ -30,7 +30,9 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use crate::launcher::{Environment, Exit, LaunchError, Launcher};
-use crate::runner::{Layout, RunnerConfig, TASK_NAME, check_spec, decode_exit};
+use crate::runner::{
+    Layout, RunnerConfig, TASK_NAME, check_spec, decode_exit, reap_ended_sessions,
+};
 use crate::session::{ExecOutcome, ExecRequest, Session};
 use crate::session_host::SessionFile;
 use crate::session_proto::{Request, Response, read_frame, write_frame};
@@ -39,6 +41,8 @@ use crate::streams::Streams;
 
 /// How long the runner gets to pick a job up and answer, beyond the job's own time limit.
 const GRACE: Duration = Duration::from_secs(60);
+/// How long an ended session may sit uncollected before the next `open_session` reaps it.
+const ORPHAN_AGE: Duration = Duration::from_secs(120);
 
 /// The restricted-account launcher.
 #[derive(Debug, Clone)]
@@ -122,6 +126,10 @@ impl Launcher for Account {
 
     fn open_session(&self) -> Result<Box<dyn Session>, LaunchError> {
         self.config()?;
+        // Sessions whose owner died before it could collect them: ended long enough ago that no
+        // live owner is still reading the entry. Best effort; a stuck one is reported by its absence
+        // from the next call's list, never by failing this open.
+        let _ = reap_ended_sessions(&self.layout, ORPHAN_AGE);
         let id = new_job_id();
         let file = SessionFile {
             launcher_sid: current_sid()?,
@@ -272,9 +280,15 @@ impl Session for AccountSession {
             let _ = read_frame::<_, Response>(&mut pipe);
         }
         // The runner publishes exit.code only after the host's job is dead and its work dir is wiped.
-        let code = self.layout.job_results(&self.id).join("exit.code");
+        let results = self.layout.job_results(&self.id);
+        let code = results.join("exit.code");
         let start = Instant::now();
         while !code.exists() {
+            // Results gone as well: a later `open_session` reaped this ended session first (see
+            // `reap_ended_sessions`), so it was already collected. That is the end, not a failure.
+            if !results.exists() {
+                break;
+            }
             if start.elapsed() > GRACE {
                 return Err(LaunchError::Other(format!(
                     "the runner did not confirm the session's end within {}s",
@@ -398,4 +412,45 @@ fn new_job_id() -> String {
 
 fn copy(from: &Path, to: &Path) -> Result<(), LaunchError> {
     crate::runner::copy_tree(from, to).map_err(Into::into)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn session(tag: &str) -> (Layout, Box<AccountSession>) {
+        let root =
+            std::env::temp_dir().join(format!("antspawn-close-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let layout = Layout::new(&root);
+        let s = AccountSession {
+            layout: layout.clone(),
+            id: "s-close".into(),
+            pipe: None,
+            next_id: 1,
+        };
+        (layout, Box::new(s))
+    }
+
+    #[test]
+    fn close_on_a_session_the_reaper_already_collected_is_ok_not_a_60s_wait_and_an_error() {
+        // Pip review of #75: the reaper may remove an ended session before its owner calls `close`.
+        let (_, s) = session("reaped");
+        let t = Instant::now();
+        s.close()
+            .expect("an already-collected session closes cleanly");
+        assert!(t.elapsed() < Duration::from_secs(5), "{:?}", t.elapsed());
+    }
+
+    #[test]
+    fn close_on_an_ended_session_removes_its_entries() {
+        // Control: the ordinary path still works and cleans up.
+        let (layout, s) = session("ended");
+        std::fs::create_dir_all(layout.job_spool("s-close")).unwrap();
+        std::fs::create_dir_all(layout.job_results("s-close")).unwrap();
+        std::fs::write(layout.job_results("s-close").join("exit.code"), "0").unwrap();
+        s.close().unwrap();
+        assert!(!layout.job_spool("s-close").exists());
+        assert!(!layout.job_results("s-close").exists());
+    }
 }

@@ -154,11 +154,19 @@ fn reply<W: Write>(w: &mut W, msg: &Response) -> Result<(), String> {
 /// never above `max_limit_s`). A program copied into `work` is found there; anything else is looked
 /// up on `PATH`. Descendants that outlive the command are NOT killed here: the session's Job Object
 /// owns them until the session ends.
+///
+/// `scratch` becomes the command's `TEMP` and `TMP` (unless the request sets them itself), so what
+/// it writes there is the session's and goes with it, instead of landing in the account's profile
+/// temp. `alive` is asked about every 20 ms while the command runs; once it says `false` (the owner
+/// is gone) the command is killed and the result is [`Exit::Killed`]: an owner that dies DURING a
+/// long exec ends the session then, not after the exec.
 pub fn run_command(
     work: &Path,
+    scratch: &Path,
     req: &ExecRequest,
     default_limit_s: u64,
     max_limit_s: u64,
+    alive: &mut dyn FnMut() -> bool,
 ) -> ExecOutcome {
     let streams_of = |out: &Tail, err: &Tail| Streams {
         stdout: Some(out.snapshot()),
@@ -179,9 +187,26 @@ pub fn run_command(
             req.cmd[0].clone().into()
         }
     };
+    // No scratch dir means TEMP would point nowhere and a program may fall back to the profile temp, which
+    // the scratch exists to prevent: do not run the command, say why (126: found but cannot be run).
+    if let Err(e) = std::fs::create_dir_all(scratch) {
+        err_tail_write(
+            &err_tail,
+            &format!(
+                "not run: cannot create the session scratch dir {}: {e}",
+                scratch.display()
+            ),
+        );
+        return ExecOutcome {
+            exit: Exit::Code(126),
+            streams: streams_of(&out_tail, &err_tail),
+        };
+    }
     let spawned = Command::new(program)
         .args(&req.cmd[1..])
         .current_dir(cwd)
+        .env("TEMP", scratch)
+        .env("TMP", scratch)
         .envs(&req.env)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -196,7 +221,7 @@ pub fn run_command(
             if let Some(p) = child.stderr.take() {
                 readers.push(err_tail.capture(p));
             }
-            wait_child(&mut child, limit)
+            wait_child_while(&mut child, limit, alive)
         }
         Err(e) => {
             // Not an error frame: the command failing to start is a result of the exec, as in a job.
@@ -220,12 +245,26 @@ fn err_tail_write(tail: &Tail, msg: &str) {
 
 /// Wait for `child`; past `limit` kill it and say so.
 pub fn wait_child(child: &mut std::process::Child, limit: Duration) -> Exit {
+    wait_child_while(child, limit, &mut || true)
+}
+
+/// [`wait_child`], and also stop (kill, [`Exit::Killed`]) as soon as `alive` returns `false`.
+pub fn wait_child_while(
+    child: &mut std::process::Child,
+    limit: Duration,
+    alive: &mut dyn FnMut() -> bool,
+) -> Exit {
     let start = Instant::now();
     loop {
         match child.try_wait() {
             Ok(Some(s)) => return s.code().map_or(Exit::Killed, Exit::Code),
             Ok(None) => {}
             Err(_) => return Exit::Killed,
+        }
+        if !alive() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Exit::Killed;
         }
         if start.elapsed() >= limit {
             let _ = child.kill();
@@ -432,6 +471,12 @@ mod tests {
         }
     }
 
+    fn scratch_of(work: &Path) -> std::path::PathBuf {
+        let mut s = work.as_os_str().to_owned();
+        s.push(".tmp");
+        s.into()
+    }
+
     fn temp_work(tag: &str) -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!("antspawn-host-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
@@ -442,10 +487,18 @@ mod tests {
     #[test]
     fn state_written_by_one_command_is_seen_by_the_next() {
         let work = temp_work("state");
-        let w = run_command(&work, &shell("echo kept> f.txt"), 30, 30);
+        let w = run_command(
+            &work,
+            &scratch_of(&work),
+            &shell("echo kept> f.txt"),
+            30,
+            30,
+            &mut || true,
+        );
         assert_eq!(w.exit, Exit::Code(0));
         let r = run_command(
             &work,
+            &scratch_of(&work),
             &shell(if cfg!(windows) {
                 "type f.txt"
             } else {
@@ -453,6 +506,7 @@ mod tests {
             }),
             30,
             30,
+            &mut || true,
         );
         assert_eq!(r.exit, Exit::Code(0));
         assert!(String::from_utf8_lossy(r.streams.stdout.as_deref().unwrap()).contains("kept"));
@@ -460,6 +514,7 @@ mod tests {
         let other = temp_work("state-other");
         let r = run_command(
             &other,
+            &scratch_of(&other),
             &shell(if cfg!(windows) {
                 "type f.txt"
             } else {
@@ -467,6 +522,7 @@ mod tests {
             }),
             30,
             30,
+            &mut || true,
         );
         assert_ne!(r.exit, Exit::Code(0));
         let _ = std::fs::remove_dir_all(work);
@@ -477,25 +533,109 @@ mod tests {
     fn a_command_past_its_limit_is_reported_timed_out_and_a_missing_program_is_127() {
         let work = temp_work("limit");
         let mut slow = if cfg!(windows) {
-            ExecRequest::new(["ping", "-n", "6", "127.0.0.1"])
+            ExecRequest::new(["ping", "-n", "30", "127.0.0.1"])
         } else {
-            ExecRequest::new(["sleep", "5"])
+            ExecRequest::new(["sleep", "29"])
         };
         slow.time_s = Some(1);
         let t = Instant::now();
-        assert_eq!(run_command(&work, &slow, 30, 30).exit, Exit::TimedOut);
-        assert!(t.elapsed() < Duration::from_secs(4));
+        assert_eq!(
+            run_command(&work, &scratch_of(&work), &slow, 30, 30, &mut || true).exit,
+            Exit::TimedOut
+        );
+        // The command would run ~29 s; cut at its 1 s limit it is far under 20 s even when process start
+        // and kill are slow on a loaded box (the old 4 s bound against a 5 s command was not).
+        assert!(t.elapsed() < Duration::from_secs(20), "{:?}", t.elapsed());
         // The ceiling wins over a larger ask.
         slow.time_s = Some(100);
-        assert_eq!(run_command(&work, &slow, 30, 1).exit, Exit::TimedOut);
+        assert_eq!(
+            run_command(&work, &scratch_of(&work), &slow, 30, 1, &mut || true).exit,
+            Exit::TimedOut
+        );
         let gone = run_command(
             &work,
+            &scratch_of(&work),
             &ExecRequest::new(["no-such-program-antspawn"]),
             30,
             30,
+            &mut || true,
         );
         assert_eq!(gone.exit, Exit::Code(127));
         assert!(!gone.streams.stderr.unwrap().is_empty());
         let _ = std::fs::remove_dir_all(work);
+    }
+
+    #[test]
+    fn an_owner_that_dies_during_a_long_exec_ends_it_then_not_after() {
+        let work = temp_work("owner");
+        let mut slow = if cfg!(windows) {
+            ExecRequest::new(["ping", "-n", "30", "127.0.0.1"])
+        } else {
+            ExecRequest::new(["sleep", "30"])
+        };
+        slow.time_s = Some(60);
+        let begun = Instant::now();
+        // The owner is "alive" for 300 ms counted from the first look, which is after the spawn.
+        let mut first: Option<Instant> = None;
+        let mut ticks = 0;
+        let out = run_command(&work, &scratch_of(&work), &slow, 60, 60, &mut || {
+            ticks += 1;
+            first.get_or_insert_with(Instant::now).elapsed() < Duration::from_millis(300)
+        });
+        assert_eq!(out.exit, Exit::Killed);
+        assert!(
+            begun.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            begun.elapsed()
+        );
+        assert!(ticks > 1);
+        // Control: an owner that stays lets a command run to its own end.
+        let ok = run_command(
+            &work,
+            &scratch_of(&work),
+            &shell("exit 0"),
+            30,
+            30,
+            &mut || true,
+        );
+        assert_eq!(ok.exit, Exit::Code(0));
+        let _ = std::fs::remove_dir_all(work);
+    }
+
+    #[test]
+    fn a_scratch_dir_that_cannot_be_created_stops_the_command_instead_of_running_it_with_a_dead_temp()
+     {
+        // The scratch path sits under a FILE, so create_dir_all fails. Control: the same command runs with a
+        // creatable scratch (the TEMP test below).
+        let work = temp_work("scratchfail");
+        let blocker = work.join("blocker");
+        std::fs::write(&blocker, b"x").unwrap();
+        let req = ExecRequest::new(["cmd", "/c", "echo ran> %TEMP%\ran.txt"]);
+        let out = run_command(&work, &blocker.join("scratch"), &req, 10, 10, &mut || true);
+        assert_eq!(out.exit, Exit::Code(126), "{out:?}");
+        let err =
+            String::from_utf8_lossy(out.streams.stderr.as_deref().unwrap_or_default()).into_owned();
+        assert!(
+            err.contains("cannot create the session scratch dir"),
+            "{err}"
+        );
+        assert!(!work.join("ran.txt").exists());
+    }
+
+    #[test]
+    fn temp_points_at_the_scratch_dir_so_it_goes_with_the_session() {
+        let work = temp_work("scratch");
+        let scratch = scratch_of(&work);
+        let show = shell(if cfg!(windows) {
+            "echo %TEMP%"
+        } else {
+            "echo $TEMP"
+        });
+        let out = run_command(&work, &scratch, &show, 30, 30, &mut || true);
+        let said = String::from_utf8_lossy(out.streams.stdout.as_deref().unwrap()).into_owned();
+        assert!(said.contains(&*scratch.to_string_lossy()), "{said}");
+        assert!(scratch.is_dir(), "created for the command");
+        let _ = std::fs::remove_dir_all(work);
+        let _ = std::fs::remove_dir_all(scratch);
     }
 }
