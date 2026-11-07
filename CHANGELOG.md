@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.80
+
+- `docs/SANDBOX-BROKER.md`: options note for "who starts the Windows Sandbox VM" (PM `[TASK] sandbox-broker-options`, CireSnave 2026-11-07): the second design, a separate broker that starts the VM while the restricted account only asks over a named pipe. Covers what the broker must do and refuse, the pipe and request checks, three placements (no broker, a dedicated service account in Hyper-V Administrators, a dedicated interactive-login account) with pros and cons, effects on the launcher and on S2 to S4 (reused, not changed), what the board-321 experiment on `gh-runner` does and does not settle, failure modes, slices B0 to B5, and a recommendation (run `wsb start`/`exec` in the 321 experiment first). Docs only; nothing is built. Measured and unmeasured items are separated at the top. Version provisional (PM allocates).
+
 ## 0.0.74
 
 - Sessions, slice S1 (`docs/SESSION-PLAN.md`): the `Session` trait (`exec`, `close`), `ExecRequest` with validation, `Launcher::open_session` (default: "does not provide sessions") and `Registry::open_session`, which re-checks the matrix for the needs plus `session` and refuses with the unmet capability named, never falling back. Three capabilities, all off: `session`, `clean-slate-next-session`, `no-read-other-session`. `naive` gets a deliberately leaky session (one fixed directory, `close` wipes nothing) as the known-bad control: `Probes::session_keeps_state` (positive control) and `violates_clean_slate_session` run against it and the matrix records `clean-slate-next-session` = `no` for `naive` (MEASURED here; `matrix --check` fails when that row is mutated to `yes`). No launcher that isolates has a session yet: `account` and `windows-sandbox` rows are `no` with no probe, so `Registry::open_session` refuses them. UNMEASURED: everything about `account` sessions (S2-S5). Version provisional (PM allocates).
