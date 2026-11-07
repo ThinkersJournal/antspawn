@@ -83,7 +83,7 @@ impl SessionFile {
     pub fn pipe_name(&self, session_id: &str) -> String {
         assert!(
             crate::runner::valid_job_id(session_id),
-            "pipe_name: {session_id:?} is not a valid job id"
+            "pipe_name: the session id is not a valid job id"
         );
         format!("antspawn-session-{session_id}-{}", self.nonce)
     }
