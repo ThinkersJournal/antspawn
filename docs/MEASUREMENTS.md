@@ -373,5 +373,5 @@ Throwaway tree `C:\Projects\antspawn-w0-scratch\{tree\src,tree\.git,other}` (inh
 - Windows 11 Pro build 26300, 63.2 GB RAM, 32 logical CPUs. Services `vmms`, `vmcompute`, `hns` Running. `Get-VM` works non-elevated and lists **no VMs**.
 - `Get-VMSwitch`: `Default Switch` and `WSL (Hyper-V firewall)`, both `Internal`. `Get-NetIPInterface` (IPv4): `Forwarding` Disabled on both vEthernet interfaces. `Get-NetNat`: empty.
 - `Get-NetFirewallHyperVVMCreator`: one creator, WSL (`{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}`); `Get-NetFirewallHyperVVMSetting`: default inbound Block, outbound Allow. So the per-VM Hyper-V firewall is shown here for WSL only.
-- OpenSSH client present (`C:\Program FilesOpenSSH\ssh.exe`). Hyper-V Enhanced Session Mode enabled.
+- OpenSSH client present (`C:\Program Files\OpenSSH\ssh.exe`). Hyper-V Enhanced Session Mode enabled.
 - **Not measured:** creating or starting a VM or switch (by anyone), a non-interactive account doing so, a pipe between two accounts, the forwarding default of a new switch, guest reachability from a restricted account, the per-VM firewall for a non-WSL VM. Used by `docs/SANDBOX-BROKER.md`.
