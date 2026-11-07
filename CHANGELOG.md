@@ -1,9 +1,12 @@
 # Changelog
 
-## 0.0.79
+## 0.0.85
 
 - Row 9 re-run (MEASUREMENTS 2026-11-07): `windows_sandbox` 5/5 green, the stale SAC control bites again (one run, interactive, KB5127936 present); ROADMAP row 26 step 1 done. Docs only.
 - CI: job `runner-exe` builds `spawn-runner.exe` (release, `--locked`) on GitHub-hosted `windows-latest`, prints its sha256 and uploads it with a `.sha256` file as artifact `spawn-runner-windows-x64` (PM ruling 2026-11-06: the redeploy installs the CI-built artifact, never a lane- or box-built exe, and the artifact hash is compared with the installed file). `actions/upload-artifact` pinned to v7.0.2 by SHA. UNMEASURED until it runs on GitHub: that the artifact builds and downloads, and that its bytes match across two builds of one commit (no reproducible-build claim is made). Version provisional (PM allocates).
+## 0.0.80
+
+- `docs/SANDBOX-BROKER.md` (PM `[TASK] sandbox-broker-options`, revised by `[TASK] vm-broker-revision`; CireSnave 2026-11-07, both quotes in the note): a **general VM broker**. Any runner in an allowed group asks over a named pipe for a VM from a fixed image set, SSHes into it, may stop/start/delete it, and every VM is owned by the pipe connection that created it (runner exit or disconnect destroys it; hard lifetime ceiling; orphan cleanup by `antspawn-` name prefix). One dedicated account holds Hyper-V Administrators so every runner account can leave the group. Controls table (no host paths in requests, a pre-created Internal switch pool with no NAT and forwarding off, integration services off, no shared folders/passthrough/GPU/nested virtualization, read-only base plus differencing disk deleted at kill, caps and rate limits) with a status for each; the Linux power-cut test (`kv.durability.machine`) as five broker verbs; whether it replaces Windows Sandbox (Linux yes, Windows toolchain jobs no); the Windows Sandbox broker (P0 to P2) kept short; slices V0 to V5. Measured today (read-only, `MEASUREMENTS.md`): Hyper-V state, switches, forwarding Disabled, only WSL registered with the Hyper-V firewall. NOT measured: a pipe between two accounts, a non-interactive account creating VMs, the per-VM firewall for a non-WSL VM, guest reachability from a restricted account. Docs only. Version provisional (PM allocates).
 
 ## 0.0.74
 
