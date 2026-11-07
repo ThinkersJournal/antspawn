@@ -131,8 +131,7 @@ fn exec(layout: &Layout, id: &str) -> Result<(), String> {
     check_spec(&spec, &cfg).map_err(|e| fail(format!("refused: {e}")))?;
 
     let work = layout.job_work(id);
-    let _ = std::fs::remove_dir_all(&work);
-    std::fs::create_dir_all(&work).map_err(|e| fail(e.to_string()))?;
+    fresh_dir(&work).map_err(fail)?;
     for (i, m) in spec.mounts.iter().enumerate() {
         let to = work.join(&m.guest);
         let r = match m.mode {
@@ -210,6 +209,30 @@ fn wait(child: &mut std::process::Child, limit: Duration) -> Exit {
     wait_child(child, limit)
 }
 
+/// An empty directory at `path`: whatever was there is removed first, and a leftover that could not be
+/// removed is an error (a silent failure would let one session see the previous one's files).
+fn fresh_dir(path: &std::path::Path) -> Result<(), String> {
+    if let Err(e) = std::fs::remove_dir_all(path)
+        && path.exists()
+    {
+        return Err(format!(
+            "{}: could not remove the previous contents: {e}",
+            path.display()
+        ));
+    }
+    std::fs::create_dir_all(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let left = std::fs::read_dir(path)
+        .map_err(|e| format!("{}: {e}", path.display()))?
+        .count();
+    if left != 0 {
+        return Err(format!(
+            "{}: not empty after wiping ({left} entries)",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
 fn session(layout: &Layout, id: &str) -> Result<(), String> {
     let results = layout.job_results(id);
     let fail = |msg: String| {
@@ -222,17 +245,24 @@ fn session(layout: &Layout, id: &str) -> Result<(), String> {
     let text = std::fs::read_to_string(layout.job_spool(id).join("session.toml"))
         .map_err(|e| fail(format!("session.toml: {e}")))?;
     let file = SessionFile::from_toml(&text).map_err(fail)?;
+    // The pipe admits `file.launcher_sid`; that is only safe if the launcher who wrote it IS that user.
+    // Ask the OS who owns the spool entry (the file and its directory), not the file's own say-so.
+    for path in [
+        layout.job_spool(id),
+        layout.job_spool(id).join("session.toml"),
+    ] {
+        let owner = antspawn::session_pipe::owner_sid(&path).map_err(fail)?;
+        file.check_owner(&owner).map_err(fail)?;
+    }
 
     let work = layout.job_work(id);
     let scratch = layout.job_scratch(id);
-    for d in [&work, &scratch] {
-        let _ = std::fs::remove_dir_all(d);
-    }
-    std::fs::create_dir_all(&work).map_err(|e| fail(e.to_string()))?;
+    fresh_dir(&work).map_err(fail)?;
+    fresh_dir(&scratch).map_err(fail)?;
     let job = sandbox::contain(None).map_err(|e| fail(format!("job object: {e}")))?;
 
     // The pipe is created inside the job, so the host dies with everything else it started.
-    let pipe = sandbox::accept(&file.pipe_name(id), &file.launcher_sid)
+    let pipe = antspawn::session_pipe::accept(&file.pipe_name(id), &file.launcher_sid)
         .map_err(|e| fail(format!("pipe: {e}")))?;
     let owner_gone = AtomicBool::new(false);
     let ended = serve_session(&mut &pipe, &mut &pipe, |req| {
@@ -261,7 +291,13 @@ fn session(layout: &Layout, id: &str) -> Result<(), String> {
     };
     drop(pipe);
     let _ = std::fs::write(results.join("session.end"), how);
-    let _ = std::fs::write(results.join("result.tmp"), encode_exit(Exit::Code(0)));
+    // `exit.code` is the session's health: 0 for closed or disconnected, "killed" for a session a broken
+    // frame ended (`session.end` says why).
+    let code = match &ended {
+        Ended::Broken(_) => Exit::Killed,
+        Ended::Closed | Ended::Disconnected => Exit::Code(0),
+    };
+    let _ = std::fs::write(results.join("result.tmp"), encode_exit(code));
     // Kills every process in the job, this one included; `serve` wipes the work dir afterwards.
     sandbox::terminate(job);
     Ok(())
@@ -323,88 +359,6 @@ mod sandbox {
         }
     }
 
-    /// Create the session's one-instance duplex pipe, DACL admitting `allow_sid` only, remote clients
-    /// rejected, and wait (bounded) for its one client. The host never needs an ACE of its own.
-    pub fn accept(name: &str, allow_sid: &str) -> Result<std::fs::File, String> {
-        use std::os::windows::io::{AsRawHandle, FromRawHandle};
-        use std::sync::mpsc;
-        use windows_sys::Win32::Foundation::{INVALID_HANDLE_VALUE, TRUE};
-        use windows_sys::Win32::Security::Authorization::{
-            ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
-        };
-        use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
-        use windows_sys::Win32::Storage::FileSystem::{
-            FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX,
-        };
-        use windows_sys::Win32::System::Pipes::{
-            ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS,
-            PIPE_TYPE_BYTE, PIPE_WAIT,
-        };
-
-        let wide = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
-        // Protected DACL, one ACE: 0x12019f is FILE_GENERIC_READ | FILE_GENERIC_WRITE spelled out as
-        // specific rights (the generic bits are not mapped in a pipe DACL; the JIT shim's pipe measured
-        // that). No inheritance, no other principal.
-        let sddl = wide(&format!("D:P(A;;0x12019f;;;{allow_sid})"));
-        let mut descriptor = std::ptr::null_mut();
-        // SAFETY: `sddl` is NUL-terminated; `descriptor` receives a LocalAlloc'd block kept for the
-        // life of this process (the pipe is created from it exactly once).
-        let ok = unsafe {
-            ConvertStringSecurityDescriptorToSecurityDescriptorW(
-                sddl.as_ptr(),
-                SDDL_REVISION_1,
-                &mut descriptor,
-                std::ptr::null_mut(),
-            )
-        };
-        if ok == 0 {
-            return Err("could not build the pipe's access list".into());
-        }
-        let attributes = SECURITY_ATTRIBUTES {
-            nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
-            lpSecurityDescriptor: descriptor,
-            bInheritHandle: 0,
-        };
-        let path = wide(&format!(r"\\.\pipe\{name}"));
-        // SAFETY: `path` is NUL-terminated and `attributes` outlives the call.
-        let handle = unsafe {
-            CreateNamedPipeW(
-                path.as_ptr(),
-                PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
-                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
-                1,
-                64 * 1024,
-                64 * 1024,
-                0,
-                &attributes,
-            )
-        };
-        if handle == INVALID_HANDLE_VALUE {
-            return Err(format!(
-                "could not create the pipe (it may already exist): {}",
-                std::io::Error::last_os_error()
-            ));
-        }
-        // SAFETY: `handle` is a valid pipe handle owned by nothing else; `File` now owns it.
-        let pipe = unsafe { std::fs::File::from_raw_handle(handle as _) };
-        let raw = pipe.as_raw_handle() as usize;
-        // ConnectNamedPipe blocks, so the wait is a thread; if it never returns the process exits.
-        let (done, result) = mpsc::channel();
-        std::thread::spawn(move || {
-            // SAFETY: the handle lives until this function returns or the process exits.
-            let connected = unsafe { ConnectNamedPipe(raw as _, std::ptr::null_mut()) };
-            // ERROR_PIPE_CONNECTED (535): the client got in before this call; still connected.
-            let up = connected == TRUE
-                || matches!(std::io::Error::last_os_error().raw_os_error(), Some(535));
-            let _ = done.send(up);
-        });
-        match result.recv_timeout(std::time::Duration::from_secs(60)) {
-            Ok(true) => Ok(pipe),
-            Ok(false) => Err("accept failed".into()),
-            Err(_) => Err("no client connected in time".into()),
-        }
-    }
-
     /// Is the pipe's client still connected? `PeekNamedPipe` reads nothing and fails (broken pipe)
     /// once the client's end is closed, which is also what an OS-closed handle of a killed owner does.
     pub fn peer_alive(pipe: &std::fs::File) -> bool {
@@ -442,8 +396,5 @@ mod sandbox {
     pub fn terminate(_: Job) {}
     pub fn peer_alive(_: &std::fs::File) -> bool {
         true
-    }
-    pub fn accept(_: &str, _: &str) -> Result<std::fs::File, String> {
-        Err("session pipes are implemented for Windows only".into())
     }
 }

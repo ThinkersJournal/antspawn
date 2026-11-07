@@ -21,18 +21,19 @@ use antspawn::session_proto::{Request, Response, Status, read_frame, write_frame
 const RUNNER: &str = env!("CARGO_BIN_EXE_spawn-runner");
 const NONCE: &str = "0123456789abcdef0123456789abcdef";
 
+/// The SID the host will accept for a session this process spools: the OWNER of what it creates. For a
+/// normal user that is the user's own SID; for an elevated administrator Windows makes the owner
+/// `Administrators` (S-1-5-32-544), which the token carries too, so the same test runs on both.
 fn my_sid() -> String {
-    let out = Command::new("whoami")
-        .args(["/user", "/fo", "csv", "/nh"])
-        .output()
-        .unwrap();
-    String::from_utf8_lossy(&out.stdout)
-        .trim()
-        .rsplit(',')
-        .next()
-        .unwrap()
-        .trim_matches('"')
-        .to_owned()
+    let probe = std::env::temp_dir().join(format!(
+        "antspawn-sh-ownerprobe-{}-{:?}.tmp",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    std::fs::write(&probe, b"x").unwrap();
+    let sid = antspawn::session_pipe::owner_sid(&probe).expect("the owner of a file we made");
+    let _ = std::fs::remove_file(&probe);
+    sid
 }
 
 struct Root(PathBuf);
@@ -168,37 +169,73 @@ fn the_right_sid_connects_runs_commands_keeps_state_and_closes() {
 }
 
 #[test]
-fn a_different_sid_is_refused_and_a_second_client_finds_the_pipe_taken() {
-    // Control for the refusal: the same layout with MY sid connects (test above). Here the ACE names
-    // LocalService (S-1-5-19), which this process is not.
-    let sid = "t-other";
-    let root = layout("other", sid, "S-1-5-19");
+fn a_session_naming_someone_who_does_not_own_the_spool_entry_is_refused_before_any_pipe_exists() {
+    // The security point of the owner check: the DACL admits `launcher_sid`, so the host must not take that
+    // from the file alone. Here the file names LocalService (S-1-5-19) but is owned by us.
+    // Control: the same layout naming OUR owner SID connects (`the_right_sid_connects_...`).
+    let sid = "t-owner";
+    let root = layout("owner", sid, "S-1-5-19");
     let mut h = host(&root, sid);
-    // Wait for the pipe to exist (the host creates it first thing), then try as ourselves.
+    assert!(wait_exit(&mut h, 20), "the host did not refuse");
+    assert!(!h.wait().unwrap().success(), "a refusal must exit non-zero");
+    let why = std::fs::read_to_string(root.0.join("results").join(sid).join("error.txt"))
+        .unwrap_or_default();
+    assert!(why.contains("not the owner of the spool entry"), "{why:?}");
+    let pipe = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(pipe_path(sid));
+    assert!(
+        matches!(&pipe, Err(e) if e.raw_os_error() == Some(2)),
+        "no pipe may have been created: {pipe:?}"
+    );
+}
+
+#[test]
+fn the_pipe_dacl_admits_only_the_named_sid() {
+    // The DACL itself, in-process, with a SID that is not ours (LocalService). Control: the owner SID connects.
+    let (denied_name, ok_name) = (
+        format!("antspawn-dacl-deny-{}", std::process::id()),
+        format!("antspawn-dacl-ok-{}", std::process::id()),
+    );
+    let (n1, n2, mine) = (denied_name.clone(), ok_name.clone(), my_sid());
+    std::thread::spawn(move || {
+        let _ = antspawn::session_pipe::accept(&n1, "S-1-5-19");
+    });
+    std::thread::spawn(move || {
+        let _ = antspawn::session_pipe::accept(&n2, &mine);
+    });
     let start = Instant::now();
-    let denied = loop {
-        match OpenOptions::new()
+    let open = |n: &str| {
+        OpenOptions::new()
             .read(true)
             .write(true)
-            .open(pipe_path(sid))
-        {
-            Err(e) if e.kind() == ErrorKind::PermissionDenied => break true,
-            Err(e)
-                if matches!(e.raw_os_error(), Some(2 | 231))
-                    && start.elapsed() < Duration::from_secs(20) =>
-            {
+            .open(format!(r"\\.\pipe\{n}"))
+    };
+    let mut denied = None;
+    while denied.is_none() && start.elapsed() < Duration::from_secs(20) {
+        match open(&denied_name) {
+            Err(e) if e.kind() == ErrorKind::PermissionDenied => denied = Some(true),
+            Err(e) if matches!(e.raw_os_error(), Some(2 | 231)) => {
                 std::thread::sleep(Duration::from_millis(50));
             }
-            Ok(_) => break false,
+            Ok(_) => denied = Some(false),
             Err(e) => panic!("unexpected error {e}"),
         }
-    };
-    let _ = h.kill();
-    let _ = h.wait();
-    assert!(
+    }
+    assert_eq!(
         denied,
+        Some(true),
         "a user the DACL does not name was able to open the pipe"
     );
+    let mut ok = open(&ok_name);
+    while matches!(&ok, Err(e) if matches!(e.raw_os_error(), Some(2 | 231)))
+        && start.elapsed() < Duration::from_secs(20)
+    {
+        std::thread::sleep(Duration::from_millis(50));
+        ok = open(&ok_name);
+    }
+    assert!(ok.is_ok(), "the named SID must connect: {ok:?}");
 }
 
 #[test]
@@ -332,4 +369,66 @@ fn temp_is_the_sessions_scratch_dir_and_serve_wipes_work_and_scratch_before_exit
     assert!(code.is_file(), "exit.code is published after the wipe");
     assert!(!root.0.join("work").join(sid).exists(), "work dir survived");
     assert!(!scratch.exists(), "scratch dir survived");
+
+fn a_session_ended_by_a_broken_frame_does_not_publish_exit_code_zero() {
+    // Pip review of #74: `session.end` said `broken` while the result still decoded as a success. Control: a
+    // clean close publishes 0 (the first test also asserts `session.end` = closed).
+    use antspawn::launcher::Exit;
+    use antspawn::runner::decode_exit;
+    use std::io::Write;
+    let sid = "t-broken";
+    let root = layout("broken", sid, &my_sid());
+    let mut h = host(&root, sid);
+    let mut pipe = connect(sid).unwrap();
+    // A length above the 1 MiB cap: the stream is out of step and the host ends the session.
+    pipe.write_all(&u32::MAX.to_le_bytes()).unwrap();
+    assert!(wait_exit(&mut h, 20), "the host did not end");
+    assert!(
+        ended(&root, sid).starts_with("broken"),
+        "{:?}",
+        ended(&root, sid)
+    );
+    let tmp = std::fs::read_to_string(root.0.join("results").join(sid).join("result.tmp")).unwrap();
+    assert_eq!(decode_exit(&tmp), Some(Exit::Killed), "{tmp:?}");
+
+    let sid = "t-clean";
+    let root = layout("clean", sid, &my_sid());
+    let mut h = host(&root, sid);
+    let mut pipe = connect(sid).unwrap();
+    write_frame(&mut pipe, &Request::Close {}).unwrap();
+    let _ = read_frame::<_, Response>(&mut pipe);
+    assert!(wait_exit(&mut h, 20));
+    let tmp = std::fs::read_to_string(root.0.join("results").join(sid).join("result.tmp")).unwrap();
+    assert_eq!(decode_exit(&tmp), Some(Exit::Code(0)), "{tmp:?}");
+}
+
+#[test]
+fn a_work_dir_that_cannot_be_wiped_refuses_the_session_instead_of_leaking_into_it() {
+    // A file held open without sharing cannot be deleted, so the wipe of the previous contents fails.
+    // Control: with nothing held the same layout starts (the tests above).
+    use std::os::windows::fs::OpenOptionsExt;
+    let sid = "t-wipe";
+    let root = layout("wipe", sid, &my_sid());
+    let work = root.0.join("work").join(sid);
+    std::fs::create_dir_all(&work).unwrap();
+    let held = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .share_mode(0)
+        .open(work.join("held.txt"))
+        .unwrap();
+    let mut h = host(&root, sid);
+    assert!(
+        wait_exit(&mut h, 20),
+        "the host started a session over a work dir it could not wipe"
+    );
+    assert!(!h.wait().unwrap().success());
+    let why = std::fs::read_to_string(root.0.join("results").join(sid).join("error.txt"))
+        .unwrap_or_default();
+    assert!(
+        why.contains("could not remove the previous contents"),
+        "{why:?}"
+    );
+    drop(held);
 }

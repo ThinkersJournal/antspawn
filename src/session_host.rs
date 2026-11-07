@@ -59,8 +59,32 @@ impl SessionFile {
         Ok(())
     }
 
-    /// `antspawn-session-<sid>-<nonce>`: one path component, no separators.
+    /// The DACL admits `launcher_sid` and nothing else, so the DACL is only as good as this check: the
+    /// file is written by the launcher, and a spool that more than one user can write into would let user
+    /// A name user B here. The host therefore asks the OS who OWNS the spool entry (`owner`, from
+    /// [`crate::session_pipe::owner_sid`]) and refuses a session whose `launcher_sid` is anyone else.
+    /// (An elevated launcher creates files owned by `Administrators`; that is refused, loudly, not guessed.)
+    pub fn check_owner(&self, owner: &str) -> Result<(), String> {
+        if owner.eq_ignore_ascii_case(&self.launcher_sid) {
+            Ok(())
+        } else {
+            Err(format!(
+                "session.toml: launcher_sid {} is not the owner of the spool entry ({owner}); refused",
+                self.launcher_sid
+            ))
+        }
+    }
+
+    /// `antspawn-session-<sid>-<nonce>`: one path component, no separators. `session_id` must be a valid
+    /// job id (the caller checked; this is the backstop so the claim does not rest on that alone).
+    ///
+    /// # Panics
+    /// If `session_id` is not a valid job id.
     pub fn pipe_name(&self, session_id: &str) -> String {
+        assert!(
+            crate::runner::valid_job_id(session_id),
+            "pipe_name: {session_id:?} is not a valid job id"
+        );
         format!("antspawn-session-{session_id}-{}", self.nonce)
     }
 }
@@ -359,6 +383,38 @@ mod tests {
             });
             assert!(matches!(ended, Ended::Broken(_)), "{name}: {ended:?}");
         }
+    }
+
+    #[test]
+    fn a_sid_that_does_not_own_the_spool_entry_is_refused_and_the_owner_is_accepted() {
+        let f = SessionFile {
+            launcher_sid: "S-1-5-21-1-2-3-1001".into(),
+            nonce: "0123456789abcdef".into(),
+        };
+        assert!(
+            f.check_owner("S-1-5-21-1-2-3-1001").is_ok(),
+            "the owner must be accepted"
+        );
+        assert!(
+            f.check_owner("s-1-5-21-1-2-3-1001").is_ok(),
+            "SID text is not case-sensitive"
+        );
+        for other in ["S-1-5-21-1-2-3-1002", "S-1-5-32-544", ""] {
+            assert!(
+                f.check_owner(other).is_err(),
+                "{other:?} is not the launcher"
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "not a valid job id")]
+    fn pipe_name_refuses_an_id_with_a_separator() {
+        let f = SessionFile {
+            launcher_sid: "S-1-5-21-1".into(),
+            nonce: "0123456789abcdef".into(),
+        };
+        let _ = f.pipe_name("a/b");
     }
 
     #[test]
