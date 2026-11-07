@@ -1,124 +1,133 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
-# Who starts the Windows Sandbox VM: a broker design (options note)
+# A VM broker: any runner may ask for a VM, none may touch Hyper-V (options note, revision 2)
 
-Tasked by the PM 2026-11-07 (`[TASK] sandbox-broker-options`). **Options and a recommendation only: nothing here is built, nothing is decided.**
-Written at main `3df0a14`; the session slices S2 to S4 it refers to are open PRs #72, #74, #75 and not on main.
+Tasked by the PM 2026-11-07 (`[TASK] sandbox-broker-options`, revised by `[TASK] vm-broker-revision`). **Design and options only: nothing here is built, nothing is decided.**
+Written at main `3df0a14`; S2 to S4 (`session_proto`, the host pipe, the owner watcher) are open PRs #72, #74, #75, not on main. Revision 1 (a broker for Windows Sandbox only) is in this
+file's history; it is kept below as the **Windows Sandbox path**, shorter.
 
-CireSnave, 2026-11-07, verbatim (relayed by the PM): *"Aren't those accounts the runners themselves?  Should they have the ability to set up their own sandbox or should some other account set them up and they run inside them?"*
+CireSnave, 2026-11-07, verbatim (relayed by the PM), first message: *"Aren't those accounts the runners themselves?  Should they have the ability to set up their own sandbox or should some other account set them up and they run inside them?"*
+and the second: *"I think you may be overthinking this.  If the broker allows any runner to set up a secure VM which the runner can then SSH into and populate with whatever it wants to run there and the runner can then have the broker kill that VM they just had it create, as long as the runner shutting down automatically signals the broker to kill any VMs the runner created, where is the potential harm in any runner being able to launch a VM?  I mean, they could launch VMs until they overloaded the system, but it shouldn't be hard for the broker to watch for and prevent that sort of attack."*
+Also from the PM: `gh-runner` holds Hyper-V Administrators only so a PersistAnt test (`kv.durability.machine`: create a Hyper-V Linux guest, SSH in, cut its power, restart, check) can run; the goal is to remove that membership from every runner account.
 
-Plain answer to the first sentence: yes. `antspawn-run` is the account that runs spec jobs (task `AntSpawnRunner`), and `gh-runner` / `ghr-spawn*` are the accounts that run GitHub
-Actions runners. Today the `windows-sandbox` launcher drives `wsb.exe` as **whoever calls it**, so for a restricted account that means the account sets up its own sandbox,
-and it cannot (below).
+**Short answer to "where is the harm":** he is right that a runner launching a VM is not the harm, *if* the VM is the only thing it gets. The harm is everything a Hyper-V VM can be wired to besides itself: the host's network
+interfaces, the LAN, a host folder, a passed-through device, an image the runner wrote, a handle to the Hyper-V WMI/PowerShell interface itself (which is what the group grants: full control of Hyper-V on this box).
+So the design is: the runner gets a *name for a VM and an SSH address*, never Hyper-V; every wiring decision is the broker's and fixed. Resource abuse is the smaller risk and is capped (below).
 
 ## What is measured, and what is not
 
-Measured (all on this machine; dates and refs in `docs/MEASUREMENTS.md`):
-- As **`antspawn-run`** (non-interactive, started by the task; no session) `wsb list` and `wsb start` both return `Status(StatusCode="Cancelled")`, exit -2146233088, no VM created. As
-  the interactive user `wsb list` works (2026-11-06, one sample each; antspawn#73).
-- `BUILTIN\Hyper-V Administrators` contains exactly `cires` and `gh-runner`; `antspawn-run` is not in it. **That is a correlation, not a cause.** The other candidate cause, no interactive
-  session, is not told apart from it by anything measured.
-- Windows Sandbox runs **one VM at a time** (`CO_E_APPSINGLEUSE` on the second start; two simultaneous jobs: one ran, one failed).
-- `wsb exec` forwards no stdin; the job runs as SYSTEM in the guest; `wsb.exe` must be the package's alias (the System32 stub crashes).
-- A named pipe with a protected DACL naming one SID, one instance, remote clients rejected, works between **processes of the same user** (S3 tests, `tests/session_host.rs`). The
-  shim's `--pipe --allow-sid` mode is built the same way and has only been tested as the current user.
+Measured today (2026-11-07, read-only commands as `cires`, a non-elevated token that carries `Hyper-V Administrators`; this is a read, no VM was created and nothing was changed):
+- Windows 11 Pro build 26300; 63.2 GB RAM, 32 logical CPUs (so caps below are sized against real numbers).
+- Hyper-V is running: `vmms`, `vmcompute`, `hns` services are Running; the cmdlets `Get-VM`, `New-VM`, `Get-VMSwitch`, `Get-NetFirewallHyperVVMSetting` exist; `Get-VM` works non-elevated and lists **no VMs**.
+- Two switches exist, both `Internal`: `Default Switch` and `WSL (Hyper-V firewall)`. IPv4 forwarding is **Disabled** on both vEthernet interfaces; `Get-NetNat` lists nothing (the Default Switch's sharing is ICS, not a NAT object).
+- The Hyper-V firewall has **one registered VM creator: WSL** (`{40E0AC32-...}`, default inbound Block, outbound Allow). So the per-VM Hyper-V firewall is shown here only for WSL.
+- OpenSSH client at `C:\Program Files\OpenSSH\ssh.exe`.
+- From antspawn#73 (2026-11-06): as `antspawn-run` (non-interactive) `wsb list`/`wsb start` return `Cancelled`; `BUILTIN\Hyper-V Administrators` holds exactly `cires` and `gh-runner`. Windows Sandbox runs one VM at a time (`CO_E_APPSINGLEUSE`).
+- A named pipe with a protected one-SID DACL, remote clients rejected, works between processes of **one user** (S3 tests). The shim's `--pipe --allow-sid` is built the same way and tested only as the current user.
 
-**Not measured:** whether any non-interactive account, in or out of Hyper-V Administrators, can `wsb start` or `wsb exec`; why the service cancels (its log was not read);
-a pipe between two different accounts on this machine for either feature; whether a VM survives the process that started it; whether `wsb` works when the interactive user is
-logged off or locked; Hyper-V Administrators' effect on the `account` isolation rows.
+**Not measured, and each can change the design:**
+1. **A pipe between two different accounts** (runner to broker), for any feature.
+2. **Whether a non-interactive service account in Hyper-V Administrators can create, start, stop and delete a VM and a switch.** `Get-VM` as an interactive, non-elevated member is the only read taken. (The `wsb` cancellation is Windows Sandbox's packaged-app activation; nothing says Hyper-V VMs share that failure, nothing says they don't.)
+3. **Whether the per-VM Hyper-V firewall can be applied to a generic (non-WSL) VM.** Only WSL is a registered creator here. Do not rely on it; the design below does not.
+4. **Guest reachability from a restricted account**: can `ghr-*`/`antspawn-run` open a TCP connection to a vEthernet address at all (their outbound Windows Firewall rules, set by `account-setup.ps1`, block outbound for `antspawn-run`)?
+5. A Linux guest image: its boot time, whether a seed ISO gives it a static address and a key, differencing-disk growth, `Stop-VM -TurnOff` behaviour for the durability test.
+6. Hyper-V Administrators' effect on the `account` isolation rows, and whether any runner could today start a VM (they cannot be assumed unable: `gh-runner` is in the group and runs workflow code).
 
-## The second design: a broker starts the VM
+## The design: a general VM broker
 
 ```
- restricted account (antspawn-run, ghr-*)            broker (separate account or the interactive login)
-   asks over a named pipe:  run{spec subset}   --->   validates, stages, starts ONE VM from a fixed template,
-   gets back: exit, stream tails, outputs      <---   runs job.cmd as System in the guest, copies outputs out, stops the VM
+ runner account (any in group `antspawn-vm-clients`)          broker (one dedicated account, the ONLY Hyper-V Administrators member)
+   pipe \\.\pipe\antspawn-vm   vm.create{image,profile,pubkey} -> picks a free pool switch, makes a differencing disk + seed ISO,
+                               <- {vm id, ip, port}              creates the VM from a fixed template, starts it
+   ssh -i key user@ip  (runner -> guest, over the pool switch; the runner populates and runs whatever it wants)
+   vm.stop{force} / vm.start / vm.delete / vm.status / vm.list(own)
+   (runner exits or the pipe closes)  ------------------------>  broker destroys every VM that connection created
 ```
-The restricted account never starts, lists, stops or maps anything. It names what to run; the broker decides what a sandbox is.
 
-### What the broker must be able to do
-1. Start a VM with `wsb start -c <config>` and `wsb exec`, poll for `exit.code`, `wsb stop --id` (everything `windows_sandbox.rs` does today, moved behind a pipe).
-2. Own a staging area (`<root>\broker\stage\<req>\in|out`) that only it can write and the VM maps; copy inputs in and outputs out.
-3. Stop every VM it started, including after its own restart.
-4. Answer `status` (idle / busy / not provisioned) so a caller can tell "broker down" from "broker busy".
+### Lifetime: a VM belongs to a connection
+- Every VM is owned by the **pipe connection** that created it. Connection closed (runner exit, crash, `close`) means: `Stop-VM -TurnOff`, `Remove-VM`, delete the differencing disk and the seed ISO, release the pool switch. S4's `peer_alive` is the mechanism, run from a watcher thread, so a long-running broker call does not delay it.
+- Hard ceiling per VM (`max_lifetime`, default hours, set in the broker's config); a connection that stays open does not outlive it.
+- **Orphan cleanup by name prefix:** every VM, disk and ISO is named `antspawn-<id>`. On broker start (and every few minutes) it removes everything with that prefix that no live connection owns. A broker restart therefore kills all VMs, consistent with "VM lifetime = connection".
+- A runner that must keep a VM across its own restart is not supported; that would need a lease, and nothing asks for it.
 
-### What it must refuse (each a test with a known-bad request that must FAIL against a broker that accepts it)
-- Any **host path** in a request. A request carries argv, env, limits, time and input *bytes or a spool reference*, never a path to map. The configuration XML is generated by the broker
-  from a fixed template: networking disabled, vGPU disabled, clipboard/printer/audio/video redirection off, only the broker's own `in` (read-only) and `out` folders mapped. No
-  request field reaches the XML.
-- Network on, GPU, extra mounts, `rw` host mounts, a second VM, a time above the ceiling, inputs above a size cap, argv/env over the same limits `ExecRequest::validate` has, an id with
-  anything outside `[A-Za-z0-9-]`, an unknown field or unknown op (the S2 wire rules: unit variants ignore extra fields, so struct variants only).
-- A client whose SID is not the one allowed. The DACL already refuses it at open; the broker **also** reads the client's identity per connection (it does not trust the DACL alone: a
-  later setup mistake would otherwise silently widen it).
-- Spec features that need the host: secrets (still refused everywhere), `scratch` mounts that outlive the VM.
-- Falling back: a request the broker cannot honour is refused, never run un-sandboxed, never run in a weaker launcher.
+### What the broker holds (and the runner does not)
+- Hyper-V Administrators: **one dedicated account, `antspawn-broker`**, non-interactive, task at boot. Every runner account leaves the group, including `gh-runner`. That is the goal the PM stated and it is reachable only if the broker works as such an account (unmeasured item 2).
+- Elevated setup (CireSnave's, once, never by antspawn): creates the account and group `antspawn-vm-clients`, the pool of Internal switches with fixed host-side addresses, the read-only base images, the broker's directory ACLs, firewall rules, the boot task. The broker creates none of these.
 
-### The pipe and the request checks
-- One well-known name, `\\.\pipe\antspawn-broker`. A resident broker cannot use a per-session nonce, so the name is guessable: the broker creates it first with
-  `FILE_FLAG_FIRST_PIPE_INSTANCE` from a boot-time task, and a client treats "someone else owns the pipe" as an error. (Squatting before the broker starts is the residue; the
-  client verifies the server's account SID after connecting. Neither is measured.)
-- DACL: protected, one ACE for the requesting account's SID (read/write as spelled out in `0x12019f`, as the S3 pipe), none for `Everyone`, none for the broker itself beyond ownership.
-  `PIPE_REJECT_REMOTE_CLIENTS`, byte mode, the S2 frame (4-byte length, 1 MiB cap, struct-variant JSON) reused unchanged: the framing and `ProtoError` handling already exist.
-- Per connection: read one frame, validate the whole request **before** anything touches the disk, then stage by **copying** from the request into the broker's own directory (never map the
-  requester's directory: it could change under the VM).
-- Frame cap and a read timeout per frame, so a client that opens and stalls costs one slot for a bounded time.
+### Controls (each a test with a known-bad request that must FAIL a broker that allows it)
+| Control | How | Status |
+|---|---|---|
+| **No host paths in a request** | A request carries `image` (a name from the fixed set), `profile` (a name), `pubkey` (bytes, size cap, one line, validated as an OpenSSH public key). No path, no XML, no script. | design |
+| **Guest has no route to the LAN or the internet** | NIC attaches only to a **pre-created Internal switch from the pool, with no NAT and IPv4 forwarding Disabled** (forwarding is Disabled on both existing vEthernet interfaces, measured; a new switch's default is unmeasured). The guest can reach only the switch's host-side address. | design; switch default unmeasured |
+| **Guest cannot use the host's services** | The host-side address is reachable from the guest by construction, so host Windows Firewall rules (elevated setup) block inbound on the pool interfaces except what the design needs (nothing). Needs measuring: a guest probing `host:445`, `host:22`, `host:135`. | design; unmeasured |
+| **Guests cannot reach each other** | One switch per VM from the pool (no shared switch). | design |
+| **Per-VM Hyper-V firewall** | Not used as the control: only WSL is a registered creator here (measured). Revisit if a creator can be registered for our VMs. | unmeasured |
+| **Integration services off** | `Disable-VMIntegrationService` for Guest Service Interface, KVP Exchange (it leaks host name to the guest), Shutdown (the broker powers off), Time sync, VSS; Heartbeat may stay. | design |
+| **No shared folders, no device passthrough, no GPU** | None of these exist in the template; the template never calls `Add-VMGpuPartitionAdapter`, `Add-VMAssignableDevice`, or passes a physical disk. The request cannot name them. | design |
+| **Nested virtualization off** | `Set-VMProcessor -ExposeVirtualizationExtensions $false` explicitly, asserted by the test. | design |
+| **Read-only base, per-VM differencing disk, deleted at kill** | Base VHDXs are written only by setup; the broker account has read. The broker checks a recorded hash of each base at start (cost: hashing a multi-GB file; a size+mtime cache is weaker and is a choice). The differencing disk and seed ISO live under the broker's own directory and are deleted on kill. | design |
+| **No checkpoints, no dynamic memory, Secure Boot template for Linux** | Static memory makes the total computable. | design |
+| **Caps** | count per account and in total; memory, vCPU and disk (the base's virtual size bounds differencing growth; the broker also refuses to create when host free space is below a floor) from named profiles, not free numbers; total lifetime per VM; creates per minute per account. On this host: 63.2 GB RAM and 32 logical CPUs; the sizing is a CireSnave/PM choice, a default such as 4 VMs total, 4 GB and 2 vCPU each is a number, not a measurement. | design |
+| **Client identity** | DACL names the group; the broker also reads each connection's SID and enforces per-account caps from it. | design |
+| **A request flood** | One request is read at a time per connection, a frame cap and read timeout (the S2 rules), a global in-flight create limit, refusal at the cap with "busy". | design |
+| **Runner A reaching runner B's VM** | A can open TCP to B's guest address if the firewall allows the whole pool range; B's **key** is what stops a login. Narrower needs per-SID firewall rules created at runtime (the broker is not admin), so it is not promised. | design, residue stated |
 
-### Who the broker runs as, and Hyper-V Administrators
-Three placements. The measurement that picks between them is below.
+Residue, stated plainly: a guest can attack the **host's hypervisor surface** (a VM escape) and the host-side address's listening services; the first is Hyper-V's, the second is the firewall line above and must be measured.
 
-| | Placement | Pros | Cons |
-|---|---|---|---|
-| **P0** | **No broker; only the interactive/launcher user starts VMs** (today) | nothing new; measured to work | restricted accounts get no sandbox; the answer to CireSnave's question is "they can't" |
-| **P1** | **Dedicated service account `antspawn-broker`, in Hyper-V Administrators, non-interactive** (task at boot) | no one logs in; the group lands on a small audited process that never runs untrusted code, instead of on the job account; `antspawn-run` stays group-free | **may not work at all**: if the cause of `Cancelled` is the missing session, the group does nothing. Hyper-V Administrators is complete control of Hyper-V on this box (CireSnave's call). Needs its own package registration (like `antspawn-run`'s) |
-| **P2** | **Broker under the interactive login** (task "at logon, as the interactive user", or on demand via `schtasks /IT`) | the one placement measured to start VMs; no group grant | needs somebody logged in; if it is `cires` itself the broker's bug is a `cires`-level compromise (all of `C:\Projects`, the GitHub App key), so only a **dedicated low-privilege account with a session** is acceptable, and keeping one logged in (autologon stores a secret; fast-user-switch) is a machine-level change that is CireSnave's, unmeasured |
+### How the runner gets a VM and SSHes in
+`pubkey` goes into a per-VM seed ISO (cloud-init NoCloud: user, key, a static address derived from the pool switch's subnet, hostname). The broker returns `{id, ip, port, user}`. The runner connects with its own `ssh` as itself (the restricted account's outbound firewall must allow the pool range: unmeasured item 4, and `antspawn-run`'s is currently "block all outbound"). The broker never sees the runner's private key.
 
-Observation, not a recommendation to act on: `gh-runner` is in Hyper-V Administrators **and** runs workflow code. That already puts full Hyper-V control behind the account the broker design
-is trying to keep small. It is not measured whether that matters (a workflow could start a Sandbox VM); the PM may want it on the board.
+### The Linux power-cut test (`kv.durability.machine`): operations needed
+| Step | Operation | Broker call |
+|---|---|---|
+| create | `New-VM` gen2 from the template, differencing disk on the Linux base, seed ISO, pool switch, caps checked | `vm.create` |
+| start, address | `Start-VM`; wait for the guest's port 22 on the known static address (no KVP, it is off) | `vm.create` returns when ready or fails; `vm.status` |
+| write and sync | the runner, over SSH | none |
+| power-cut | `Stop-VM -TurnOff` (the guest sees power removal; the **host's** page cache and VHDX flush behaviour are not the guest's: this tests guest-visible durability under a hypervisor power-off, not a host power loss; said so the PersistAnt side can word its claim) | `vm.stop{force:true}` |
+| restart | `Start-VM` on the **same** VM and differencing disk (the disk must survive a stop) | `vm.start` |
+| check | SSH again | none |
+| delete | `Remove-VM`, delete disk and ISO, release switch | `vm.delete` or the connection closing |
+Five broker verbs (`create`, `start`, `stop{force}`, `delete`, `status`/`list` own), and the connection owning the VM across them is what makes "disk survives a power-cut, dies at kill" both true.
 
-### What changes in the existing launcher and slices
-- `windows_sandbox.rs` keeps its flow; the `wsb` calls move behind a small driver seam (`Direct`, today; `Broker`, a pipe client). `Direct` is unchanged and stays the interactive-user path. A
-  brokered launcher gets its **own** id and its own matrix rows and passes the same probes (read outside, write outside, network off, clean slate, runaway kill, the
-  guest-side SAC notes), each through the broker. A row says `yes` only after that run. Nothing is claimed by reusing `windows-sandbox`'s rows.
-- **S2** (`session_proto`): reused as the broker's wire; a `run` request and a `status` request are new struct variants, validated by the same rules. No change to S2's slice.
-- **S3** (`Account::open_session`, host pipe): its `accept` creates one pipe for one client; the broker needs a **listen loop** with the same DACL builder, so the builder gets split out
-  and shared. The session feature itself is unaffected: sessions stay on `account` (no VM), as `SESSION-PLAN.md` decided.
-- **S4** (owner watcher, orphan reaping): `peer_alive` is exactly what stops a VM when its requester dies mid-job; the reaper idea (stale entries swept on the next open) becomes the
-  broker's VM sweep. Both reused, no change to what S4 does today.
-- A VM **session** (several execs in one VM) is not planned by anything: the one-VM-at-a-time ceiling rules out a pool and `wsb exec` reuse is unmeasured. The broker would be the place to
-  try it; this note does not ask for it.
+### Does it replace the Windows Sandbox path?
+- **For Linux guests and anything that wants real SSH and real hardware-style faults (power cuts, kernel, filesystems): yes, this is the better tool,** and it has no one-VM-at-a-time ceiling (Windows Sandbox's is its own; more than one Hyper-V VM is ordinary). It would also make an A3-style pool of long-lived sessions possible for Linux work.
+- **For Windows-toolchain jobs (Rust/MSVC, `slangc`, the Windows build matrix): not replaced.** Those need a Windows guest; a Hyper-V Windows image is a licensed, large, slower thing and nothing here measures it. The `account` launcher (no VM) and Windows Sandbox stay.
+- **`wsb`'s cancellation is untouched by this design**: it does not start a Sandbox VM for a restricted account.
 
-### What the board-321 experiment on `gh-runner` still tells us
-It registers the Sandbox package for `gh-runner` and runs the probe as it. Read carefully:
-- `wsb list` **works** there: group membership is sufficient for `list` without a session. That favours P1, but `list` is not `start`: run `wsb start` and `wsb exec -r System` too.
-- `wsb list` is **cancelled** there as well: `gh-runner` is in the group and has no session, so the group is not the fix and the session is. That removes P1 and leaves P2.
-- It does **not** show that a *fresh* low-privilege account placed in the group would behave the same (profile, package registration and the account's own rights differ), nor whether
-  a VM outlives its starter, nor anything about the pipe between accounts. Those are the first measurements of slice B0.
+## The Windows Sandbox path (revision 1, kept short, "P0 to P2")
+Still relevant only if a restricted account needs a **Windows** throwaway VM. A broker for it needs the same pipe, validator and cleanup, plus one thing the Hyper-V broker does not: `wsb` is started by a package whose service answered `Cancelled` to a non-interactive account.
+- **P0** no broker; only the interactive/launcher user starts Windows Sandbox (today).
+- **P1** the same `antspawn-broker` account, if the 321 experiment shows `wsb start` works there non-interactively (needs its own package registration).
+- **P2** a dedicated low-privilege account with a login session (never `cires`); autologon stores a secret and is CireSnave's.
+The board-321 experiment on `gh-runner` (register the package, run the probe) tells: `wsb list` works as `gh-runner` means the group is enough for `list` (not for `start`; run `start` and `exec -r System` too); cancelled means the session is the cause. It does not show a fresh low-privilege account behaves the same. Do not grant the group to `antspawn-run`.
 
-### Failure modes
+## What changes in the existing code and slices
+- `windows_sandbox.rs`, `account.rs`: unchanged by the VM broker. A `vm` launcher (or a `vm` client module) is **new**, with its own id and matrix rows; nothing is claimed by reusing existing rows.
+- **S2** (`session_proto`): the wire for the broker, with `vm.*` struct variants (unit variants ignore extra fields, measured in S2). **S3**: its DACL builder is split out; the broker needs a **listen loop**, S3's `accept` is one client. **S4**: `peer_alive` is the connection-owns-VMs watcher; the orphan sweep idea is the name-prefix cleanup. All reused, no slice changed.
+
+## Failure modes
 | Failure | What happens | Control |
 |---|---|---|
-| Broker down / not provisioned | client gets "pipe not found"; **reports NotProvisioned-style, loudly, and stops**: never starts `wsb` itself, never falls back | test: stop broker, request fails with that message and runs nothing |
-| Broker crashes mid-job | VM keeps running (unmeasured; likely, a VM is not in the broker's Job Object) | state file of started VM ids; on start the broker stops those, **only its own by id** (the existing `antspawn-wsb-*.owner` idea) |
-| Requester dies mid-job | pipe closes | `peer_alive` check ends the job and stops the VM |
-| VM leak | the one-VM ceiling means a leaked VM blocks every later request (`CO_E_APPSINGLEUSE`) | per-request deadline then `wsb stop --id`; startup sweep; `status` shows the held id |
-| Request flood | one VM at a time, so work cannot parallelise anyway | queue depth 0: a request while busy is answered `busy` at once; a per-frame read timeout; a rate limit per SID; size caps before any disk write |
-| Squatted pipe name | a client talks to the wrong server | `FIRST_PIPE_INSTANCE`, boot-time start, client verifies the server SID (all three unmeasured) |
-| Broker compromised | it can start VMs and read what requesters send | it runs nothing from the request outside the guest; P1/P2 are what limit it; this is why `cires` must not be the broker |
+| Broker down | client gets "pipe not found" and reports NotProvisioned-style, loudly; **never starts Hyper-V itself, never falls back** | test: stop the broker, a request fails with that message |
+| Broker crashes with VMs up | VMs keep running (a VM is not in the broker's Job Object; unmeasured) | startup sweep by `antspawn-` prefix |
+| Runner dies mid-test | pipe closes | watcher destroys that connection's VMs |
+| Leak (disk or switch left) | the pool shrinks until something is free again | sweep also releases switches whose VM is gone; `status` shows pool use |
+| Flood | caps and rate limit | the "overload the system" case CireSnave named: refused at the cap, tested with a client that asks for 1000 |
+| Squatted pipe name | a client talks to the wrong server | `FIRST_PIPE_INSTANCE`, boot-time start, client checks the server's SID after connect (unmeasured) |
+| Broker compromised | it holds Hyper-V Administrators | it runs nothing from a request; the account is dedicated and non-interactive; this is the one place the group lives |
 
 ## Slices if this is chosen (estimates, not measurements; one PR each)
 | # | Slice | Proof |
 |---|---|---|
-| B0 | **Measure first** (needs the PM's elevated steps): `wsb start`/`exec -r System`/`stop` as a non-interactive account with and without the group, with and without a session; does a VM survive its starter; a pipe between two accounts | picks P1 or P2; recorded with date and ref |
-| B1 | Request type + pure validation (every refusal above), runs on every CI leg | each refusal has a test; a validator that accepts a host path or `network=on` must FAIL it |
-| B2 | Broker process with a **fake** driver: listen loop, DACL, per-connection SID check, busy/flood, deadlines | current-user tests; wrong SID and second client refused |
-| B3 | Real driver: staging by copy, template config, owned-VM state file and sweep, `peer_alive` stop | runner-only, UNVERIFIED until B0 says where it can run |
-| B4 | `Broker` driver in the launcher + its own matrix rows + the probes through it | brokered probes pass; the `naive`-style known-bad (a broker that maps a request path) fails them |
-| B5 | Setup script additions: account, group (if P1), task, ACLs, package registration | **CireSnave's, elevated; antspawn never creates accounts or elevates**; dry-run only here |
+| V0 | **Measure first** (PM/CireSnave's elevated steps): create/start/stop/delete a VM and an Internal switch as a non-interactive account in the group; a pipe between two accounts; a guest probing the host's ports; guest reachable from a restricted account's token; what `New-VMSwitch`'s forwarding default is | decides whether `antspawn-broker` is viable and which controls stand; recorded with date and ref |
+| V1 | Request types and pure validation (every refusal above), runs on every CI leg | a validator that accepts a path, an unknown image or a huge `pubkey` must FAIL its test |
+| V2 | Broker with a **fake** Hyper-V driver: listen loop, DACL, SID check, connection-owns-VMs, caps, flood, orphan sweep | current-user tests; second SID refused; disconnect destroys |
+| V3 | Real driver (PowerShell/WMI), seed ISO, pool switches, base hash check | runner-only, UNVERIFIED until V0 |
+| V4 | A client module and the PersistAnt power-cut as the first user | the test runs as a non-member runner account |
+| V5 | Setup script additions | **CireSnave's, elevated; antspawn never creates accounts or elevates**; dry-run here |
+Then: remove `gh-runner` from Hyper-V Administrators (elevated, CireSnave's), and re-probe the `account` rows.
 
 ## Recommendation
-1. **Run B0's first half now, before choosing:** extend the board-321 experiment on `gh-runner` to `wsb start` and `wsb exec`, since `list` alone cannot tell P1 from P2. That is one elevated step the PM already owns.
-2. **If it works non-interactively: P1 with a dedicated `antspawn-broker` account** (not `gh-runner`, not `antspawn-run`). It is the design CireSnave asked about: restricted accounts run *inside* sandboxes
-   another account sets up, and the group grant sits on a small process with a fixed template and a validator, not on an account that runs jobs. Needs his ruling on Hyper-V Administrators for that one account.
-3. **If it does not: P2 with a dedicated low-privilege interactive account**, started on demand, never `cires`; or P0 (restricted accounts get no sandbox) until he rules on keeping a session logged in.
-4. **Do not** grant Hyper-V Administrators to `antspawn-run`.
-
-Questions for CireSnave (via the PM), only after B0: (a) may one dedicated account hold Hyper-V Administrators (P1)? (b) if not, is a standing logged-in dedicated account acceptable (P2)?
+1. Do **V0 first**; it is cheap and it settles unmeasured items 1, 2, 4 and the firewall defaults before anything is built. The earlier board-321 `wsb` experiment is still useful but no longer on the critical path.
+2. Build the **general VM broker (V1 to V4)** with a dedicated `antspawn-broker` account, the connection-owned lifetime, fixed images and profiles, a pre-created switch pool with no route off the host, and the caps above. It answers CireSnave's question directly: runners ask, another account does it, and they run inside.
+3. Keep the **Windows Sandbox path** as is (P0) until a restricted account actually needs a Windows throwaway VM; then re-open P1/P2.
+4. Questions for CireSnave (via the PM), after V0: (a) may one dedicated account hold Hyper-V Administrators; (b) the caps (VM count, memory, CPUs, disk, lifetime); (c) which Linux image(s) are the fixed set.

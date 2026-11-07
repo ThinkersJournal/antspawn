@@ -367,3 +367,11 @@ Throwaway tree `C:\Projects\antspawn-w0-scratch\{tree\src,tree\.git,other}` (inh
 - **An explicit deny on a subpath beats the grant**, so protected paths (`.git`, `.github`, `.claude`, `CLAUDE.md`, hooks) can be kept read-only inside a bound tree.
 - **Use exact rights, not icacls `W`:** `W` includes SYNCHRONIZE, so `(W,D,DC)` also made `.git` unreadable (a `git status` inside the session would fail). The working deny was `WriteData, AppendData, WriteExtendedAttributes, WriteAttributes, Delete, DeleteSubdirectoriesAndFiles` set through `Set-Acl`; `icacls /deny` merges into an existing deny ACE, so re-running with narrower rights silently kept the wide one (one invalid run discarded for that reason).
 - **Not measured:** rename or create-directory inside the denied path, `.git` replaced by a file or junction, files created by the account (their owner and inherited ACL as seen by the launcher user), grant cost on a large tree, and a grant surviving a crashed launcher (the journal in `docs/SESSION-PLAN.md` W4).
+
+## 2026-11-07: Hyper-V state on this box, read-only (main `3df0a14`; as `cires`, non-elevated token holding `Hyper-V Administrators`; one sample; nothing created or changed)
+
+- Windows 11 Pro build 26300, 63.2 GB RAM, 32 logical CPUs. Services `vmms`, `vmcompute`, `hns` Running. `Get-VM` works non-elevated and lists **no VMs**.
+- `Get-VMSwitch`: `Default Switch` and `WSL (Hyper-V firewall)`, both `Internal`. `Get-NetIPInterface` (IPv4): `Forwarding` Disabled on both vEthernet interfaces. `Get-NetNat`: empty.
+- `Get-NetFirewallHyperVVMCreator`: one creator, WSL (`{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}`); `Get-NetFirewallHyperVVMSetting`: default inbound Block, outbound Allow. So the per-VM Hyper-V firewall is shown here for WSL only.
+- OpenSSH client present (`C:\Program FilesOpenSSH\ssh.exe`). Hyper-V Enhanced Session Mode enabled.
+- **Not measured:** creating or starting a VM or switch (by anyone), a non-interactive account doing so, a pipe between two accounts, the forwarding default of a new switch, guest reachability from a restricted account, the per-VM firewall for a non-WSL VM. Used by `docs/SANDBOX-BROKER.md`.
