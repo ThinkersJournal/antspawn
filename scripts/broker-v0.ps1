@@ -128,14 +128,20 @@ Rec ("END {0:o}" -f (Get-Date))
 $listen = @'
 # Runs AS antspawn-v0-broker for 15 minutes: a one-SID-pair pipe and a TCP listener, logging each client.
 $out = 'RESULTS_DIR\listen.txt'
+trap { Add-Content -Path $out -Value ("{0:o} FATAL {1}" -f (Get-Date), $_) -Encoding utf8; break }
 function Rec([string]$s) { Add-Content -Path $out -Value ("{0:o} {1}" -f (Get-Date), $s) -Encoding utf8 }
 Rec ("START as {0}" -f [Security.Principal.WindowsIdentity]::GetCurrent().Name)
 $deadline = (Get-Date).AddMinutes(15)
 function New-Pipe {
     $ps = New-Object System.IO.Pipes.PipeSecurity
     $ps.SetSecurityDescriptorSddlForm('D:P(A;;FA;;;BROKERSID)(A;;0x12019f;;;RUNNERSID)')
-    New-Object System.IO.Pipes.NamedPipeServerStream('antspawn-v0-pipe', [System.IO.Pipes.PipeDirection]::InOut, 1,
-        [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::Asynchronous, 4096, 4096, $ps)
+    if ('System.IO.Pipes.NamedPipeServerStreamAcl' -as [type]) {
+        [System.IO.Pipes.NamedPipeServerStreamAcl]::Create('antspawn-v0-pipe', [System.IO.Pipes.PipeDirection]::InOut, 1,
+            [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::Asynchronous, 4096, 4096, $ps)
+    } else {
+        New-Object System.IO.Pipes.NamedPipeServerStream('antspawn-v0-pipe', [System.IO.Pipes.PipeDirection]::InOut, 1,
+            [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::Asynchronous, 4096, 4096, $ps)
+    }
 }
 $tcp = $null
 try { $tcp = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Parse('HOSTIP'), 2222); $tcp.Start(); Rec 'tcp listening HOSTIP:2222' }
@@ -149,7 +155,7 @@ while ((Get-Date) -lt $deadline) {
             $r = New-Object System.IO.StreamReader($pipe); $w = New-Object System.IO.StreamWriter($pipe); $w.AutoFlush = $true
             $line = $r.ReadLine()
             $who = $null
-            $pipe.RunAsClient([Action]{ $script:who = [Security.Principal.WindowsIdentity]::GetCurrent().Name })
+            $pipe.RunAsClient([System.IO.Pipes.PipeStreamImpersonationWorker]{ $script:who = [Security.Principal.WindowsIdentity]::GetCurrent().Name })
             Rec ("pipe client identity={0} said={1}" -f $who, $line)
             $w.WriteLine("hello-from-broker $who")
             $pipe.WaitForPipeDrain()
