@@ -73,6 +73,9 @@ pub enum Response {
         /// Last bytes of stdout and stderr, base64.
         stdout: String,
         stderr: String,
+        /// Both streams are in `stdout` (the sandbox `2>&1` case); `stderr` is then empty.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        combined: bool,
     },
     Closed {},
     /// The request was refused or failed; the session is still usable unless the host then closes.
@@ -144,6 +147,7 @@ impl Response {
             exit_code,
             stdout: enc(&outcome.streams.stdout),
             stderr: enc(&outcome.streams.stderr),
+            combined: outcome.streams.combined,
         }
     }
 
@@ -157,6 +161,7 @@ impl Response {
                 exit_code,
                 stdout,
                 stderr,
+                combined,
             } => {
                 let exit = match (status, exit_code) {
                     (Status::Exited, Some(c)) => Exit::Code(c),
@@ -178,7 +183,7 @@ impl Response {
                         streams: Streams {
                             stdout: Some(dec(&stdout)?),
                             stderr: Some(dec(&stderr)?),
-                            combined: false,
+                            combined,
                         },
                     },
                 ))
@@ -306,8 +311,34 @@ mod tests {
             exit_code: None,
             stdout: String::new(),
             stderr: String::new(),
+            combined: false,
         };
         assert!(r.into_outcome().is_err());
+    }
+
+    #[test]
+    fn a_combined_outcome_round_trips_and_a_frame_without_the_field_means_not_combined() {
+        // Was dropped to `false` on the way through (pip review of #72): a consumer would misread which stream holds data.
+        let out = ExecOutcome {
+            exit: Exit::Code(0),
+            streams: Streams {
+                stdout: Some(b"both".to_vec()),
+                stderr: None,
+                combined: true,
+            },
+        };
+        let wire = serde_json::to_string(&Response::from_outcome(4, &out)).unwrap();
+        assert!(wire.contains("\"combined\":true"), "{wire}");
+        let back: Response = serde_json::from_str(&wire).unwrap();
+        let (_, got) = back.into_outcome().unwrap();
+        assert!(got.streams.combined);
+        // Control: a frame an older host wrote (no `combined`) is read as not combined, and is not refused.
+        let old = r#"{"op":"exec","id":5,"status":"exited","exit_code":0,"stdout":"","stderr":""}"#;
+        let (_, got) = serde_json::from_str::<Response>(old)
+            .unwrap()
+            .into_outcome()
+            .unwrap();
+        assert!(!got.streams.combined);
     }
 
     #[test]

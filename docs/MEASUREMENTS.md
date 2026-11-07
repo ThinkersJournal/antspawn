@@ -382,3 +382,11 @@ Ref: branch `session-s3` (stacked on `session-s2`), `tests/session_host.rs`, run
 
 - **Not measured:** the host AS the restricted account (needs a `spawn-runner` redeploy; `tests/account_session.rs` prints UNVERIFIED until then), a remote client (`PIPE_REJECT_REMOTE_CLIENTS` is set, never exercised), a killed owner during a long exec (the host reads the disconnect only between frames), exec latency, the 60 s accept window.
 - The runner-only test took 60 s here: the deployed `spawn-runner.exe` predates `session`, the task ran `serve`, which ignored the spool entry, so `open_session` waited out its grace and the test reported UNVERIFIED.
+
+## 2026-11-07: Hyper-V state on this box, read-only (main `3df0a14`; as `cires`, non-elevated token holding `Hyper-V Administrators`; one sample; nothing created or changed)
+
+- Windows 11 Pro build 26300, 63.2 GB RAM, 32 logical CPUs. Services `vmms`, `vmcompute`, `hns` Running. `Get-VM` works non-elevated and lists **no VMs**.
+- `Get-VMSwitch`: `Default Switch` and `WSL (Hyper-V firewall)`, both `Internal`. `Get-NetIPInterface` (IPv4): `Forwarding` Disabled on both vEthernet interfaces. `Get-NetNat`: empty.
+- `Get-NetFirewallHyperVVMCreator`: one creator, WSL (`{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}`); `Get-NetFirewallHyperVVMSetting`: default inbound Block, outbound Allow. So the per-VM Hyper-V firewall is shown here for WSL only.
+- OpenSSH client present (`C:\Program Files\OpenSSH\ssh.exe`). Hyper-V Enhanced Session Mode enabled.
+- **Not measured:** creating or starting a VM or switch (by anyone), a non-interactive account doing so, a pipe between two accounts, the forwarding default of a new switch, guest reachability from a restricted account, the per-VM firewall for a non-WSL VM. Used by `docs/SANDBOX-BROKER.md`.
