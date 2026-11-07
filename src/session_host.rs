@@ -187,7 +187,21 @@ pub fn run_command(
             req.cmd[0].clone().into()
         }
     };
-    let _ = std::fs::create_dir_all(scratch);
+    // No scratch dir means TEMP would point nowhere and a program may fall back to the profile temp, which
+    // the scratch exists to prevent: do not run the command, say why (126: found but cannot be run).
+    if let Err(e) = std::fs::create_dir_all(scratch) {
+        err_tail_write(
+            &err_tail,
+            &format!(
+                "not run: cannot create the session scratch dir {}: {e}",
+                scratch.display()
+            ),
+        );
+        return ExecOutcome {
+            exit: Exit::Code(126),
+            streams: streams_of(&out_tail, &err_tail),
+        };
+    }
     let spawned = Command::new(program)
         .args(&req.cmd[1..])
         .current_dir(cwd)
@@ -586,6 +600,26 @@ mod tests {
         );
         assert_eq!(ok.exit, Exit::Code(0));
         let _ = std::fs::remove_dir_all(work);
+    }
+
+    #[test]
+    fn a_scratch_dir_that_cannot_be_created_stops_the_command_instead_of_running_it_with_a_dead_temp()
+     {
+        // The scratch path sits under a FILE, so create_dir_all fails. Control: the same command runs with a
+        // creatable scratch (the TEMP test below).
+        let work = temp_work("scratchfail");
+        let blocker = work.join("blocker");
+        std::fs::write(&blocker, b"x").unwrap();
+        let req = ExecRequest::new(["cmd", "/c", "echo ran> %TEMP%\ran.txt"]);
+        let out = run_command(&work, &blocker.join("scratch"), &req, 10, 10, &mut || true);
+        assert_eq!(out.exit, Exit::Code(126), "{out:?}");
+        let err =
+            String::from_utf8_lossy(out.streams.stderr.as_deref().unwrap_or_default()).into_owned();
+        assert!(
+            err.contains("cannot create the session scratch dir"),
+            "{err}"
+        );
+        assert!(!work.join("ran.txt").exists());
     }
 
     #[test]

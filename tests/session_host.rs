@@ -294,8 +294,14 @@ for /l %%i in (1,1,200) do (echo x>>hb.txt & ping -n 2 127.0.0.1>nul)
         std::thread::sleep(Duration::from_millis(1500));
         heartbeat_len(&work)
     };
-    std::thread::sleep(Duration::from_millis(2500));
-    let b = heartbeat_len(&work);
+    // Poll for growth rather than sleep a fixed 2.5 s: under a loaded box (other tests in this binary start
+    // processes too) a one-second ping can lag, and a fixed wait failed this control 2 runs in 5.
+    let mut b = heartbeat_len(&work);
+    let poll = Instant::now();
+    while b <= a && poll.elapsed() < Duration::from_secs(15) {
+        std::thread::sleep(Duration::from_millis(250));
+        b = heartbeat_len(&work);
+    }
     assert!(
         b > a && a > 0,
         "the survivor never wrote (control failed): {a} -> {b}"
@@ -369,7 +375,9 @@ fn temp_is_the_sessions_scratch_dir_and_serve_wipes_work_and_scratch_before_exit
     assert!(code.is_file(), "exit.code is published after the wipe");
     assert!(!root.0.join("work").join(sid).exists(), "work dir survived");
     assert!(!scratch.exists(), "scratch dir survived");
+}
 
+#[test]
 fn a_session_ended_by_a_broken_frame_does_not_publish_exit_code_zero() {
     // Pip review of #74: `session.end` said `broken` while the result still decoded as a success. Control: a
     // clean close publishes 0 (the first test also asserts `session.end` = closed).
