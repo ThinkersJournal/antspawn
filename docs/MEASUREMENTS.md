@@ -368,6 +368,21 @@ Throwaway tree `C:\Projects\antspawn-w0-scratch\{tree\src,tree\.git,other}` (inh
 - **Use exact rights, not icacls `W`:** `W` includes SYNCHRONIZE, so `(W,D,DC)` also made `.git` unreadable (a `git status` inside the session would fail). The working deny was `WriteData, AppendData, WriteExtendedAttributes, WriteAttributes, Delete, DeleteSubdirectoriesAndFiles` set through `Set-Acl`; `icacls /deny` merges into an existing deny ACE, so re-running with narrower rights silently kept the wide one (one invalid run discarded for that reason).
 - **Not measured:** rename or create-directory inside the denied path, `.git` replaced by a file or junction, files created by the account (their owner and inherited ACL as seen by the launcher user), grant cost on a large tree, and a grant surviving a crashed launcher (the journal in `docs/SESSION-PLAN.md` W4).
 
+## 2026-11-06: session host over a named pipe (S3), as the current user
+
+Ref: branch `session-s3` (stacked on `session-s2`), `tests/session_host.rs`, run on this box as the interactive user in a temporary layout (no restricted account). One sample each.
+
+| Check | Result |
+|---|---|
+| Pipe DACL naming my SID | connects; `exec` echo/type shows state persisting across execs; `close` answered `closed`, host exits, `session.end` = `closed` |
+| Pipe DACL naming LocalService (S-1-5-19) | my open of the pipe is `PermissionDenied` (control for the line above: same code path, other SID) |
+| Second client while one is connected | `ERROR_PIPE_BUSY` (231) |
+| Client drops without `close` | host exits within the bound, `session.end` = `disconnected` |
+| Detached survivor (`start /b hb.cmd`, appends a line a second) | grows while the session is up (control), stops growing after the host's job ends |
+
+- **Not measured:** the host AS the restricted account (needs a `spawn-runner` redeploy; `tests/account_session.rs` prints UNVERIFIED until then), a remote client (`PIPE_REJECT_REMOTE_CLIENTS` is set, never exercised), a killed owner during a long exec (the host reads the disconnect only between frames), exec latency, the 60 s accept window.
+- The runner-only test took 60 s here: the deployed `spawn-runner.exe` predates `session`, the task ran `serve`, which ignored the spool entry, so `open_session` waited out its grace and the test reported UNVERIFIED.
+
 ## 2026-11-07: Hyper-V state on this box, read-only (main `3df0a14`; as `cires`, non-elevated token holding `Hyper-V Administrators`; one sample; nothing created or changed)
 
 - Windows 11 Pro build 26300, 63.2 GB RAM, 32 logical CPUs. Services `vmms`, `vmcompute`, `hns` Running. `Get-VM` works non-elevated and lists **no VMs**.
@@ -375,6 +390,27 @@ Throwaway tree `C:\Projects\antspawn-w0-scratch\{tree\src,tree\.git,other}` (inh
 - `Get-NetFirewallHyperVVMCreator`: one creator, WSL (`{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}`); `Get-NetFirewallHyperVVMSetting`: default inbound Block, outbound Allow. So the per-VM Hyper-V firewall is shown here for WSL only.
 - OpenSSH client present (`C:\Program Files\OpenSSH\ssh.exe`). Hyper-V Enhanced Session Mode enabled.
 - **Not measured:** creating or starting a VM or switch (by anyone), a non-interactive account doing so, a pipe between two accounts, the forwarding default of a new switch, guest reachability from a restricted account, the per-VM firewall for a non-WSL VM. Used by `docs/SANDBOX-BROKER.md`.
+
+## 2026-11-06: can `wsb.exe` start Windows Sandbox as a restricted account? (PM board 321 task; ref: main `9658e68`; `spawn.exe` built 2026-10-31; one sample per case)
+
+Method: `spawn run --launcher account` runs `cmd /c probe.cmd` AS `antspawn-run` (non-interactive: started by the `AntSpawnRunner` scheduled task; `query session` answers "No session exists", `%SESSIONNAME%` empty).
+
+| As | Command | Result |
+|---|---|---|
+| `antspawn-run` | `where wsb` | `C:\Users\antspawn-run\AppData\Local\Microsoft\WindowsApps\wsb.exe` (the package registration from 2026-11-02/03 is in effect) |
+| `antspawn-run` | `wsb list` | `Status(StatusCode="Cancelled" ... System.OperationCanceledException: The operation was canceled.)`, exit -2146233088 |
+| `antspawn-run` | `wsb start -c "<Configuration><vGPU>Disable</vGPU><Networking>Disable</Networking></Configuration>"` | the same `Cancelled`, exit -2146233088; no VM was created (a `WindowsSandbox*` process listing afterwards shows only the interactive session's `WindowsSandboxServer.exe`) |
+| `cires` (interactive; control) | `wsb list` | succeeds (prints an empty list) |
+
+- **So the answer to "can it start at all as the account" is: not today.** Registering the package makes `wsb.exe` resolve, but every call that reaches the Sandbox service is cancelled. Not tested: `WindowsSandbox.exe <file>.wsb` as the account (the 2026-10-29 entry already records that stub starting without package identity and its client crashing as the interactive user).
+- **Candidate cause, untested: membership of `BUILTIN\Hyper-V Administrators`.** `net localgroup "Hyper-V Administrators"` lists exactly `cires` and `gh-runner`; `antspawn-run` is not in it (the other runner accounts were not read here). That is correlation on one machine, not a cause. The other candidate is the absence of an interactive session. These two are not told apart by anything measured so far.
+- **Cheapest discriminating experiment (needs the PM's elevated step, not run):** `gh-runner` is already in the group and has no session either. Register the Sandbox package for `gh-runner` (the same step done for `antspawn-run`) and run the probe as it: if `wsb list` works there, group membership is the cause and no interactive session is needed; if it is also cancelled, the session (or something else) is. Adding `antspawn-run` to the group would also test it, but see the cost.
+- **Cost of the group fix:** Hyper-V Administrators means complete control of Hyper-V on this machine. Granting it to the account that runs untrusted jobs widens that account's reach beyond "restricted"; it would need CireSnave's ruling and the `account` isolation rows re-probed.
+- **Not measured:** why the service cancels (its log or ETW was not read), a start as `ghr-spawn1`/`ghr-spawn2` (the HANDOFF says all three behave alike), and anything about the group fix itself.
+
+## 2026-11-07: row 9 re-run, the stale SAC control bites again (ref: session-s4 `5368c04`; run as cires, interactive; host Windows 10.0.26300 with KB5127936 installed 2026-10-30; one run)
+
+`cargo test --test windows_sandbox` with `RUST_TEST_THREADS=1` (about 303 s): **5 passed, 0 failed**, including `unsigned_exes_start_repeatedly_in_three_consecutive_sandboxes_and_host_policy_is_untouched`, whose raw-`wsb` control asserts the exe starts once and is then blocked (`start1=0`, `start2=1073751882`). On 2026-10-29 the same test failed because the guest only audited. So the guest enforces again, after the host update of 10-30 (and whatever else changed). Not measured: the package version and guest build for this run, the guest's policy state (`VerifiedAndReputablePolicyState`) and event 3096 vs the enforcing policy, which update changed it, or whether it stays that way. One sample; the 2026-10-29 section above stands as history, and the claim "the guest blocks unsigned exes" stays withdrawn until a few more runs agree (row 9 stays open for repeats).
 
 ## 2026-11-07: SB0, a Windows Sandbox started from the broker's interactive session on a pipe client's request (ref: `scripts/sb0-broker.ps1` on branch broker-windows-guest; wsb 0.8.107.0; host Windows 11 build 26300; one box, cires's interactive session, no elevation anywhere)
 
