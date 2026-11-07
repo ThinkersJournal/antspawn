@@ -41,6 +41,15 @@ fn naive_fails_every_negative_control() {
         "naive must write outside"
     );
 
+    assert!(
+        p.session_keeps_state(&Naive),
+        "naive sessions keep state between execs (the positive control)"
+    );
+    assert!(
+        p.violates_clean_slate_session(&Naive),
+        "naive must leave a session's state behind after close"
+    );
+
     // Only with a control: on a host that cannot connect there is no verdict (see `violates_network`).
     match p.violates_network(&Naive, antspawn::probes::NET_ADDR) {
         Some(v) => assert!(v, "naive must reach the network"),

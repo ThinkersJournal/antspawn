@@ -7,6 +7,9 @@ capability	gpu.cuda	naive	1		no	no probe for this capability yet
 capability	gpu.vulkan	naive	1		no	no probe for this capability yet			
 capability	network.off	naive	1		no	job opened a TCP connection with the network supposedly off	probe=connect		2026-10-24T04:39:55Z
 capability	concurrent	naive	1		no	no probe for this capability yet			
+capability	session	naive	1		no	no probe for this capability yet			
+capability	clean-slate-next-session	naive	1		no	a file written in one session existed in the next, after close	probe=session-write+exists		2026-11-06T21:06:49Z
+capability	no-read-other-session	naive	1		no	no probe for this capability yet			
 capability	isolation.no-read-outside	account	1		yes		probe=read		2026-10-24T04:39:55Z
 capability	isolation.no-write-outside	account	1		yes		probe=write		2026-10-24T04:39:55Z
 capability	clean-slate-next-run	account	1		yes		probe=write+exists		2026-10-24T04:39:55Z
@@ -15,6 +18,9 @@ capability	gpu.cuda	account	1		no	no probe for this capability yet
 capability	gpu.vulkan	account	1		no	no probe for this capability yet			
 capability	network.off	account	1		yes		probe=connect		2026-10-24T04:39:55Z
 capability	concurrent	account	1		no	no probe for this capability yet			
+capability	session	account	1		no	no probe for this capability yet			
+capability	clean-slate-next-session	account	1		no	no probe for this capability yet			
+capability	no-read-other-session	account	1		no	no probe for this capability yet			
 capability	isolation.no-read-outside	windows-sandbox	1		yes		probe=read		2026-10-24T04:39:55Z
 capability	isolation.no-write-outside	windows-sandbox	1		yes		probe=write		2026-10-24T04:39:55Z
 capability	clean-slate-next-run	windows-sandbox	1		yes		probe=write+exists		2026-10-24T04:39:55Z
@@ -23,3 +29,6 @@ capability	gpu.cuda	windows-sandbox	1		no	no probe for this capability yet
 capability	gpu.vulkan	windows-sandbox	1		no	no probe for this capability yet			
 capability	network.off	windows-sandbox	1		yes		probe=connect		2026-10-24T04:39:55Z
 capability	concurrent	windows-sandbox	1		no	no probe for this capability yet			
+capability	session	windows-sandbox	1		no	no probe for this capability yet			
+capability	clean-slate-next-session	windows-sandbox	1		no	no probe for this capability yet			
+capability	no-read-other-session	windows-sandbox	1		no	no probe for this capability yet			
