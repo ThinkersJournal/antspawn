@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.88
+
+- Broker slices V1 and SB1 (`docs/SANDBOX-BROKER.md`): `broker_proto`, the pure request vocabulary and validation shared by the VM broker and the Windows Sandbox broker. No pipe, no Hyper-V, no account: nothing here is exercised against a real peer. `Request` is `create` (image + profile from fixed sets + one `ssh-ed25519` key line), `stop`/`start`/`delete`, `list`, `sandbox_start`; unknown ops and fields are errors. No field can hold a host path, every name must be plain (no separator, dot-dot or drive letter), a key may not carry `authorized_keys` options or a second line, and refusals name the field, never the value. `Ledger` records who owns what: only the creating connection may act on a VM, caps (total, per account) and a per-account create rate come from the SID the broker read, a disconnect releases that connection's VMs, and a lifetime ceiling expires the rest. A known-bad request list is run against the real validator (all refused) and against naive validators (caught). Caps in `Limits::default()` are a chosen number, not a measurement. Version provisional (PM allocates).
+
 ## 0.0.86
 
 - Row 9 re-run (MEASUREMENTS 2026-11-07): `windows_sandbox` 5/5 green, the stale SAC control bites again (one run, interactive, KB5127936 present); ROADMAP row 26 step 1 done. Docs only.
