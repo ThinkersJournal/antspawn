@@ -13,7 +13,7 @@ probe shows deny beats the grant (B1); a path denylist in the policy filter (B2)
 
 1. **Account only.** `windows-sandbox` stays Tier J (job per call): one VM at a time (`CO_E_APPSINGLEUSE`, measured) rules out A3 and `wsb exec` reuse is unmeasured.
 2. **Session host over a named pipe** (SESSION-OPTIONS A1 way 2). `serve` starts `spawn-runner session <sid>` inside a kill-on-close Job Object; the host
-   creates `\\.\pipe\antspawn-session-<sid>-<nonce>` with a DACL granting the launcher SID only (the `spawn-jit-shim --pipe --allow-sid` mechanism).
+   creates `\\.\pipe\antspawn-session-<sid>-<nonce>` with a DACL granting the launcher SID only (the `spawn-jit-shim --pipe --allow-sid` mechanism). **The DACL rests on a check, not on the spool ACLs alone:** `session.toml` is launcher-writable, so the host reads the OS-reported owner of the spool entry and refuses a `launcher_sid` that is not that owner (a spool several users can write into would otherwise let user A mint a session admitting user B; the 128-bit nonce is the second barrier, not the first). Unmeasured with a real second user.
 3. **Frames:** 4-byte little-endian length then JSON, hard cap 1 MiB per frame, one client per pipe instance, remote clients rejected. Requests `exec{argv,cwd,env,time_s}`, `close`;
    later `cancel` (A4) and streamed `output` frames (A5) fit the same envelope, so slice 2 reserves their tags and refuses them as unknown until built.
 4. **Owner gone = pipe closed.** The launcher holds the connection for the session's life; a disconnect (including a killed launcher, whose handles the OS closes) ends the
