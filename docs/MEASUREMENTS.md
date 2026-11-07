@@ -368,6 +368,21 @@ Throwaway tree `C:\Projects\antspawn-w0-scratch\{tree\src,tree\.git,other}` (inh
 - **Use exact rights, not icacls `W`:** `W` includes SYNCHRONIZE, so `(W,D,DC)` also made `.git` unreadable (a `git status` inside the session would fail). The working deny was `WriteData, AppendData, WriteExtendedAttributes, WriteAttributes, Delete, DeleteSubdirectoriesAndFiles` set through `Set-Acl`; `icacls /deny` merges into an existing deny ACE, so re-running with narrower rights silently kept the wide one (one invalid run discarded for that reason).
 - **Not measured:** rename or create-directory inside the denied path, `.git` replaced by a file or junction, files created by the account (their owner and inherited ACL as seen by the launcher user), grant cost on a large tree, and a grant surviving a crashed launcher (the journal in `docs/SESSION-PLAN.md` W4).
 
+## 2026-11-06: session host over a named pipe (S3), as the current user
+
+Ref: branch `session-s3` (stacked on `session-s2`), `tests/session_host.rs`, run on this box as the interactive user in a temporary layout (no restricted account). One sample each.
+
+| Check | Result |
+|---|---|
+| Pipe DACL naming my SID | connects; `exec` echo/type shows state persisting across execs; `close` answered `closed`, host exits, `session.end` = `closed` |
+| Pipe DACL naming LocalService (S-1-5-19) | my open of the pipe is `PermissionDenied` (control for the line above: same code path, other SID) |
+| Second client while one is connected | `ERROR_PIPE_BUSY` (231) |
+| Client drops without `close` | host exits within the bound, `session.end` = `disconnected` |
+| Detached survivor (`start /b hb.cmd`, appends a line a second) | grows while the session is up (control), stops growing after the host's job ends |
+
+- **Not measured:** the host AS the restricted account (needs a `spawn-runner` redeploy; `tests/account_session.rs` prints UNVERIFIED until then), a remote client (`PIPE_REJECT_REMOTE_CLIENTS` is set, never exercised), a killed owner during a long exec (the host reads the disconnect only between frames), exec latency, the 60 s accept window.
+- The runner-only test took 60 s here: the deployed `spawn-runner.exe` predates `session`, the task ran `serve`, which ignored the spool entry, so `open_session` waited out its grace and the test reported UNVERIFIED.
+
 ## 2026-11-07: Hyper-V state on this box, read-only (main `3df0a14`; as `cires`, non-elevated token holding `Hyper-V Administrators`; one sample; nothing created or changed)
 
 - Windows 11 Pro build 26300, 63.2 GB RAM, 32 logical CPUs. Services `vmms`, `vmcompute`, `hns` Running. `Get-VM` works non-elevated and lists **no VMs**.
