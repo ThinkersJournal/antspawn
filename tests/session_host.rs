@@ -294,8 +294,14 @@ for /l %%i in (1,1,200) do (echo x>>hb.txt & ping -n 2 127.0.0.1>nul)
         std::thread::sleep(Duration::from_millis(1500));
         heartbeat_len(&work)
     };
-    std::thread::sleep(Duration::from_millis(2500));
-    let b = heartbeat_len(&work);
+    // Poll for growth rather than sleep a fixed 2.5 s: under a loaded box (other tests in this binary start
+    // processes too) a one-second ping can lag, and a fixed wait failed this control 2 runs in 5.
+    let mut b = heartbeat_len(&work);
+    let poll = Instant::now();
+    while b <= a && poll.elapsed() < Duration::from_secs(15) {
+        std::thread::sleep(Duration::from_millis(250));
+        b = heartbeat_len(&work);
+    }
     assert!(
         b > a && a > 0,
         "the survivor never wrote (control failed): {a} -> {b}"
