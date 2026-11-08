@@ -18,8 +18,8 @@ capability	gpu.cuda	account	1		no	no probe for this capability yet
 capability	gpu.vulkan	account	1		no	no probe for this capability yet			
 capability	network.off	account	1		yes		probe=connect		2026-10-24T04:39:55Z
 capability	concurrent	account	1		no	no probe for this capability yet			
-capability	session	account	1		no	no probe for this capability yet			
-capability	clean-slate-next-session	account	1		no	no probe for this capability yet			
+capability	session	account	1		yes		probe=session-state		2026-11-08T11:05:38Z
+capability	clean-slate-next-session	account	1		yes		probe=session-write+exists		2026-11-08T11:05:38Z
 capability	no-read-other-session	account	1		no	no probe for this capability yet			
 capability	isolation.no-read-outside	windows-sandbox	1		yes		probe=read		2026-10-24T04:39:55Z
 capability	isolation.no-write-outside	windows-sandbox	1		yes		probe=write		2026-10-24T04:39:55Z

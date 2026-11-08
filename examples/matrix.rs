@@ -155,6 +155,16 @@ impl Matrixer {
                 "a forked process survived the environment",
             ),
             Capability::NetworkOff => network(a::violates_network(probe, NET_ADDR)),
+            Capability::Session => verdict(
+                a::violates_session(),
+                "session-state",
+                "a file written by one exec was not there for the next, in the same session",
+            ),
+            Capability::CleanSlateNextSession => verdict(
+                a::violates_clean_slate_session(),
+                "session-write+exists",
+                "a file written in one session existed in the next, after close",
+            ),
             _ => untested(),
         }
     }
