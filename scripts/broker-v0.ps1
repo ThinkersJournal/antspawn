@@ -240,9 +240,12 @@ if ($Undo) {
     }
     $bsid = if ($Live) { (Get-LocalUser -Name $Broker).SID.Value } else { "<sid of $Broker>" }
     Step "ACL $Dir" {
-        & icacls.exe $Dir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' "*${launcherSid}:(OI)(CI)RX" "*${bsid}:(RX)" | Out-Null
+        # (OI)(CI) so the files created inside inherit the broker's read: without it the broker could open
+        # the folder but not probe.ps1, and powershell exited 1 before writing anything (first -Apply run).
+        & icacls.exe $Dir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' "*${launcherSid}:(OI)(CI)RX" "*${bsid}:(OI)(CI)RX" | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'icacls failed on the folder' }
         & icacls.exe $Res /grant:r "*${bsid}:(OI)(CI)M" | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw 'icacls failed' }
+        if ($LASTEXITCODE -ne 0) { throw 'icacls failed on results' }
     }
     Step "add $Broker to Hyper-V Administrators (S-1-5-32-578)" {
         if (-not (Get-LocalGroupMember -SID 'S-1-5-32-578' | Where-Object { $_.Name -like "*$Broker" })) { Add-LocalGroupMember -SID 'S-1-5-32-578' -Member $Broker }
@@ -254,6 +257,18 @@ if ($Undo) {
     Step "write probe.ps1 and listen.ps1 (read-only for the broker)" {
         Set-Content -Path (Join-Path $Dir 'probe.ps1') -Encoding utf8 -Value ($probe.Replace('RESULTS_DIR', $Res).Replace('SWITCHNAME', $SwitchName).Replace('WORKDIR', $Res))
         Set-Content -Path (Join-Path $Dir 'listen.ps1') -Encoding utf8 -Value ($listen.Replace('RESULTS_DIR', $Res).Replace('BROKERSID', $bsid).Replace('RUNNERSID', $runnerSid).Replace('HOSTIP', $HostIp))
+    }
+    Step "read the ACL of probe.ps1 and listen.ps1 back and fail unless $Broker can read them (a granted ACL is not a read ACL until read back)" {
+        foreach ($f in 'probe.ps1', 'listen.ps1') {
+            $path = Join-Path $Dir $f
+            & icacls.exe $path
+            $mine = @((Get-Acl -LiteralPath $path).Access | Where-Object {
+                $_.AccessControlType -eq 'Allow' -and
+                $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -eq $bsid -and
+                ($_.FileSystemRights -band [Security.AccessControl.FileSystemRights]::ReadAndExecute) -eq [Security.AccessControl.FileSystemRights]::ReadAndExecute })
+            if ($mine.Count -lt 1) { throw "$Broker has no read ACE on $path; the probe task would exit 1 before writing anything. Run -Undo." }
+            Write-Host "OK     $f is readable by $Broker (ACE read back)"
+        }
     }
     $sd = "D:(A;;FA;;;BA)(A;;FA;;;SY)(A;;GRGX;;;$launcherSid)"
     foreach ($t in @(@('AntSpawnV0Probe', 'probe.ps1'), @('AntSpawnV0Listen', 'listen.ps1'))) {
