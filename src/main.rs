@@ -43,6 +43,14 @@ enum Command {
         #[arg(long)]
         pem_key: bool,
     },
+    /// Open one session and drive it from stdin: a JSON request per line in, a JSON reply per line
+    /// out (the `session_proto` messages: `exec`, `close`). The session ends on `close` or at end of
+    /// input, and the host ends it if this process dies.
+    Session {
+        /// Launcher id. Refused, naming what is missing, unless the matrix certifies it for sessions.
+        #[arg(long, default_value = "account")]
+        launcher: String,
+    },
     /// Run a job: provision, run, collect outputs, destroy.
     Run {
         spec: PathBuf,
@@ -98,12 +106,29 @@ fn run(command: Command) -> Result<ExitCode, String> {
             once,
             pem_key,
         } => return adapter(&config, check, once, pem_key),
+        Command::Session { launcher } => return session(&launcher),
         Command::Run {
             spec,
             launcher,
             results,
         } => return Ok(run_job(&spec, launcher, &results)),
     }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn session(launcher: &str) -> Result<ExitCode, String> {
+    let s = launchers::registry()
+        .open_session(
+            launcher,
+            &antspawn::spec::Needs {
+                capabilities: Vec::new(),
+                prefer: Vec::new(),
+            },
+        )
+        .map_err(|e| e.to_string())?;
+    let stdin = std::io::stdin();
+    let stdout = std::io::stdout();
+    antspawn::session_cli::serve(s, stdin.lock(), stdout.lock()).map_err(|e| e.to_string())?;
     Ok(ExitCode::SUCCESS)
 }
 

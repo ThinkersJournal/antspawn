@@ -39,11 +39,29 @@ param(
 $ErrorActionPreference = 'Stop'
 if ($Apply -and $Undo) { throw 'Choose -Apply or -Undo, not both.' }
 $Broker = 'antspawn-v0-broker'
+$BrokerDescription = 'AntSpawn V0 broker. Remove: broker-v0.ps1 -Undo'
 $Dir = Join-Path $env:ProgramData 'antspawn-v0'
 $Res = Join-Path $Dir 'results'
 $SwitchName = 'antspawn-v0-sw'
 $HostIp = '10.77.0.1'
 $Live = $Apply -or $Undo
+# Every string handed to the account cmdlets, against the limits those cmdlets enforce. A dry run never
+# calls them, so this is what makes the dry run catch an over-long value (New-LocalUser -Description
+# is limited to 48, and a 64-character one stopped the first -Apply). Limits: SAM account name 20,
+# New-LocalUser -Description 48, local password 127, task name 238 without a backslash.
+$passwordLength = ([Math]::Ceiling(48 / 3) * 4) + 3   # base64 of 48 bytes, plus 'aA1' (see below)
+$limitChecks = @(
+    @('broker user name', $Broker, 20),
+    @('broker user -Description', $BrokerDescription, 48),
+    @('generated password', ('x' * $passwordLength), 127),
+    @('task name AntSpawnV0Probe', 'AntSpawnV0Probe', 238),
+    @('task name AntSpawnV0Listen', 'AntSpawnV0Listen', 238),
+    @('task -User string', "$env:COMPUTERNAME\$Broker", 104)
+)
+foreach ($lc in $limitChecks) {
+    if ($lc[1].Length -gt $lc[2]) { throw "$($lc[0]) is $($lc[1].Length) characters; the cmdlet allows $($lc[2]). Nothing was changed." }
+}
+if ($Broker -match '["/\\[\]:;|=,+*?<>]') { throw "$Broker contains a character a local user name cannot have. Nothing was changed." }
 $principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
 if ($Live -and -not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     throw 'Run this in an elevated PowerShell for -Apply or -Undo (the dry run needs none).'
@@ -106,10 +124,20 @@ Try-Step 'token is elevated (expected False: a filtered/batch token)' { ([Securi
 Try-Step 'Get-VM' { @(Get-VM).Count }
 Try-Step 'Get-VMHost' { (Get-VMHost | Select-Object -ExpandProperty VirtualMachinePath) }
 $swn = 'SWITCHNAME'; $d = 'WORKDIR'
+# Hyper-V allows two switches (or VMs) with the same name, and then -SwitchName resolves two objects ("Sequence
+# contains more than one element", second probe 2026-11-08). So refuse to run on top of leftovers: nothing is created.
+$leftSw = @(Get-VMSwitch -Name $swn -ErrorAction SilentlyContinue).Count
+$leftVm = @(Get-VM -Name 'antspawn-v0-vm' -ErrorAction SilentlyContinue).Count
+if ($leftSw -gt 0 -or $leftVm -gt 0) {
+    Rec ("REFUSED: {0} switch(es) named {1} and {2} VM(s) named antspawn-v0-vm already exist. Nothing was created. Remove them (broker-v0.ps1 -Undo, elevated) and rerun." -f $leftSw, $swn, $leftVm)
+    Rec ("END {0:o}" -f (Get-Date))
+    exit 3
+}
 Try-Step 'New-VMSwitch Internal' { New-VMSwitch -Name $swn -SwitchType Internal | Out-Null; (Get-VMSwitch -Name $swn).SwitchType }
 Try-Step 'new switch: vEthernet IPv4 Forwarding default' { (Get-NetIPInterface -InterfaceAlias "vEthernet ($swn)" -AddressFamily IPv4).Forwarding }
 Try-Step 'new switch: Get-NetNat count (expected 0)' { @(Get-NetNat).Count }
-Try-Step 'broker sets the host address itself (expected FAIL: not an admin)' { New-NetIPAddress -InterfaceAlias "vEthernet ($swn)" -IPAddress 10.77.0.9 -PrefixLength 30 | Out-Null; Remove-NetIPAddress -IPAddress 10.77.0.9 -Confirm:$false }
+Try-Step 'adapters answering to the alias vEthernet (switch), and the switches of that name' { 'adapters={0} switches={1}' -f @(Get-NetAdapter -Name "vEthernet ($swn)" -ErrorAction SilentlyContinue).Count, @(Get-VMSwitch -Name $swn).Count }
+Try-Step 'broker sets the host address itself (first run: Access is denied; second run, two switches existed: OK)' { New-NetIPAddress -InterfaceAlias "vEthernet ($swn)" -IPAddress 10.77.0.9 -PrefixLength 30 | Out-Null; Remove-NetIPAddress -IPAddress 10.77.0.9 -Confirm:$false }
 Try-Step 'New-VHD dynamic 64MB parent' { New-VHD -Path "$d\parent.vhdx" -SizeBytes 64MB -Dynamic | Out-Null; (Get-Item "$d\parent.vhdx").Length }
 Try-Step 'New-VHD differencing child' { New-VHD -Path "$d\child.vhdx" -ParentPath "$d\parent.vhdx" -Differencing | Out-Null; (Get-Item "$d\child.vhdx").Length }
 Try-Step 'New-VM gen2 on the test switch' { New-VM -Name 'antspawn-v0-vm' -Generation 2 -MemoryStartupBytes 256MB -VHDPath "$d\child.vhdx" -SwitchName $swn | Out-Null; (Get-VM 'antspawn-v0-vm').State }
@@ -145,7 +173,7 @@ function New-Pipe {
 }
 $tcp = $null
 try { $tcp = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Parse('HOSTIP'), 2222); $tcp.Start(); Rec 'tcp listening HOSTIP:2222' }
-catch { Rec ("tcp listen FAIL {0}" -f $_.Exception.Message) }
+catch { Rec ("tcp listen FAIL {0} (the pipe side carries on without TCP)" -f $_.Exception.Message); $tcp = $null }
 $pipe = New-Pipe
 $wait = $pipe.WaitForConnectionAsync()
 Rec 'pipe antspawn-v0-pipe listening'
@@ -209,8 +237,14 @@ if ($Undo) {
     if ($Live -and -not $runner) { throw "runner account $RunnerUser not found (run account-setup.ps1 first)" }
     $runnerSid = if ($runner) { $runner.SID.Value } else { '<sid of ' + $RunnerUser + '>' }
     $launcherSid = Sid $LauncherUser
+    if ($Live) {
+        $leftSw = @(Get-VMSwitch -Name $SwitchName -ErrorAction SilentlyContinue).Count
+        $leftVm = @(Get-VM -Name 'antspawn-v0-vm' -ErrorAction SilentlyContinue).Count
+        if ($leftSw -gt 0 -or $leftVm -gt 0) { throw "$leftSw switch(es) named $SwitchName and $leftVm VM(s) named antspawn-v0-vm exist from an earlier run (Hyper-V allows duplicates, and a second one breaks New-VM -SwitchName). Run -Undo first. Nothing was changed." }
+    }
+    elseif (-not (Get-Command Get-VMSwitch -ErrorAction SilentlyContinue)) { Write-Host 'note: the Hyper-V cmdlets are not available here; -Apply would need them' }
     $plain = $null
-    Step "create folder $Dir (Administrators and SYSTEM full, $Broker modify on results\, $LauncherUser read)" {
+    Step "create folder $Dir (Administrators and SYSTEM full, $Broker full control on results\ only, $LauncherUser read)" {
         New-Item -ItemType Directory -Force -Path $Res | Out-Null
     }
     Step "create local user $Broker (random password, never expires), NO other right than the two below" {
@@ -218,13 +252,18 @@ if ($Undo) {
         $script:plain = [Convert]::ToBase64String($bytes) + 'aA1'
         $sp = ConvertTo-SecureString $script:plain -AsPlainText -Force
         if (Get-LocalUser -Name $Broker -ErrorAction SilentlyContinue) { Set-LocalUser -Name $Broker -Password $sp }
-        else { New-LocalUser -Name $Broker -Password $sp -PasswordNeverExpires -UserMayNotChangePassword -AccountNeverExpires -Description 'AntSpawn V0 measurement broker. Remove with broker-v0.ps1 -Undo.' | Out-Null }
+        else { New-LocalUser -Name $Broker -Password $sp -PasswordNeverExpires -UserMayNotChangePassword -AccountNeverExpires -Description $BrokerDescription | Out-Null }
     }
     $bsid = if ($Live) { (Get-LocalUser -Name $Broker).SID.Value } else { "<sid of $Broker>" }
     Step "ACL $Dir" {
-        & icacls.exe $Dir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' "*${launcherSid}:(OI)(CI)RX" "*${bsid}:(RX)" | Out-Null
-        & icacls.exe $Res /grant:r "*${bsid}:(OI)(CI)M" | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw 'icacls failed' }
+        # (OI)(CI) so the files created inside inherit the broker's read: without it the broker could open
+        # the folder but not probe.ps1, and powershell exited 1 before writing anything (first -Apply run).
+        & icacls.exe $Dir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' "*${launcherSid}:(OI)(CI)RX" "*${bsid}:(OI)(CI)RX" | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'icacls failed on the folder' }
+        # Full control, not Modify, and on this folder only: New-VM stopped with 'failed to set folder permission for results (0x80070005)' because
+        # Hyper-V grants the VM's own SID on the disk's folder as the caller, and Modify has no WRITE_DAC (first probe, 2026-11-08).
+        & icacls.exe $Res /grant:r "*${bsid}:(OI)(CI)F" | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'icacls failed on results' }
     }
     Step "add $Broker to Hyper-V Administrators (S-1-5-32-578)" {
         if (-not (Get-LocalGroupMember -SID 'S-1-5-32-578' | Where-Object { $_.Name -like "*$Broker" })) { Add-LocalGroupMember -SID 'S-1-5-32-578' -Member $Broker }
@@ -236,6 +275,24 @@ if ($Undo) {
     Step "write probe.ps1 and listen.ps1 (read-only for the broker)" {
         Set-Content -Path (Join-Path $Dir 'probe.ps1') -Encoding utf8 -Value ($probe.Replace('RESULTS_DIR', $Res).Replace('SWITCHNAME', $SwitchName).Replace('WORKDIR', $Res))
         Set-Content -Path (Join-Path $Dir 'listen.ps1') -Encoding utf8 -Value ($listen.Replace('RESULTS_DIR', $Res).Replace('BROKERSID', $bsid).Replace('RUNNERSID', $runnerSid).Replace('HOSTIP', $HostIp))
+    }
+    Step "read the ACL of probe.ps1 and listen.ps1 back and fail unless $Broker can read them (a granted ACL is not a read ACL until read back)" {
+        foreach ($f in 'probe.ps1', 'listen.ps1') {
+            $path = Join-Path $Dir $f
+            & icacls.exe $path
+            $mine = @((Get-Acl -LiteralPath $path).Access | Where-Object {
+                $_.AccessControlType -eq 'Allow' -and
+                $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -eq $bsid -and
+                ($_.FileSystemRights -band [Security.AccessControl.FileSystemRights]::ReadAndExecute) -eq [Security.AccessControl.FileSystemRights]::ReadAndExecute })
+            if ($mine.Count -lt 1) { throw "$Broker has no read ACE on $path; the probe task would exit 1 before writing anything. Run -Undo." }
+            Write-Host "OK     $f is readable by $Broker (ACE read back)"
+        }
+        $resAcl = @((Get-Acl -LiteralPath $Res).Access | Where-Object {
+            $_.AccessControlType -eq 'Allow' -and
+            $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -eq $bsid -and
+            ($_.FileSystemRights -band [Security.AccessControl.FileSystemRights]::FullControl) -eq [Security.AccessControl.FileSystemRights]::FullControl })
+        if ($resAcl.Count -lt 1) { throw "$Broker has no full-control ACE on $Res; New-VM would fail setting the VM's folder permission. Run -Undo." }
+        Write-Host "OK     $Res gives $Broker full control (ACE read back)"
     }
     $sd = "D:(A;;FA;;;BA)(A;;FA;;;SY)(A;;GRGX;;;$launcherSid)"
     foreach ($t in @(@('AntSpawnV0Probe', 'probe.ps1'), @('AntSpawnV0Listen', 'listen.ps1'))) {
@@ -249,6 +306,9 @@ if ($Undo) {
     }
     $plain = $null
     Step "run AntSpawnV0Probe once and wait (up to 5 min), then set $HostIp/30 on the new switch's vEthernet (elevated: the broker cannot)" {
+        $leftSw = @(Get-VMSwitch -Name $SwitchName -ErrorAction SilentlyContinue).Count
+        $leftVm = @(Get-VM -Name 'antspawn-v0-vm' -ErrorAction SilentlyContinue).Count
+        if ($leftSw -gt 0 -or $leftVm -gt 0) { throw "$leftSw switch(es) named $SwitchName and $leftVm VM(s) named antspawn-v0-vm already exist from an earlier run; the probe would refuse. Run -Undo first. Nothing new was started." }
         $now = Get-Date; $since = $now.AddTicks(-($now.Ticks % [TimeSpan]::TicksPerSecond))
         Start-ScheduledTask -TaskName 'AntSpawnV0Probe'
         $info = Wait-Task 'AntSpawnV0Probe' $since 300
@@ -256,6 +316,12 @@ if ($Undo) {
         $if = "vEthernet ($SwitchName)"
         if (Get-NetAdapter -Name $if -ErrorAction SilentlyContinue) {
             if (-not (Get-NetIPAddress -IPAddress $HostIp -ErrorAction SilentlyContinue)) { New-NetIPAddress -InterfaceAlias $if -IPAddress $HostIp -PrefixLength 30 | Out-Null }
+            # a new address is Tentative for a moment and cannot be bound until it is Preferred (the first listener died on that)
+            $until = (Get-Date).AddSeconds(30)
+            while ((Get-NetIPAddress -IPAddress $HostIp -ErrorAction SilentlyContinue).AddressState -ne 'Preferred' -and (Get-Date) -lt $until) { Start-Sleep -Milliseconds 500 }
+            $state = (Get-NetIPAddress -IPAddress $HostIp -ErrorAction SilentlyContinue).AddressState
+            Write-Host "$HostIp AddressState = $state"
+            if ($state -ne 'Preferred') { throw "$HostIp did not become Preferred within 30 s; do not start the listener yet." }
         } else { Write-Host "no adapter $if (the broker could not create the switch); see probe.txt" }
     }
     if ($Live) {
