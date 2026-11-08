@@ -124,10 +124,20 @@ Try-Step 'token is elevated (expected False: a filtered/batch token)' { ([Securi
 Try-Step 'Get-VM' { @(Get-VM).Count }
 Try-Step 'Get-VMHost' { (Get-VMHost | Select-Object -ExpandProperty VirtualMachinePath) }
 $swn = 'SWITCHNAME'; $d = 'WORKDIR'
+# Hyper-V allows two switches (or VMs) with the same name, and then -SwitchName resolves two objects ("Sequence
+# contains more than one element", second probe 2026-11-08). So refuse to run on top of leftovers: nothing is created.
+$leftSw = @(Get-VMSwitch -Name $swn -ErrorAction SilentlyContinue).Count
+$leftVm = @(Get-VM -Name 'antspawn-v0-vm' -ErrorAction SilentlyContinue).Count
+if ($leftSw -gt 0 -or $leftVm -gt 0) {
+    Rec ("REFUSED: {0} switch(es) named {1} and {2} VM(s) named antspawn-v0-vm already exist. Nothing was created. Remove them (broker-v0.ps1 -Undo, elevated) and rerun." -f $leftSw, $swn, $leftVm)
+    Rec ("END {0:o}" -f (Get-Date))
+    exit 3
+}
 Try-Step 'New-VMSwitch Internal' { New-VMSwitch -Name $swn -SwitchType Internal | Out-Null; (Get-VMSwitch -Name $swn).SwitchType }
 Try-Step 'new switch: vEthernet IPv4 Forwarding default' { (Get-NetIPInterface -InterfaceAlias "vEthernet ($swn)" -AddressFamily IPv4).Forwarding }
 Try-Step 'new switch: Get-NetNat count (expected 0)' { @(Get-NetNat).Count }
-Try-Step 'broker sets the host address itself (expected FAIL: not an admin)' { New-NetIPAddress -InterfaceAlias "vEthernet ($swn)" -IPAddress 10.77.0.9 -PrefixLength 30 | Out-Null; Remove-NetIPAddress -IPAddress 10.77.0.9 -Confirm:$false }
+Try-Step 'adapters answering to the alias vEthernet (switch), and the switches of that name' { 'adapters={0} switches={1}' -f @(Get-NetAdapter -Name "vEthernet ($swn)" -ErrorAction SilentlyContinue).Count, @(Get-VMSwitch -Name $swn).Count }
+Try-Step 'broker sets the host address itself (first run: Access is denied; second run, two switches existed: OK)' { New-NetIPAddress -InterfaceAlias "vEthernet ($swn)" -IPAddress 10.77.0.9 -PrefixLength 30 | Out-Null; Remove-NetIPAddress -IPAddress 10.77.0.9 -Confirm:$false }
 Try-Step 'New-VHD dynamic 64MB parent' { New-VHD -Path "$d\parent.vhdx" -SizeBytes 64MB -Dynamic | Out-Null; (Get-Item "$d\parent.vhdx").Length }
 Try-Step 'New-VHD differencing child' { New-VHD -Path "$d\child.vhdx" -ParentPath "$d\parent.vhdx" -Differencing | Out-Null; (Get-Item "$d\child.vhdx").Length }
 Try-Step 'New-VM gen2 on the test switch' { New-VM -Name 'antspawn-v0-vm' -Generation 2 -MemoryStartupBytes 256MB -VHDPath "$d\child.vhdx" -SwitchName $swn | Out-Null; (Get-VM 'antspawn-v0-vm').State }
@@ -227,6 +237,12 @@ if ($Undo) {
     if ($Live -and -not $runner) { throw "runner account $RunnerUser not found (run account-setup.ps1 first)" }
     $runnerSid = if ($runner) { $runner.SID.Value } else { '<sid of ' + $RunnerUser + '>' }
     $launcherSid = Sid $LauncherUser
+    if ($Live) {
+        $leftSw = @(Get-VMSwitch -Name $SwitchName -ErrorAction SilentlyContinue).Count
+        $leftVm = @(Get-VM -Name 'antspawn-v0-vm' -ErrorAction SilentlyContinue).Count
+        if ($leftSw -gt 0 -or $leftVm -gt 0) { throw "$leftSw switch(es) named $SwitchName and $leftVm VM(s) named antspawn-v0-vm exist from an earlier run (Hyper-V allows duplicates, and a second one breaks New-VM -SwitchName). Run -Undo first. Nothing was changed." }
+    }
+    elseif (-not (Get-Command Get-VMSwitch -ErrorAction SilentlyContinue)) { Write-Host 'note: the Hyper-V cmdlets are not available here; -Apply would need them' }
     $plain = $null
     Step "create folder $Dir (Administrators and SYSTEM full, $Broker full control on results\ only, $LauncherUser read)" {
         New-Item -ItemType Directory -Force -Path $Res | Out-Null
@@ -290,6 +306,9 @@ if ($Undo) {
     }
     $plain = $null
     Step "run AntSpawnV0Probe once and wait (up to 5 min), then set $HostIp/30 on the new switch's vEthernet (elevated: the broker cannot)" {
+        $leftSw = @(Get-VMSwitch -Name $SwitchName -ErrorAction SilentlyContinue).Count
+        $leftVm = @(Get-VM -Name 'antspawn-v0-vm' -ErrorAction SilentlyContinue).Count
+        if ($leftSw -gt 0 -or $leftVm -gt 0) { throw "$leftSw switch(es) named $SwitchName and $leftVm VM(s) named antspawn-v0-vm already exist from an earlier run; the probe would refuse. Run -Undo first. Nothing new was started." }
         $now = Get-Date; $since = $now.AddTicks(-($now.Ticks % [TimeSpan]::TicksPerSecond))
         Start-ScheduledTask -TaskName 'AntSpawnV0Probe'
         $info = Wait-Task 'AntSpawnV0Probe' $since 300
