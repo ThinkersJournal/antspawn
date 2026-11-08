@@ -262,7 +262,7 @@ Replaces the earlier "host health" note, whose "cause UNKNOWN / suspect launch c
 ## `wsb exec` forwards no stdin (2026-10-29, main 630257b, wsb from MicrosoftWindows.WindowsSandbox)
 
 - `wsb exec --help` lists --id, -c, -d, -r, --raw: no stdin option. Measured: `printf SECRETPROBE123 | wsb exec --id <id> -r System -c
-  'cmd.exe /c findstr "^" > C:ntspawn\out\stdin.txt'` in a fresh VM (Networking Disable, `out` mapped rw) ran (`Process exited with
+  'cmd.exe /c findstr "^" > C:\antspawn\out\stdin.txt'` in a fresh VM (Networking Disable, `out` mapped rw) ran (`Process exited with
   code: 1`, findstr's code for no input) and left `stdin.txt` at 0 bytes. The piped bytes never reached the guest process.
 - Consequence: board 260's anonymous-pipe hand-off cannot cross `wsb exec`; the shim inside the guest needs another channel that is not a
   file, argument or variable (proposal to the PM, not built). One VM, one run: a single measurement, no control that stdin works elsewhere
@@ -429,3 +429,15 @@ Setup: `sb0-broker.ps1` runs as `cires` (PowerShell 7, hidden window) and serves
 NOT measured: a job's files getting in and results out (the Sandbox here has nothing mapped; the existing launcher maps folders), running anything as the client inside the Sandbox, network, the broker surviving the user logging out or locking the screen, more than one request at a time, a bad request (this prototype has no validation, by design), CPU/RAM cost, and what happens if the broker's session is not interactive. The broker is a harness: it holds `cires`'s rights, so its (unbuilt) validation would be the whole boundary.
 
 Also from the V0 script work: PowerShell 7 has no `NamedPipeServerStream` constructor taking a `PipeSecurity`; use `NamedPipeServerStreamAcl.Create` (the first attempt died silently and the client saw a plain connect timeout), and `RunAsClient` takes a `PipeStreamImpersonationWorker`, not an `Action`.
+
+## 2026-11-08: `account_session` on the new `spawn-runner.exe` (ref: main `ad6cc3a`; run as `cires`, interactive; one run)
+
+Deployed first (CireSnave's elevated paste, board 399; read back by the PM and by me): `C:\Program Files\antspawn\spawn-runner.exe` sha256 `3A5102B3...4E3`, 1,346,048 bytes = the CI artifact of main `3333a683`. Before: `14610444...F46` (748,032 bytes).
+
+`cargo test --test account_session` (`RUST_TEST_THREADS=1`): **1 passed, 0 failed** in 3.83 s (30 s wall with the build). The test did not print `UNVERIFIED`, so both guards passed: the `AntSpawnRunner` task is registered and `open_session` succeeded.
+
+What the one test asserts, all held: a session opened through Task Scheduler runs `whoami` as a user other than the launcher (`antspawn-run`, not `cires`); a file written by one `exec` is read by the next (state persists between execs); `close()` returns Ok; a second session starts without the file (nothing survives close).
+
+What the old path did (from the code and the earlier HANDOFF, not re-timed here because the old exe is gone): the old `spawn-runner.exe` has no `session` verb, so the pipe never appeared, `open_session` waited out its wait and returned an error, and the test printed `UNVERIFIED: the deployed spawn-runner cannot host a session yet`. The run order was not repeated on the old exe today.
+
+Not measured: the real second user as launcher (the owner check is test-verified only), latency of `open_session` and of an `exec` on the account (the whole test was 3.83 s, two sessions and five execs), many sessions at once, what the account can reach from inside a session, logout or lock behaviour. One run on one day.
