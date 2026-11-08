@@ -411,11 +411,11 @@ fn read_filter(engine: &Engine, key: &GUID, want: &Plan) -> Result<String, Strin
         return Err("not present".into());
     }
     check("FwpmFilterGetByKey0", rc)?;
-    if p.is_null() {
+    // SAFETY: success means `p` is null or points at a valid filter until freed;
+    // `as_ref` turns null into None, so nothing dereferences it unchecked.
+    let Some(f) = (unsafe { p.as_ref() }) else {
         return Err("FwpmFilterGetByKey0 succeeded but returned no filter".into());
-    }
-    // SAFETY: success and non-null mean `p` points at a valid filter until freed.
-    let f = unsafe { &*p };
+    };
     let mut problems = Vec::new();
     if f.action.r#type != FWP_ACTION_BLOCK {
         problems.push(format!("action {:#x} is not BLOCK", f.action.r#type));
