@@ -69,3 +69,28 @@ fn a_session_on_the_account_keeps_state_between_execs_and_leaves_nothing_after_c
     );
     s2.close().unwrap();
 }
+
+/// The two probes the matrix rows `session` and `clean-slate-next-session` for `account` rest on:
+/// state persists within a session (so the second probe proves something) and nothing outlives
+/// `close`. Same guards as above: UNVERIFIED where the setup or the new `spawn-runner` is missing.
+#[test]
+fn the_matrix_probes_for_account_sessions_find_no_violation() {
+    if !account::set_up() {
+        println!(
+            "UNVERIFIED: task AntSpawnRunner is not registered; account setup has not been applied here"
+        );
+        return;
+    }
+    if let Err(e) = antspawn::launchers::account::Account::default().open_session() {
+        println!("UNVERIFIED: the deployed spawn-runner cannot host a session yet: {e}");
+        return;
+    }
+    assert!(
+        !account::violates_session(),
+        "a file written by one exec was not there for the next"
+    );
+    assert!(
+        !account::violates_clean_slate_session(),
+        "a file written in one session existed in the next, after close"
+    );
+}

@@ -1,8 +1,13 @@
 # Changelog
 
+## 0.0.90
+
+- Sessions, slice S5 (`docs/SESSION-PLAN.md`): `spawn session [--launcher account]`. One process is one session (the host ends it if the process dies), driven by lines: a `session_proto` request per line on stdin (`exec`, `close`), a reply per line on stdout. A bad or refused line is answered with an `error` and the session stays usable; a line above the 1 MiB frame cap ends it; end of input closes it. A launcher the matrix does not certify is refused with the missing capability named (seen live before the rows changed: `launcher `account` is not certified for: session`). Matrix rows `session` and `clean-slate-next-session` for `account` are now `yes`, hand-written from two new probes in `probes::account` (state kept across two execs; nothing there in a second session after `close`), which run in `tests/account_session.rs` and are UNVERIFIED where the setup or the redeployed `spawn-runner` is missing. `no-read-other-session` stays `no`. Measured once, live, on the redeployed exe: whoami `antspawn-run`, state kept across execs, close answered; 5.8 s for the whole 5-line run. Not measured: end of input without `close` on the real account, concurrent sessions, a second user as launcher. Version provisional (PM allocates).
+
 ## 0.0.89
 
 - `docs/MEASUREMENTS.md` 2026-11-08: `cargo test --test account_session` on the redeployed `spawn-runner.exe` (CI artifact of main `3333a683`, sha256 `3A5102B3...4E3`): 1 passed in 3.83 s, no `UNVERIFIED`; a session on `antspawn-run` keeps state between execs and leaves nothing after close. One run; the second-user launcher, latency and concurrency are not measured. Docs only. Version provisional (PM allocates).
+
 
 ## 0.0.88
 
