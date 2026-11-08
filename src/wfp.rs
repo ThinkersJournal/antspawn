@@ -411,7 +411,10 @@ fn read_filter(engine: &Engine, key: &GUID, want: &Plan) -> Result<String, Strin
         return Err("not present".into());
     }
     check("FwpmFilterGetByKey0", rc)?;
-    // SAFETY: success means `p` points at a valid filter until freed.
+    if p.is_null() {
+        return Err("FwpmFilterGetByKey0 succeeded but returned no filter".into());
+    }
+    // SAFETY: success and non-null mean `p` points at a valid filter until freed.
     let f = unsafe { &*p };
     let mut problems = Vec::new();
     if f.action.r#type != FWP_ACTION_BLOCK {
