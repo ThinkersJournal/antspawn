@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.92
+
+- Broker slice V2 (`docs/SANDBOX-BROKER.md`): `broker`, the VM broker's core behind a `Driver` trait, tested against an in-memory fake on every CI leg (the real Hyper-V driver is V3 and waits on a host). A request is validated (`broker_proto`) before the driver sees anything, and the driver is handed resolved values (a profile's sizes, a pre-created network slot), never request text but the one validated key. A VM is owned by its creating connection; a disconnect, a lifetime expiry or a failed create destroys it; a network slot is held until the driver confirms the VM is gone, so a failed delete is retried (`tick`) and its slot is never handed out meanwhile. At start the broker removes VMs carrying its `antspawn-` prefix that it is not tracking and nothing without the prefix, and refuses to start if it cannot. The VM broker answers `sandbox_start` with an error. 11 tests, among them: a refused request leaves the driver call log empty, a create that fails after half-making a VM leaves none and gives the slot and the count back, another connection (same account) can move and see nothing, the leftover sweep keeps `my-laptop-vm`. Nothing here is exercised against a real peer or Hyper-V. Version provisional (PM allocates).
+
 ## 0.0.89
 
 - `docs/MEASUREMENTS.md` 2026-11-08: `cargo test --test account_session` on the redeployed `spawn-runner.exe` (CI artifact of main `3333a683`, sha256 `3A5102B3...4E3`): 1 passed in 3.83 s, no `UNVERIFIED`; a session on `antspawn-run` keeps state between execs and leaves nothing after close. One run; the second-user launcher, latency and concurrency are not measured. Docs only. Version provisional (PM allocates).
