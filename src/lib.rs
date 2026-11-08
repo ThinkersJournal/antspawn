@@ -19,6 +19,8 @@ pub mod session_pipe;
 pub mod session_proto;
 pub mod spec;
 pub mod streams;
+#[cfg(windows)]
+pub mod wfp;
 
 pub use capability::Capability;
 pub use launcher::{
