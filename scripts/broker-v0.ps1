@@ -39,11 +39,29 @@ param(
 $ErrorActionPreference = 'Stop'
 if ($Apply -and $Undo) { throw 'Choose -Apply or -Undo, not both.' }
 $Broker = 'antspawn-v0-broker'
+$BrokerDescription = 'AntSpawn V0 broker. Remove: broker-v0.ps1 -Undo'
 $Dir = Join-Path $env:ProgramData 'antspawn-v0'
 $Res = Join-Path $Dir 'results'
 $SwitchName = 'antspawn-v0-sw'
 $HostIp = '10.77.0.1'
 $Live = $Apply -or $Undo
+# Every string handed to the account cmdlets, against the limits those cmdlets enforce. A dry run never
+# calls them, so this is what makes the dry run catch an over-long value (New-LocalUser -Description
+# is limited to 48, and a 64-character one stopped the first -Apply). Limits: SAM account name 20,
+# New-LocalUser -Description 48, local password 127, task name 238 without a backslash.
+$passwordLength = ([Math]::Ceiling(48 / 3) * 4) + 3   # base64 of 48 bytes, plus 'aA1' (see below)
+$limitChecks = @(
+    @('broker user name', $Broker, 20),
+    @('broker user -Description', $BrokerDescription, 48),
+    @('generated password', ('x' * $passwordLength), 127),
+    @('task name AntSpawnV0Probe', 'AntSpawnV0Probe', 238),
+    @('task name AntSpawnV0Listen', 'AntSpawnV0Listen', 238),
+    @('task -User string', "$env:COMPUTERNAME\$Broker", 104)
+)
+foreach ($lc in $limitChecks) {
+    if ($lc[1].Length -gt $lc[2]) { throw "$($lc[0]) is $($lc[1].Length) characters; the cmdlet allows $($lc[2]). Nothing was changed." }
+}
+if ($Broker -match '["/\\[\]:;|=,+*?<>]') { throw "$Broker contains a character a local user name cannot have. Nothing was changed." }
 $principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
 if ($Live -and -not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     throw 'Run this in an elevated PowerShell for -Apply or -Undo (the dry run needs none).'
@@ -218,7 +236,7 @@ if ($Undo) {
         $script:plain = [Convert]::ToBase64String($bytes) + 'aA1'
         $sp = ConvertTo-SecureString $script:plain -AsPlainText -Force
         if (Get-LocalUser -Name $Broker -ErrorAction SilentlyContinue) { Set-LocalUser -Name $Broker -Password $sp }
-        else { New-LocalUser -Name $Broker -Password $sp -PasswordNeverExpires -UserMayNotChangePassword -AccountNeverExpires -Description 'AntSpawn V0 measurement broker. Remove with broker-v0.ps1 -Undo.' | Out-Null }
+        else { New-LocalUser -Name $Broker -Password $sp -PasswordNeverExpires -UserMayNotChangePassword -AccountNeverExpires -Description $BrokerDescription | Out-Null }
     }
     $bsid = if ($Live) { (Get-LocalUser -Name $Broker).SID.Value } else { "<sid of $Broker>" }
     Step "ACL $Dir" {
