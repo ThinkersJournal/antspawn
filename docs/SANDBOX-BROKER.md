@@ -31,6 +31,21 @@ Measured today (2026-11-07, read-only commands as `cires`, a non-elevated token 
 
 **Measured 2026-11-08, V0 second probe** (same script after the folder grant became full control; one run; relayed by the PM from CireSnave's `probe.txt`, not read by the lane): `New-VM` (generation 2) failed again, now with `Sequence contains more than one element`, so **the folder-permission question is still unanswered**. The PM's reading, not confirmed: Hyper-V allows two switches with one name, the first run had left `antspawn-v0-sw`, the second run's `New-VMSwitch` then made another (it printed `Internal | Internal`), and `New-VM -SwitchName` resolved two objects. Consequence for the broker: **it must never rely on a name being unique to the switch it just made**; it creates, then refers to the switch by its `Id`, and a pre-existing object of the same name is a refusal, not a second create. `broker-v0.ps1` now refuses to start the probe (and `-Apply` refuses to register anything) while a switch named `antspawn-v0-sw` or a VM named `antspawn-v0-vm` exists. Also in that run `New-NetIPAddress` on the switch's vEthernet by the **non-elevated broker succeeded**, where the first run said access denied. **Unexplained; do not rely on either result.** Candidate readings (adapter not yet ready in run 1, or two interfaces with one alias in run 2) are untested; the probe now also records how many adapters and switches answer to the name before that step, and a clean single-switch rerun is what answers it.
 
+**Measured 2026-11-08, V0 clean run** (third run, one switch, 24 s; `scripts/broker-v0.ps1` at `a41d29d`'s grants; as `antspawn-v0-broker`: Hyper-V Administrators, batch logon, **not elevated**, full control of its own `results` directory only; run by CireSnave, relayed by the PM from `probe.txt`, **not read by the lane**; one clean run plus two earlier runs that failed for the reasons above):
+
+| Step | Result |
+|---|---|
+| `New-VMSwitch` Internal | OK, 3708 ms |
+| new switch IPv4 forwarding / `Get-NetNat` count | Disabled / 0 |
+| broker sets the host address on the switch's vEthernet | **FAIL, Access is denied.** So run 2's OK was an artifact of the duplicate switch; **the elevated setup sets the address, as designed** |
+| `New-VHD` dynamic parent / differencing child | 1090 ms / 1113 ms |
+| `New-VM` generation 2 on the child disk | OK, 2361 ms (the first run's refusal was `Modify` lacking `WRITE_DAC` on the disk directory) |
+| static memory, `ExposeVirtualizationExtensions` false, integration services all but Heartbeat off, no checkpoints | OK |
+| `Start-VM` / `Stop-VM -TurnOff` / `Start-VM` again, same VM and disk / `Stop-VM -TurnOff` again | 7670 ms / 536 ms / 3867 ms / 208 ms |
+| `Remove-VM` / delete the disks | 103 ms / 39 ms |
+
+So a **non-elevated Hyper-V Administrator can run the whole lifecycle including the power cut**, provided it has full control of its own disk directory; that answers unmeasured item 2 below for an empty VM on a clean switch. The design consequence stands: the broker's account needs **full control of its own disk directory and nothing wider**, the base images stay read-only to it, and the host address is the elevated step's. Still unmeasured here: a real OS booting from the disk (these VMs have no OS), the seed ISO, the pipe between two accounts, TCP from a client, a guest probing the host.
+
 **Not measured, and each can change the design:**
 1. **A pipe between two different accounts** (runner to broker), for any feature.
 2. **Whether a non-interactive service account in Hyper-V Administrators can create, start, stop and delete a VM and a switch.** `Get-VM` as an interactive, non-elevated member is the only read taken. (The `wsb` cancellation is Windows Sandbox's packaged-app activation; nothing says Hyper-V VMs share that failure, nothing says they don't.)

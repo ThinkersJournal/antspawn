@@ -173,7 +173,7 @@ function New-Pipe {
 }
 $tcp = $null
 try { $tcp = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Parse('HOSTIP'), 2222); $tcp.Start(); Rec 'tcp listening HOSTIP:2222' }
-catch { Rec ("tcp listen FAIL {0}" -f $_.Exception.Message) }
+catch { Rec ("tcp listen FAIL {0} (the pipe side carries on without TCP)" -f $_.Exception.Message); $tcp = $null }
 $pipe = New-Pipe
 $wait = $pipe.WaitForConnectionAsync()
 Rec 'pipe antspawn-v0-pipe listening'
@@ -316,6 +316,12 @@ if ($Undo) {
         $if = "vEthernet ($SwitchName)"
         if (Get-NetAdapter -Name $if -ErrorAction SilentlyContinue) {
             if (-not (Get-NetIPAddress -IPAddress $HostIp -ErrorAction SilentlyContinue)) { New-NetIPAddress -InterfaceAlias $if -IPAddress $HostIp -PrefixLength 30 | Out-Null }
+            # a new address is Tentative for a moment and cannot be bound until it is Preferred (the first listener died on that)
+            $until = (Get-Date).AddSeconds(30)
+            while ((Get-NetIPAddress -IPAddress $HostIp -ErrorAction SilentlyContinue).AddressState -ne 'Preferred' -and (Get-Date) -lt $until) { Start-Sleep -Milliseconds 500 }
+            $state = (Get-NetIPAddress -IPAddress $HostIp -ErrorAction SilentlyContinue).AddressState
+            Write-Host "$HostIp AddressState = $state"
+            if ($state -ne 'Preferred') { throw "$HostIp did not become Preferred within 30 s; do not start the listener yet." }
         } else { Write-Host "no adapter $if (the broker could not create the switch); see probe.txt" }
     }
     if ($Live) {
