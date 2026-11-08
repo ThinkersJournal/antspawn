@@ -58,8 +58,8 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Build spawn-runner (release)
-        run: cargo build --release --locked --bin spawn-runner
+      - name: Build spawn-runner and spawn-wfp (release)
+        run: cargo build --release --locked --bin spawn-runner --bin spawn-wfp
 
       - name: Hash it and stage the artifact
         shell: pwsh
@@ -72,6 +72,14 @@ jobs:
           "$hash  spawn-runner.exe" | Set-Content -Encoding ascii dist/spawn-runner.exe.sha256
           "sha256 $hash  size $((Get-Item $exe).Length)  commit $env:GITHUB_SHA"
           "spawn-runner.exe sha256 ``$hash`` (commit $env:GITHUB_SHA)" >> $env:GITHUB_STEP_SUMMARY
+          # spawn-wfp.exe: the elevated account-boundary tool (Part A), run by the machine owner, never installed
+          $wfp = 'target/release/spawn-wfp.exe'
+          if (-not (Test-Path $wfp)) { throw "$wfp was not built" }
+          $wfpHash = (Get-FileHash -Algorithm SHA256 $wfp).Hash
+          Copy-Item $wfp dist/spawn-wfp.exe
+          "$wfpHash  spawn-wfp.exe" | Set-Content -Encoding ascii dist/spawn-wfp.exe.sha256
+          "sha256 $wfpHash  size $((Get-Item $wfp).Length)  commit $env:GITHUB_SHA"
+          "spawn-wfp.exe sha256 ``$wfpHash`` (commit $env:GITHUB_SHA)" >> $env:GITHUB_STEP_SUMMARY
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
