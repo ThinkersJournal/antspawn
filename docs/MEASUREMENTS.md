@@ -432,7 +432,7 @@ Also from the V0 script work: PowerShell 7 has no `NamedPipeServerStream` constr
 
 ## 2026-11-08: `account_session` on the new `spawn-runner.exe` (ref: main `ad6cc3a`; run as `cires`, interactive; one run)
 
-Deployed first (CireSnave's elevated paste, board 399; read back by the PM and by me): `C:\Program Filesntspawn\spawn-runner.exe` sha256 `3A5102B3...4E3`, 1,346,048 bytes = the CI artifact of main `3333a683`. Before: `14610444...F46` (748,032 bytes).
+Deployed first (CireSnave's elevated paste, board 399; read back by the PM and by me): `C:\Program Files\antspawn\spawn-runner.exe` sha256 `3A5102B3...4E3`, 1,346,048 bytes = the CI artifact of main `3333a683`. Before: `14610444...F46` (748,032 bytes).
 
 `cargo test --test account_session` (`RUST_TEST_THREADS=1`): **1 passed, 0 failed** in 3.83 s (30 s wall with the build). The test did not print `UNVERIFIED`, so both guards passed: the `AntSpawnRunner` task is registered and `open_session` succeeded.
 
