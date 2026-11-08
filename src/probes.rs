@@ -242,6 +242,46 @@ pub mod account {
         v
     }
 
+    fn exec_ok(s: &mut dyn crate::Session, script: &str) -> bool {
+        let out = s
+            .exec(&crate::ExecRequest::new(["cmd", "/c", script]))
+            .expect("exec");
+        out.exit == Exit::Code(0)
+    }
+
+    /// A session on the account that cannot keep a file between two execs is not a session at all:
+    /// `true` means the `session` capability is violated. Panics if no session can be opened, so a
+    /// missing or old `spawn-runner` is inconclusive, never "fine".
+    pub fn violates_session() -> bool {
+        let mut s = Account::default().open_session().expect("open_session");
+        let wrote = exec_ok(s.as_mut(), "echo kept> kept.txt");
+        let kept = exec_ok(s.as_mut(), "findstr kept kept.txt");
+        s.close().expect("close");
+        assert!(wrote, "the first exec must be able to write");
+        !kept
+    }
+
+    /// Does a file written in one session exist in the next, after `close`?
+    pub fn violates_clean_slate_session() -> bool {
+        assert!(
+            !violates_session(),
+            "state must persist within a session, or this probe proves nothing"
+        );
+        let mut first = Account::default().open_session().expect("open_session");
+        assert!(
+            exec_ok(first.as_mut(), "echo left> leftover.txt"),
+            "first session must be able to write"
+        );
+        first.close().expect("close");
+        let mut second = Account::default().open_session().expect("open_session");
+        let seen = exec_ok(
+            second.as_mut(),
+            "if exist leftover.txt (exit /b 0) else (exit /b 1)",
+        );
+        second.close().expect("close");
+        seen
+    }
+
     pub fn violates_kill_runaway(probe: &Path) -> bool {
         let d = scratch("fork");
         let s = spec(
