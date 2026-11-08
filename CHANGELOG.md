@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.87
+
+- `docs/SANDBOX-BROKER.md` revision 3 (PM `[TASK] windows-guest-profile`; CireSnave: "Windows Hyper-V can't create a Windows guest?"): corrects revision 2, which said the VM broker does not replace Windows Sandbox for Windows jobs. Adds a Windows guest profile with image source and licence, disk, boot time, runner access (OpenSSH vs PowerShell Direct), updates and activation, and what Sandbox does better, each stated as measured or unmeasured (only host disk space was measured; no Windows image, boot time or licence was checked), plus slice V6. Adds slice V7 and a Windows Sandbox broker track SB0-SB3 (broker in CireSnave's session, same validation; hardening under a limited account as the last slice of each track), and `scripts/broker-v0.ps1` (V0's elevated measurement, dry-run by default, `-Undo` rolls back). `scripts/sb0-broker.ps1` and the SB0 result (MEASUREMENTS 2026-11-07): a pipe works between `cires` and `antspawn-run` (control refused), and a Sandbox starts from the broker's session on that account's request, ready in 12 to 20 s (4 runs), stopped when the client leaves. Keeps Windows Sandbox and `account` until V6 measures. Docs only. Version provisional (PM allocates).
+
 ## 0.0.86
 
 - Row 9 re-run (MEASUREMENTS 2026-11-07): `windows_sandbox` 5/5 green, the stale SAC control bites again (one run, interactive, KB5127936 present); ROADMAP row 26 step 1 done. Docs only.

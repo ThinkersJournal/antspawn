@@ -411,3 +411,21 @@ Method: `spawn run --launcher account` runs `cmd /c probe.cmd` AS `antspawn-run`
 ## 2026-11-07: row 9 re-run, the stale SAC control bites again (ref: session-s4 `5368c04`; run as cires, interactive; host Windows 10.0.26300 with KB5127936 installed 2026-10-30; one run)
 
 `cargo test --test windows_sandbox` with `RUST_TEST_THREADS=1` (about 303 s): **5 passed, 0 failed**, including `unsigned_exes_start_repeatedly_in_three_consecutive_sandboxes_and_host_policy_is_untouched`, whose raw-`wsb` control asserts the exe starts once and is then blocked (`start1=0`, `start2=1073751882`). On 2026-10-29 the same test failed because the guest only audited. So the guest enforces again, after the host update of 10-30 (and whatever else changed). Not measured: the package version and guest build for this run, the guest's policy state (`VerifiedAndReputablePolicyState`) and event 3096 vs the enforcing policy, which update changed it, or whether it stays that way. One sample; the 2026-10-29 section above stands as history, and the claim "the guest blocks unsigned exes" stays withdrawn until a few more runs agree (row 9 stays open for repeats).
+
+## 2026-11-07: SB0, a Windows Sandbox started from the broker's interactive session on a pipe client's request (ref: `scripts/sb0-broker.ps1` on branch broker-windows-guest; wsb 0.8.107.0; host Windows 11 build 26300; one box, cires's interactive session, no elevation anywhere)
+
+Setup: `sb0-broker.ps1` runs as `cires` (PowerShell 7, hidden window) and serves one pipe `antspawn-sb0` whose protected DACL names `cires` (full) and `antspawn-run` (`0x12019f`). The client is a PowerShell script run AS `antspawn-run` through `spawn run --launcher account` (`spawn.exe` built from main `9658e68`'s tree, no runner redeploy needed). On the line `start` the broker runs `wsb start --raw` with no configuration (no mapped folders, no network settings), then polls `wsb exec --id <id> -c "cmd.exe /c echo ready" -r System` until it succeeds, replies with the timings, and runs `wsb stop` when the client disconnects.
+
+| Fact | Result |
+|---|---|
+| **A pipe between two different accounts** (unmeasured item 1 for the Sandbox track) | Works. The server saw the client identity `TUF-LAPTOP\antspawn-run` after `RunAsClient`. |
+| **Control: a DACL that does not name the client** | The same client, with the DACL naming `gh-runner` instead, got `Access to the path is denied` (1 sample). |
+| **A Sandbox starts from the broker's session on a restricted account's request** | **Yes**, 4 of 4 runs, while a direct `wsb start` as `antspawn-run` is Cancelled (#73). The Sandbox belongs to the broker's session, not the client's. |
+| **`wsb start` returns after (broker side)** | 16.9 s, 11.3 s, 11.3 s, 10.9 s |
+| **Ready (`exec` works inside) after the request** | 20.1 s (the first request; why it was slower is not established, a cold start is one possibility), 12.1 s, 13.2 s, 12.6 s. Ready came 1 to 3 s after `wsb start` returned. This is the whole boot as measured here, not Sandbox's best case; the host was otherwise lightly loaded and not controlled. |
+| **Lifetime follows the client** | In all 4 runs `wsb list` was empty and the broker logged `wsb stop` within about 4 s of the client exiting; after the last run `wsb list` was empty. |
+| **One at a time** | **Not measured here.** The broker serves one pipe instance, so a second client waits on the pipe; whether a second `wsb start` during a first is refused was measured earlier (`CO_E_APPSINGLEUSE`). |
+
+NOT measured: a job's files getting in and results out (the Sandbox here has nothing mapped; the existing launcher maps folders), running anything as the client inside the Sandbox, network, the broker surviving the user logging out or locking the screen, more than one request at a time, a bad request (this prototype has no validation, by design), CPU/RAM cost, and what happens if the broker's session is not interactive. The broker is a harness: it holds `cires`'s rights, so its (unbuilt) validation would be the whole boundary.
+
+Also from the V0 script work: PowerShell 7 has no `NamedPipeServerStream` constructor taking a `PipeSecurity`; use `NamedPipeServerStreamAcl.Create` (the first attempt died silently and the client saw a plain connect timeout), and `RunAsClient` takes a `PipeStreamImpersonationWorker`, not an `Action`.
