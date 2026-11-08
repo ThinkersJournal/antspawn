@@ -3,6 +3,7 @@
 //! the environment. See `README.md` and `docs/DESIGN.md`.
 
 pub mod adapter;
+pub mod broker;
 pub mod broker_proto;
 pub mod capability;
 pub mod launcher;
