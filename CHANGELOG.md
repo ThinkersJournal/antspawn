@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.89
+
+- `docs/MEASUREMENTS.md` 2026-11-08: `cargo test --test account_session` on the redeployed `spawn-runner.exe` (CI artifact of main `3333a683`, sha256 `3A5102B3...4E3`): 1 passed in 3.83 s, no `UNVERIFIED`; a session on `antspawn-run` keeps state between execs and leaves nothing after close. One run; the second-user launcher, latency and concurrency are not measured. Docs only. Version provisional (PM allocates).
+
 ## 0.0.88
 
 - Broker slices V1 and SB1 (`docs/SANDBOX-BROKER.md`): `broker_proto`, the pure request vocabulary and validation shared by the VM broker and the Windows Sandbox broker. No pipe, no Hyper-V, no account: nothing here is exercised against a real peer. `Request` is `create` (image + profile from fixed sets + one `ssh-ed25519` key line), `stop`/`start`/`delete`, `list`, `sandbox_start`; unknown ops and fields are errors. No field can hold a host path, every name must be plain (no separator, dot-dot or drive letter), a key may not carry `authorized_keys` options or a second line, and refusals name the field, never the value. `Ledger` records who owns what: only the creating connection may act on a VM, caps (total, per account) and a per-account create rate come from the SID the broker read, a disconnect releases that connection's VMs, and a lifetime ceiling expires the rest. A known-bad request list is run against the real validator (all refused) and against naive validators (caught). Caps in `Limits::default()` are a chosen number, not a measurement. Version provisional (PM allocates).
