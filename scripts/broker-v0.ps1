@@ -228,7 +228,7 @@ if ($Undo) {
     $runnerSid = if ($runner) { $runner.SID.Value } else { '<sid of ' + $RunnerUser + '>' }
     $launcherSid = Sid $LauncherUser
     $plain = $null
-    Step "create folder $Dir (Administrators and SYSTEM full, $Broker modify on results\, $LauncherUser read)" {
+    Step "create folder $Dir (Administrators and SYSTEM full, $Broker full control on results\ only, $LauncherUser read)" {
         New-Item -ItemType Directory -Force -Path $Res | Out-Null
     }
     Step "create local user $Broker (random password, never expires), NO other right than the two below" {
@@ -244,7 +244,9 @@ if ($Undo) {
         # the folder but not probe.ps1, and powershell exited 1 before writing anything (first -Apply run).
         & icacls.exe $Dir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' "*${launcherSid}:(OI)(CI)RX" "*${bsid}:(OI)(CI)RX" | Out-Null
         if ($LASTEXITCODE -ne 0) { throw 'icacls failed on the folder' }
-        & icacls.exe $Res /grant:r "*${bsid}:(OI)(CI)M" | Out-Null
+        # Full control, not Modify, and on this folder only: New-VM stopped with 'failed to set folder permission for results (0x80070005)' because
+        # Hyper-V grants the VM's own SID on the disk's folder as the caller, and Modify has no WRITE_DAC (first probe, 2026-11-08).
+        & icacls.exe $Res /grant:r "*${bsid}:(OI)(CI)F" | Out-Null
         if ($LASTEXITCODE -ne 0) { throw 'icacls failed on results' }
     }
     Step "add $Broker to Hyper-V Administrators (S-1-5-32-578)" {
@@ -269,6 +271,12 @@ if ($Undo) {
             if ($mine.Count -lt 1) { throw "$Broker has no read ACE on $path; the probe task would exit 1 before writing anything. Run -Undo." }
             Write-Host "OK     $f is readable by $Broker (ACE read back)"
         }
+        $resAcl = @((Get-Acl -LiteralPath $Res).Access | Where-Object {
+            $_.AccessControlType -eq 'Allow' -and
+            $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -eq $bsid -and
+            ($_.FileSystemRights -band [Security.AccessControl.FileSystemRights]::FullControl) -eq [Security.AccessControl.FileSystemRights]::FullControl })
+        if ($resAcl.Count -lt 1) { throw "$Broker has no full-control ACE on $Res; New-VM would fail setting the VM's folder permission. Run -Undo." }
+        Write-Host "OK     $Res gives $Broker full control (ACE read back)"
     }
     $sd = "D:(A;;FA;;;BA)(A;;FA;;;SY)(A;;GRGX;;;$launcherSid)"
     foreach ($t in @(@('AntSpawnV0Probe', 'probe.ps1'), @('AntSpawnV0Listen', 'listen.ps1'))) {
