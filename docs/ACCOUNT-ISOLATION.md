@@ -50,6 +50,28 @@ on this machine is reachable". What a reached service then allows depends on tha
 authentication, which was **not** tested: no request was sent to any of them. The risk is a local service
 that trusts any local caller (a development server, a model server, a daemon with no credentials).
 
+## The rule that exists, read back (2026-11-08, read-only: `Get-NetFirewallRule` and its security, address and port filters)
+
+`antspawn-run: block all outbound` (created by `account-setup.ps1`): Enabled, Outbound, **Block**, Profile
+Any, Protocol Any, Remote address Any, Local user = the SDDL of `antspawn-run`'s SID. Nothing else of ours
+is in the firewall. So the account already has the strongest outbound rule Windows Firewall can express for
+it, **and loopback and the host's own addresses still answer.** The conclusion is mechanical: a Windows
+Firewall rule written by user SID does not see that traffic (the stack delivers it locally before the
+firewall's rules; stated as documented Windows behaviour, shown here by an existing all-block rule that does
+not bite). Only a Windows Filtering Platform filter at the connect layer, with the user as a condition, can
+refuse it.
+
+Two consequences, both from the rule above and not from a test of the changed state:
+
+1. **"Block all outbound" and the VM broker cannot both be true.** A guest at `10.77.0.2` is a remote
+   address, so while this rule stands `antspawn-run` cannot open a TCP connection to its own VM (Block beats
+   Allow in Windows Firewall). V0 unmeasured item 4 ("guest reachability from a restricted account") is
+   therefore answered for the current rule: **no**. The broker's own host-side address (`10.77.0.1`) is
+   local and does answer.
+2. **Anything that must be isolated from this machine's services belongs in a VM (or Windows Sandbox), not
+   in this account.** The account isolates files, processes and the external network (the matrix rows say
+   exactly that and no more); it is not a network boundary for the machine it runs on.
+
 ## Not measured
 
 - **Which process owns each port.** Process names were asked for and cannot be obtained here:
@@ -66,8 +88,17 @@ that trusts any local caller (a development server, a model server, a daemon wit
 
 ## What a fix would need (not done; elevated; CireSnave's call)
 
-A Windows Firewall outbound rule for `antspawn-run`'s SID that also blocks the loopback and local interface
-addresses (or a default block with named allows). It would change the `account` rows and must be re-probed:
-the broker's own pipe is local and not TCP, but the V0 listener and the Windows-guest SSH path are TCP on the
-host-side address, so a rule has to leave the broker's switch addresses reachable on purpose. Nothing was
-written.
+Not a Windows Firewall rule alone (see above: the existing one does not reach local traffic). Two separate
+changes, both elevated and both CireSnave's to apply, nothing written yet:
+
+- **Windows Firewall:** replace the blanket block with "block everything except the VM pool range", so a
+  runner can reach its own VM's SSH (consequence 1).
+- **Windows Filtering Platform:** persistent filters at the connect layers (IPv4 and IPv6) refusing
+  `antspawn-run`'s connections to loopback and to the host's own addresses. A user-id condition cannot tell a
+  job's own listener from another's, so a job that starts a dev server and connects to itself would break;
+  nothing in this repository's use of the account does that (our tests run as the interactive user, the
+  account runs probes, `cmd` and PowerShell), a customer job might. The broker needs TCP only to the pool's
+  guest addresses, which are remote.
+
+Either must be read back after it is applied and the 32-port scan re-run as the account (expected: none open)
+before the `account` rows or this page change.
