@@ -32,6 +32,22 @@ pub struct HyperVConfig {
     pub base_dir: String,
     /// Folder the broker has full control of: differencing disks and VM files.
     pub vm_dir: String,
+    /// Expected SHA-256 (64 hex digits) of each offered image's base disk. An image with no entry
+    /// cannot be created: a base nobody pinned is not one the broker will boot from.
+    pub base_hashes: std::collections::BTreeMap<String, String>,
+}
+
+impl HyperVConfig {
+    /// # Errors
+    /// A hash is not 64 hex digits.
+    pub fn check(&self) -> Result<(), String> {
+        for (image, h) in &self.base_hashes {
+            if h.len() != 64 || !h.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return Err(format!("hash for image {image} is not 64 hex digits"));
+            }
+        }
+        Ok(())
+    }
 }
 
 pub struct HyperV<R: Runner> {
@@ -77,7 +93,8 @@ impl<R: Runner> HyperV<R> {
         }
     }
 
-    /// Differencing disk on the image's base, a generation 2 VM on the slot's switch, no
+    /// Hash check of the base first (a mismatch throws before any disk or VM exists), then a
+    /// differencing disk on the image's base, a generation 2 VM on the slot's switch, no
     /// checkpoints, only the heartbeat integration service. The VM is not started.
     ///
     /// # Errors
@@ -86,10 +103,18 @@ impl<R: Runner> HyperV<R> {
         let name = Self::named(&spec.id)?;
         let base = quote(&join(&self.cfg.base_dir, &format!("{}.vhdx", spec.image)))?;
         let disk = quote(&self.disk(&spec.id))?;
+        let want = self
+            .cfg
+            .base_hashes
+            .get(&spec.image)
+            .ok_or_else(|| format!("no pinned hash for image {}", spec.image))?;
+        self.cfg.check()?;
+        let want = quote(&want.to_ascii_uppercase())?;
         let switch = quote(&spec.slot.switch)?;
         let mem = u64::from(spec.profile.memory_mb) * 1024 * 1024;
         Ok(format!(
             "$ErrorActionPreference='Stop'\n\
+             if ((Get-FileHash -Algorithm SHA256 -LiteralPath {base}).Hash -ne {want}) {{ throw 'base image does not match its pinned SHA-256' }}\n\
              New-VHD -Path {disk} -ParentPath {base} -Differencing | Out-Null\n\
              New-VM -Name {name} -Generation 2 -MemoryStartupBytes {mem} -VHDPath {disk} -SwitchName {switch} -Path {vmdir} | Out-Null\n\
              Set-VMMemory -VMName {name} -DynamicMemoryEnabled $false\n\
@@ -224,6 +249,7 @@ mod tests {
         HyperVConfig {
             base_dir: r"C:\ProgramData\antspawn\base".into(),
             vm_dir: r"C:\ProgramData\antspawn\vms".into(),
+            base_hashes: [("ubuntu-24".to_string(), "ab".repeat(32))].into(),
         }
     }
     fn spec() -> VmSpec {
@@ -272,6 +298,31 @@ mod tests {
     }
 
     #[test]
+    fn the_hash_is_checked_before_any_disk_is_made() {
+        let s = hv("").script_create(&spec()).unwrap();
+        let h = s.find("Get-FileHash").unwrap();
+        assert!(h < s.find("New-VHD").unwrap());
+        assert!(s.contains(&format!("'{}'", "AB".repeat(32))));
+        assert!(s.contains("throw"));
+    }
+
+    #[test]
+    fn an_image_without_a_pinned_hash_or_with_a_bad_one_is_refused() {
+        let mut sp = spec();
+        sp.image = "other".into();
+        assert!(
+            hv("")
+                .script_create(&sp)
+                .unwrap_err()
+                .contains("no pinned hash")
+        );
+        let mut d = hv("");
+        d.cfg.base_hashes.insert("ubuntu-24".into(), "zz".into());
+        assert!(d.create(&spec()).is_err());
+        assert!(d.runner.0.borrow().is_empty());
+    }
+
+    #[test]
     fn a_name_without_our_prefix_is_refused_before_anything_runs() {
         let mut d = hv("");
         assert!(d.delete("my-laptop-vm").is_err());
@@ -291,13 +342,19 @@ mod tests {
     fn a_hostile_image_or_switch_cannot_end_the_literal() {
         let mut sp = spec();
         sp.image = "x'; Remove-VM *; '".into();
-        let s = hv("").script_create(&sp).unwrap();
+        assert!(
+            hv("").script_create(&sp).is_err(),
+            "an unpinned image never gets a script"
+        );
+        let mut d = hv("");
+        d.cfg.base_hashes.insert(sp.image.clone(), "ab".repeat(32));
+        let s = d.script_create(&sp).unwrap();
         assert!(
             s.contains("x''; Remove-VM *; ''"),
             "quote doubled inside one literal"
         );
         sp.slot.switch = "a\nRemove-VM *".into();
-        assert!(hv("").script_create(&sp).is_err());
+        assert!(d.script_create(&sp).is_err());
     }
 
     #[test]
