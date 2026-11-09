@@ -17,6 +17,24 @@
 
 use crate::broker::{Driver, VmSpec};
 use crate::broker_proto::{VM_PREFIX, valid_vm_id};
+use crate::seed;
+
+/// Every pool slot is a /30: the host takes `.1`, the guest `.2`.
+const SLOT_PREFIX: u8 = 30;
+
+/// Hands the ISO image stream IMAPI2 returns to a file. The usual helper; only the real PowerShell
+/// ever compiles it, so on CI the text is all that is checked.
+const ISO_WRITER: &str = "Add-Type -TypeDefinition @'
+using System; using System.IO; using System.Runtime.InteropServices; using System.Runtime.InteropServices.ComTypes;
+public static class AntSpawnIso {
+  public static void Write(object s, string path, int block, int total) {
+    IStream i = (IStream)s; byte[] buf = new byte[block]; IntPtr p = Marshal.AllocHGlobal(4);
+    try { using (FileStream o = File.Create(path)) { for (int n = 0; n < total; n++) { i.Read(buf, block, p); int r = Marshal.ReadInt32(p); o.Write(buf, 0, r); } } }
+    finally { Marshal.FreeHGlobal(p); }
+  }
+}
+'@
+";
 
 /// Runs one PowerShell script and returns its standard output.
 pub trait Runner {
@@ -70,6 +88,25 @@ pub fn quote(s: &str) -> Result<String, String> {
     Ok(format!("'{}'", s.replace('\'', "''")))
 }
 
+/// A multi-line text as one PowerShell expression: each line quoted, joined by a real newline.
+fn quote_text(text: &str) -> Result<String, String> {
+    let lines: Result<Vec<String>, String> = text
+        .trim_end_matches('\n')
+        .split('\n')
+        .map(|l| {
+            if l.is_empty() {
+                Ok("''".to_string())
+            } else {
+                quote(l)
+            }
+        })
+        .collect();
+    Ok(format!(
+        "((@({}) -join \"`n\") + \"`n\")",
+        lines?.join(", ")
+    ))
+}
+
 fn join(dir: &str, leaf: &str) -> String {
     format!("{}\\{}", dir.trim_end_matches('\\'), leaf)
 }
@@ -81,6 +118,48 @@ impl<R: Runner> HyperV<R> {
 
     fn disk(&self, id: &str) -> String {
         join(&self.cfg.vm_dir, &format!("{id}.vhdx"))
+    }
+
+    fn iso(&self, id: &str) -> String {
+        join(&self.cfg.vm_dir, &format!("{id}-seed.iso"))
+    }
+
+    fn seed_dir(&self, id: &str) -> String {
+        join(&self.cfg.vm_dir, &format!("{id}-seed"))
+    }
+
+    /// The cloud-init seed: the three files written to a folder, built into a `cidata` ISO with
+    /// IMAPI2 (ISO 9660 plus Joliet), the folder removed, the ISO attached. Nothing here has run.
+    fn script_seed(&self, spec: &VmSpec) -> Result<String, String> {
+        let files = seed::files(
+            &spec.id,
+            &spec.pubkey,
+            &spec.slot.guest_address,
+            SLOT_PREFIX,
+        )?;
+        let dir = quote(&self.seed_dir(&spec.id))?;
+        let iso = quote(&self.iso(&spec.id))?;
+        let name = Self::named(&spec.id)?;
+        let mut out =
+            format!("$seed = {dir}\nNew-Item -ItemType Directory -Path $seed | Out-Null\n");
+        for (file, text) in &files {
+            out.push_str(&format!(
+                "[IO.File]::WriteAllText((Join-Path $seed '{file}'), {})\n",
+                quote_text(text)?
+            ));
+        }
+        out.push_str(ISO_WRITER);
+        out.push_str(&format!(
+            "$fs = New-Object -ComObject IMAPI2FS.MsftFileSystemImage\n\
+             $fs.FileSystemsToCreate = 3\n\
+             $fs.VolumeName = 'cidata'\n\
+             $fs.Root.AddTree($seed, $false)\n\
+             $res = $fs.CreateResultImage()\n\
+             [AntSpawnIso]::Write($res.ImageStream, {iso}, $res.BlockSize, $res.TotalBlocks)\n\
+             Remove-Item -LiteralPath $seed -Recurse -Force\n\
+             Add-VMDvdDrive -VMName {name} -Path {iso}\n"
+        ));
+        Ok(out)
     }
 
     fn named(vm: &str) -> Result<String, String> {
@@ -120,9 +199,10 @@ impl<R: Runner> HyperV<R> {
              Set-VMMemory -VMName {name} -DynamicMemoryEnabled $false\n\
              Set-VMProcessor -VMName {name} -Count {cpus} -ExposeVirtualizationExtensions $false\n\
              Get-VMIntegrationService -VMName {name} | Where-Object {{ $_.Name -ne 'Heartbeat' }} | Disable-VMIntegrationService\n\
-             Set-VM -Name {name} -CheckpointType Disabled\n",
+             Set-VM -Name {name} -CheckpointType Disabled\n{seed}",
             vmdir = quote(&self.cfg.vm_dir)?,
             cpus = spec.profile.vcpus,
+            seed = self.script_seed(spec)?,
         ))
     }
 
@@ -153,11 +233,15 @@ impl<R: Runner> HyperV<R> {
     pub fn script_delete(&self, vm: &str) -> Result<String, String> {
         let n = Self::named(vm)?;
         let disk = quote(&self.disk(vm))?;
+        let iso = quote(&self.iso(vm))?;
+        let seeddir = quote(&self.seed_dir(vm))?;
         Ok(format!(
             "$ErrorActionPreference='Stop'\n\
              $v = Get-VM -Name {n} -ErrorAction SilentlyContinue\n\
              if ($v) {{ if ($v.State -ne 'Off') {{ Stop-VM -Name {n} -TurnOff -Force }}; Remove-VM -Name {n} -Force }}\n\
-             if (Test-Path -LiteralPath {disk}) {{ Remove-Item -LiteralPath {disk} -Force }}\n"
+             if (Test-Path -LiteralPath {disk}) {{ Remove-Item -LiteralPath {disk} -Force }}\n\
+             if (Test-Path -LiteralPath {iso}) {{ Remove-Item -LiteralPath {iso} -Force }}\n\
+             if (Test-Path -LiteralPath {seeddir}) {{ Remove-Item -LiteralPath {seeddir} -Recurse -Force }}\n"
         ))
     }
 
@@ -267,9 +351,12 @@ mod tests {
                 host_address: "10.77.0.1".into(),
                 guest_address: "10.77.0.2".into(),
             },
-            pubkey: "ssh-ed25519 AAAA".into(),
+            pubkey: KEY.into(),
         }
     }
+    /// A real-shaped ed25519 key (type string, 32 bytes of 7): passes `validate_pubkey`.
+    const KEY: &str =
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcH me@host";
     fn hv(out: &str) -> HyperV<Rec> {
         HyperV::new(Rec(RefCell::new(vec![]), out.into()), cfg())
     }
@@ -283,7 +370,7 @@ mod tests {
     }
 
     #[test]
-    fn create_script_uses_resolved_values_and_no_pubkey() {
+    fn create_script_uses_resolved_values() {
         let s = hv("").script_create(&spec()).unwrap();
         assert!(s.contains("-Differencing"));
         assert!(s.contains(r"'C:\ProgramData\antspawn\base\ubuntu-24.vhdx'"));
@@ -291,10 +378,31 @@ mod tests {
         assert!(s.contains("-Count 2"));
         assert!(s.contains("-SwitchName 'antspawn-sw0'"));
         assert!(s.contains("-CheckpointType Disabled"));
+        // The seed: three files, a `cidata` ISO, attached; the key's blob is in, its comment is not.
+        assert!(s.contains("'cidata'") && s.contains("Add-VMDvdDrive -VMName 'antspawn-j1'"));
         assert!(
-            !s.contains("ssh-ed25519"),
-            "the key is not in the script: the seed ISO is not built yet"
+            s.contains("'user-data'")
+                && s.contains("'meta-data'")
+                && s.contains("'network-config'")
         );
+        assert!(s.contains("AAAAC3NzaC1lZDI1NTE5AAAAIAcH"));
+        assert!(
+            !s.contains("me@host"),
+            "the key comment never reaches the script"
+        );
+        assert!(s.contains("- 10.77.0.2/30"));
+        assert!(s.find("Add-VMDvdDrive").unwrap() > s.find("New-VM ").unwrap());
+    }
+
+    #[test]
+    fn a_bad_key_stops_create_before_anything_runs_and_delete_removes_the_seed() {
+        let mut sp = spec();
+        sp.pubkey = "ssh-ed25519 AAAA".into();
+        let mut d = hv("");
+        assert!(d.create(&sp).is_err());
+        assert!(d.runner.0.borrow().is_empty());
+        let s = hv("").script_delete("antspawn-j1").unwrap();
+        assert!(s.contains("antspawn-j1-seed.iso") && s.contains("antspawn-j1-seed'"));
     }
 
     #[test]
