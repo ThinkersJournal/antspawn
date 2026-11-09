@@ -42,12 +42,17 @@ impl SessionFile {
 
     /// Both values end up in an SDDL string and a pipe path, so only their plain shapes pass.
     pub fn validate(&self) -> Result<(), String> {
-        let sid_ok = self.launcher_sid.starts_with("S-1-")
-            && self.launcher_sid.len() <= 184
-            && self
-                .launcher_sid
-                .chars()
-                .all(|c| c.is_ascii_digit() || c == 'S' || c == '-');
+        // `S-1-<authority>-<sub-authority>...`: every part after `S-1-` is a non-empty run of digits,
+        // an authority and at least one sub-authority, at most 15 of the latter. (`S-1-` alone, `S-1--`
+        // and `S-1-5-` used to pass the shape check and fail later with an unrelated message.)
+        let sid_ok = self.launcher_sid.len() <= 184
+            && self.launcher_sid.strip_prefix("S-1-").is_some_and(|rest| {
+                let parts: Vec<&str> = rest.split('-').collect();
+                (2..=16).contains(&parts.len())
+                    && parts
+                        .iter()
+                        .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+            });
         if !sid_ok {
             return Err("session.toml: launcher_sid is not a SID".into());
         }
@@ -442,7 +447,20 @@ mod tests {
         };
         let n = "0123456789abcdef";
         assert!(ok("S-1-5-21-1-2-3-1001", n).is_ok());
-        for bad in ["", "S-1-5-21)(A;;GA;;;WD", "S-2-1", "S-1-5 21", "x"] {
+        for bad in [
+            "",
+            "S-1-5-21)(A;;GA;;;WD",
+            "S-2-1",
+            "S-1-5 21",
+            "x",
+            "S-1-",
+            "S-1-5",
+            "S-1--",
+            "S-1-5-",
+            "S-1-5--21",
+            "S-1-5-S",
+            "S-1-5-21-1-2-3-4-5-6-7-8-9-10-11-12-13-14-15-16",
+        ] {
             assert!(ok(bad, n).is_err(), "{bad:?}");
         }
         for bad in ["", "abc", "zzzzzzzzzzzzzzzz", "0123456789abcdef\\..\\x"] {

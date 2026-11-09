@@ -60,7 +60,7 @@ dependencies = [
 
 [[package]]
 name = "antspawn"
-version = "0.0.98"
+version = "0.0.100"
 dependencies = [
  "base64",
  "capant",
