@@ -344,7 +344,7 @@ fn reap_orphans() {
 }
 
 /// The sandbox id in `wsb start` output (`Id: <guid>`).
-fn sandbox_id_in(text: &str) -> Option<String> {
+pub fn sandbox_id_in(text: &str) -> Option<String> {
     text.lines()
         .find_map(|l| l.trim().strip_prefix("Id:"))
         .map(|v| v.trim().to_string())
