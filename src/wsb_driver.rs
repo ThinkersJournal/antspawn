@@ -167,7 +167,7 @@ mod tests {
         p
     }
 
-    fn driver<'a>(f: &'a Fake, p: PathBuf) -> WsbDriver<&'a Fake> {
+    fn driver(f: &Fake, p: PathBuf) -> WsbDriver<&Fake> {
         WsbDriver::new(f, BTreeMap::from([("default".to_string(), p)]))
     }
 
