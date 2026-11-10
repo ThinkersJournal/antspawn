@@ -33,6 +33,21 @@ pub struct SessionFile {
     pub nonce: String,
 }
 
+/// `S-1-<authority>-<sub-authority>...`: every part after `S-1-` is a non-empty run of digits, an
+/// authority and at least one sub-authority, at most 15 of the latter, 184 bytes at most. The only
+/// shape that may reach an SDDL string or a pipe path.
+#[must_use]
+pub fn valid_sid(sid: &str) -> bool {
+    sid.len() <= 184
+        && sid.strip_prefix("S-1-").is_some_and(|rest| {
+            let parts: Vec<&str> = rest.split('-').collect();
+            (2..=16).contains(&parts.len())
+                && parts
+                    .iter()
+                    .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+        })
+}
+
 impl SessionFile {
     pub fn from_toml(text: &str) -> Result<Self, String> {
         let f: SessionFile = toml::from_str(text).map_err(|e| format!("session.toml: {e}"))?;
@@ -45,14 +60,7 @@ impl SessionFile {
         // `S-1-<authority>-<sub-authority>...`: every part after `S-1-` is a non-empty run of digits,
         // an authority and at least one sub-authority, at most 15 of the latter. (`S-1-` alone, `S-1--`
         // and `S-1-5-` used to pass the shape check and fail later with an unrelated message.)
-        let sid_ok = self.launcher_sid.len() <= 184
-            && self.launcher_sid.strip_prefix("S-1-").is_some_and(|rest| {
-                let parts: Vec<&str> = rest.split('-').collect();
-                (2..=16).contains(&parts.len())
-                    && parts
-                        .iter()
-                        .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
-            });
+        let sid_ok = valid_sid(&self.launcher_sid);
         if !sid_ok {
             return Err("session.toml: launcher_sid is not a SID".into());
         }
