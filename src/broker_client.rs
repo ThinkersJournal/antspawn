@@ -95,6 +95,42 @@ impl<S: Read + Write> Client<S> {
     }
 }
 
+/// Wait until something accepts a TCP connection at `addr`, polling until `timeout`.
+///
+/// # Errors
+/// Nothing answered in time (the last connect error is in the message).
+pub fn wait_port(addr: std::net::SocketAddr, timeout: std::time::Duration) -> Result<(), String> {
+    use std::time::{Duration, Instant};
+    let give_up = Instant::now() + timeout;
+    loop {
+        let last = match std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(1)) {
+            Ok(_) => return Ok(()),
+            Err(e) => e,
+        };
+        if Instant::now() >= give_up {
+            return Err(format!("nothing answered at {addr} in time: {last}"));
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+}
+
+/// Wait for a broker-made guest's SSH port (22) at `address`, the `address` a `create` returned.
+/// `create` does not start the VM and the driver does not wait for the guest, so the caller starts it
+/// and waits here. Only an address inside the pool range (10.77.0.0/16) is accepted: this is not a
+/// general port scanner.
+///
+/// # Errors
+/// `address` is not an IPv4 address in 10.77.0.0/16, or nothing answered in time.
+pub fn wait_ssh(address: &str, timeout: std::time::Duration) -> Result<(), String> {
+    let ip: std::net::Ipv4Addr = address
+        .parse()
+        .map_err(|_| "the address is not an IPv4 address".to_string())?;
+    if ip.octets()[..2] != [10, 77] {
+        return Err("the address is outside 10.77.0.0/16".into());
+    }
+    wait_port(std::net::SocketAddr::from((ip, 22)), timeout)
+}
+
 /// Connect to the broker's pipe, waiting briefly while every instance is busy.
 ///
 /// # Errors
@@ -132,4 +168,37 @@ pub fn connect(name: &str) -> Result<Client<std::fs::File>, String> {
 #[cfg(not(windows))]
 pub fn connect(_: &str) -> Result<Client<std::fs::File>, String> {
     Err("the broker pipe is implemented for Windows only".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn a_listening_port_is_found_and_a_closed_one_times_out() {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let open = l.local_addr().unwrap();
+        wait_port(open, Duration::from_secs(2)).unwrap();
+        drop(l);
+        let started = std::time::Instant::now();
+        let e = wait_port(open, Duration::from_millis(600)).unwrap_err();
+        assert!(e.contains("in time"), "{e}");
+        assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    #[test]
+    fn wait_ssh_refuses_anything_outside_the_pool_range() {
+        for bad in [
+            "192.168.1.5",
+            "10.78.0.1",
+            "127.0.0.1",
+            "10.77.1.2 ",
+            "nope",
+            "",
+        ] {
+            let e = wait_ssh(bad, Duration::from_millis(10)).unwrap_err();
+            assert!(e.contains("address"), "{bad}: {e}");
+        }
+    }
 }
