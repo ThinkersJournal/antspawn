@@ -6,6 +6,7 @@ pub mod adapter;
 pub mod broker;
 pub mod broker_pipe;
 pub mod broker_proto;
+pub mod broker_serve;
 pub mod capability;
 pub mod hyperv;
 pub mod launcher;
