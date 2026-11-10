@@ -17,6 +17,7 @@ pub mod matrix;
 pub mod probes;
 pub mod result;
 pub mod runner;
+pub mod sandbox_broker;
 pub mod seed;
 pub mod session;
 pub mod session_cli;
