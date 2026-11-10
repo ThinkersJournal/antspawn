@@ -5,16 +5,23 @@
 #![cfg(windows)]
 
 use antspawn::broker_pipe::Listener;
-use antspawn::session_pipe::owner_sid;
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
 
+/// This account's SID from `whoami` (the file owner is the Administrators group on an elevated CI
+/// runner, which is not the token's user and so not what the broker reads).
 fn me() -> String {
-    let f = std::env::temp_dir().join(format!("antspawn-bp-{}", std::process::id()));
-    std::fs::write(&f, b"x").unwrap();
-    let sid = owner_sid(&f).unwrap();
-    let _ = std::fs::remove_file(&f);
-    sid
+    let out = std::process::Command::new("whoami")
+        .args(["/user", "/fo", "csv", "/nh"])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    let sid = text.trim().rsplit(',').next().unwrap().trim_matches('"');
+    assert!(
+        antspawn::session_host::valid_sid(sid),
+        "whoami said {text:?}"
+    );
+    sid.to_string()
 }
 
 fn name(tag: &str) -> String {
