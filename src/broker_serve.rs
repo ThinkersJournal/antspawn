@@ -3,7 +3,7 @@
 //! [`Broker::handle`], frames out, and the VMs the connection made destroyed when it ends, however
 //! it ends.
 //!
-//! No pipe and no account here: the caller (the broker binary, not yet built) accepts the pipe,
+//! No pipe and no account here: the caller (the broker binary) accepts the pipe,
 //! reads the client's SID from the OS, and passes it in as `account`. What is shown by the tests is
 //! the loop's behaviour over an in-memory stream; the real pipe is not exercised.
 
@@ -23,18 +23,21 @@ pub enum Ended {
     Broken(String),
 }
 
-/// Serve one connected peer until it disconnects or breaks the framing, then destroy what it made.
+/// Serve one connected peer until it disconnects or breaks the framing, then call `finish`.
+///
+/// `handle` answers one valid request; a caller sharing one broker between connections locks it
+/// inside `handle`, so the lock is held per request and never across a blocking read. `finish` runs on
+/// EVERY exit path (a peer that vanished, broke the framing, or could not be answered) and is where
+/// the connection's VMs are destroyed.
 ///
 /// A frame that is intact but not a valid request (bad JSON, unknown op, extra field) is answered
 /// with an error and the loop goes on: the stream is still in step. A bad length or a truncated
-/// frame ends the connection. `now` is the broker's own clock, read per request.
-pub fn serve_connection<D: Driver, R: Read, W: Write>(
-    broker: &mut Broker<D>,
-    conn: u64,
-    account: &str,
+/// frame ends the connection.
+pub fn serve_connection<R: Read, W: Write>(
     r: &mut R,
     w: &mut W,
-    mut now: impl FnMut() -> Duration,
+    mut handle: impl FnMut(&Request) -> Response,
+    finish: impl FnOnce(),
 ) -> Ended {
     let ended = loop {
         let request: Request = match read_frame(r) {
@@ -51,14 +54,32 @@ pub fn serve_connection<D: Driver, R: Read, W: Write>(
             }
             Err(e) => break Ended::Broken(e.to_string()),
         };
-        let answer = broker.handle(conn, account, &request, now());
+        let answer = handle(&request);
         if let Err(e) = write_frame(w, &answer) {
             break Ended::Broken(e.to_string());
         }
     };
-    // Every exit path: a peer that vanished, broke the framing, or could not be answered.
-    broker.disconnect(conn);
+    finish();
     ended
+}
+
+/// [`serve_connection`] for a broker this connection owns exclusively (tests, a single-client run).
+/// `now` is the broker's own clock, read per request.
+pub fn serve_owned<D: Driver, R: Read, W: Write>(
+    broker: &mut Broker<D>,
+    conn: u64,
+    account: &str,
+    r: &mut R,
+    w: &mut W,
+    mut now: impl FnMut() -> Duration,
+) -> Ended {
+    let broker = std::cell::RefCell::new(broker);
+    serve_connection(
+        r,
+        w,
+        |request| broker.borrow_mut().handle(conn, account, request, now()),
+        || broker.borrow_mut().disconnect(conn),
+    )
 }
 
 #[cfg(test)]
@@ -158,7 +179,7 @@ mod tests {
         let mut b = broker(&world);
         let mut input = Cursor::new(frames(&[create()]));
         let mut out = Vec::new();
-        let ended = serve_connection(
+        let ended = serve_owned(
             &mut b,
             1,
             "S-1-5-21-1-2-3-1001",
@@ -184,7 +205,7 @@ mod tests {
         bytes.extend_from_slice(bad);
         bytes.extend(frames(&[Request::List {}]));
         let mut out = Vec::new();
-        let ended = serve_connection(
+        let ended = serve_owned(
             &mut b,
             1,
             "S-1-5-21-1-2-3-1001",
@@ -206,7 +227,7 @@ mod tests {
         bytes.extend_from_slice(&100u32.to_le_bytes());
         bytes.extend_from_slice(b"{\"op\"");
         let mut out = Vec::new();
-        let ended = serve_connection(
+        let ended = serve_owned(
             &mut b,
             1,
             "S-1-5-21-1-2-3-1001",
@@ -224,7 +245,7 @@ mod tests {
         let mut b = broker(&world);
         let bytes = u32::MAX.to_le_bytes().to_vec();
         let mut out = Vec::new();
-        let ended = serve_connection(
+        let ended = serve_owned(
             &mut b,
             1,
             "S-1-5-21-1-2-3-1001",
