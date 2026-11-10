@@ -33,6 +33,10 @@ pub enum Response {
         address: String,
     },
     Done {},
+    /// The Sandbox broker started one: `vm` is its name here (the owner stops it with `delete`).
+    SandboxStarted {
+        vm: String,
+    },
     Vms {
         vms: Vec<String>,
     },

@@ -57,6 +57,20 @@ impl<S: Read + Write> Client<S> {
         }
     }
 
+    /// Ask the Sandbox broker for a sandbox from the fixed template `profile`; returns its name, which
+    /// the owner passes to [`Client::delete`] to stop it.
+    ///
+    /// # Errors
+    /// The broker refused (busy, not offered, ...), or the answer was not a start.
+    pub fn sandbox_start(&mut self, profile: &str) -> Result<String, String> {
+        match self.call(&Request::SandboxStart {
+            profile: profile.into(),
+        })? {
+            Response::SandboxStarted { vm } => Ok(vm),
+            _ => Err("the broker answered a sandbox start with something else".into()),
+        }
+    }
+
     fn done(&mut self, request: &Request) -> Result<(), String> {
         match self.call(request)? {
             Response::Done {} => Ok(()),
