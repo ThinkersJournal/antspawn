@@ -4,6 +4,7 @@
 
 pub mod adapter;
 pub mod broker;
+pub mod broker_config;
 pub mod broker_pipe;
 pub mod broker_proto;
 pub mod broker_serve;
