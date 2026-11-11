@@ -144,7 +144,7 @@ fn io(path: &Path, e: std::io::Error) -> WorkspaceError {
 }
 
 /// True for a symlink or, on Windows, any reparse point (junctions included).
-fn is_reparse(md: &fs::Metadata) -> bool {
+pub(crate) fn is_reparse(md: &fs::Metadata) -> bool {
     if md.file_type().is_symlink() {
         return true;
     }
@@ -183,7 +183,7 @@ pub fn hash_file(path: &Path) -> Result<Entry, WorkspaceError> {
 
 /// Walk `root`, calling `f(relative path, absolute path)` for every regular file, in sorted order.
 /// A reparse point anywhere is an error (not skipped: a skipped one hides what the copy lacks).
-fn walk(
+pub(crate) fn walk(
     root: &Path,
     rel: &str,
     f: &mut dyn FnMut(&str, &Path) -> Result<(), WorkspaceError>,

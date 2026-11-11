@@ -265,7 +265,11 @@ fn session(layout: &Layout, id: &str) -> Result<(), String> {
     let pipe = antspawn::session_pipe::accept(&file.pipe_name(id), &file.launcher_sid)
         .map_err(|e| fail(format!("pipe: {e}")))?;
     let owner_gone = AtomicBool::new(false);
-    let ended = serve_session(&mut &pipe, &mut &pipe, |req| {
+    let files = antspawn::session_files::WorkFiles::new(
+        &work,
+        antspawn::workspace::Policy::default().max_file_bytes,
+    );
+    let ended = serve_session(&mut &pipe, &mut &pipe, &files, |req| {
         run_command(
             &work,
             &scratch,

@@ -22,6 +22,7 @@ pub mod sandbox_config;
 pub mod seed;
 pub mod session;
 pub mod session_cli;
+pub mod session_files;
 pub mod session_host;
 pub mod session_pipe;
 pub mod session_proto;

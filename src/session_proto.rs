@@ -58,6 +58,44 @@ pub enum Request {
     /// (A struct variant, not a unit one: serde ignores unknown fields on unit variants of a
     /// tagged enum even with `deny_unknown_fields`; `{"op":"close","x":1}` must be an error.)
     Close {},
+    /// Write `data` (base64, at most [`MAX_CHUNK`] bytes) into the session's workspace at `path`.
+    /// `offset` 0 creates or truncates the file; any other offset must equal its current length, so a
+    /// lost or repeated chunk is an error, never a silent gap. Slice W5 (copy-back): the launcher cannot
+    /// read or write the account's work dir, so a project goes in, and changes come out, through here.
+    Put {
+        id: u64,
+        path: String,
+        offset: u64,
+        data: String,
+    },
+    /// Read up to `len` (at most [`MAX_CHUNK`]) bytes of `path` from `offset`.
+    Get {
+        id: u64,
+        path: String,
+        offset: u64,
+        len: u64,
+    },
+    /// List regular files in the workspace with size and SHA-256, sorted by path, starting after
+    /// `after` (exclusive), at most [`MAX_LIST`] per answer.
+    List {
+        id: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<String>,
+    },
+}
+
+/// Largest raw chunk of a file in one `put` or `get`; its base64 stays inside [`MAX_FRAME`].
+pub const MAX_CHUNK: u64 = 512 * 1024;
+/// Most entries in one `files` answer (about 150 bytes each as JSON, inside [`MAX_FRAME`]).
+pub const MAX_LIST: usize = 2000;
+
+/// One file in a `files` answer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FileInfo {
+    pub path: String,
+    pub size: u64,
+    pub sha256: String,
 }
 
 /// What a session host answers.
@@ -78,6 +116,23 @@ pub enum Response {
         combined: bool,
     },
     Closed {},
+    /// A `put` landed; `size` is the file's length now.
+    Stored {
+        id: u64,
+        size: u64,
+    },
+    /// A `get` chunk (base64); `eof` when it reached the end of the file.
+    Data {
+        id: u64,
+        data: String,
+        eof: bool,
+    },
+    /// A `list` page; `more` when another page follows `files.last()`.
+    Files {
+        id: u64,
+        files: Vec<FileInfo>,
+        more: bool,
+    },
     /// The request was refused or failed; the session is still usable unless the host then closes.
     Error {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -127,7 +182,7 @@ impl Request {
                 req.validate().map_err(ProtoError::Invalid)?;
                 Ok((id, req))
             }
-            Request::Close {} => Err(ProtoError::Invalid("close is not an exec".into())),
+            _ => Err(ProtoError::Invalid("not an exec".into())),
         }
     }
 }
@@ -188,8 +243,8 @@ impl Response {
                     },
                 ))
             }
-            Response::Closed {} => Err(ProtoError::Invalid("closed is not an exec result".into())),
             Response::Error { message, .. } => Err(ProtoError::Invalid(message)),
+            _ => Err(ProtoError::Invalid("not an exec result".into())),
         }
     }
 }
@@ -417,6 +472,67 @@ mod tests {
             Err(ProtoError::BadLength(_))
         ));
         assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn file_requests_and_answers_round_trip_and_deny_unknown_fields() {
+        let reqs = [
+            Request::Put {
+                id: 1,
+                path: "a/b".into(),
+                offset: 0,
+                data: "aGk=".into(),
+            },
+            Request::Get {
+                id: 2,
+                path: "a/b".into(),
+                offset: 1,
+                len: 9,
+            },
+            Request::List {
+                id: 3,
+                after: Some("a".into()),
+            },
+            Request::List { id: 4, after: None },
+        ];
+        for r in reqs {
+            let mut buf = Vec::new();
+            write_frame(&mut buf, &r).unwrap();
+            assert_eq!(
+                read_frame::<_, Request>(&mut Cursor::new(buf)).unwrap(),
+                Some(r)
+            );
+        }
+        let resp = Response::Files {
+            id: 3,
+            files: vec![FileInfo {
+                path: "x".into(),
+                size: 1,
+                sha256: "00".into(),
+            }],
+            more: true,
+        };
+        let mut buf = Vec::new();
+        write_frame(&mut buf, &resp).unwrap();
+        assert_eq!(
+            read_frame::<_, Response>(&mut Cursor::new(buf)).unwrap(),
+            Some(resp)
+        );
+        for bad in [
+            r#"{"op":"put","id":1,"path":"a","offset":0,"data":"","x":1}"#,
+            r#"{"op":"list","id":1,"extra":true}"#,
+            r#"{"op":"get","id":1,"path":"a","offset":0}"#,
+        ] {
+            assert!(read_req(frame_of(bad.as_bytes())).is_err(), "{bad}");
+        }
+        // a chunk at the limit still fits a frame once base64'd and wrapped
+        let max = Request::Put {
+            id: u64::MAX,
+            path: "p".repeat(255),
+            offset: u64::MAX,
+            data: STANDARD.encode(vec![0u8; MAX_CHUNK as usize]),
+        };
+        write_frame(&mut Vec::new(), &max).expect("a maximal chunk fits a frame");
     }
 
     #[test]
