@@ -18,6 +18,7 @@ pub mod probes;
 pub mod result;
 pub mod runner;
 pub mod sandbox_broker;
+pub mod sandbox_config;
 pub mod seed;
 pub mod session;
 pub mod session_cli;

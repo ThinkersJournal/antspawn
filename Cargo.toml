@@ -1,6 +1,6 @@
 [package]
 name = "antspawn"
-version = "0.0.109"
+version = "0.0.110"
 edition = "2024"
 rust-version = "1.95"
 description = "A sandboxed job runner: one clean environment per job, only what the job declares, outputs collected, environment destroyed. Launchers are certified by tests, never asserted."
@@ -17,6 +17,10 @@ path = "src/main.rs"
 [[bin]]
 name = "spawn-broker"
 path = "src/bin/spawn-broker.rs"
+
+[[bin]]
+name = "spawn-sandbox-broker"
+path = "src/bin/spawn-sandbox-broker.rs"
 
 [[bin]]
 name = "spawn-runner"

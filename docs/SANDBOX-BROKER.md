@@ -59,7 +59,7 @@ So a **non-elevated Hyper-V Administrator can run the whole lifecycle including 
 ```
  runner account (any in group `antspawn-vm-clients`)          broker (one dedicated account, the ONLY Hyper-V Administrators member)
    pipe \\.\pipe\antspawn-vm   vm.create{image,profile,pubkey} -> picks a free pool switch, makes a differencing disk + seed ISO,
-                               <- {vm id, ip, port}              creates the VM from a fixed template, starts it
+                               <- {vm id, ip, port}              creates the VM from a fixed template (does NOT start it)
    ssh -i key user@ip  (runner -> guest, over the pool switch; the runner populates and runs whatever it wants)
    vm.stop{force} / vm.start / vm.delete / vm.status / vm.list(own)
    (runner exits or the pipe closes)  ------------------------>  broker destroys every VM that connection created
@@ -102,7 +102,7 @@ Residue, stated plainly: a guest can attack the **host's hypervisor surface** (a
 | Step | Operation | Broker call |
 |---|---|---|
 | create | `New-VM` gen2 from the template, differencing disk on the Linux base, seed ISO, pool switch, caps checked | `vm.create` |
-| start, address | `Start-VM`; wait for the guest's port 22 on the known static address (no KVP, it is off) | `vm.create` returns when ready or fails; `vm.status` |
+| start, address | `Start-VM`; wait for the guest's port 22 on the known static address (no KVP, it is off) | `create` does NOT start the VM or wait for the guest: the caller sends `start`, then polls port 22 itself (`broker_client::wait_ssh`) |
 | write and sync | the runner, over SSH | none |
 | power-cut | `Stop-VM -TurnOff` (the guest sees power removal; the **host's** page cache and VHDX flush behaviour are not the guest's: this tests guest-visible durability under a hypervisor power-off, not a host power loss; said so the PersistAnt side can word its claim) | `vm.stop{force:true}` |
 | restart | `Start-VM` on the **same** VM and differencing disk (the disk must survive a stop) | `vm.start` |

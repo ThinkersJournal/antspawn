@@ -111,7 +111,7 @@ fn pool_address(s: &str, what: &str) -> Result<Ipv4Addr, String> {
     Ok(a)
 }
 
-fn absolute_path(s: &str, what: &str) -> Result<(), String> {
+pub(crate) fn absolute_path(s: &str, what: &str) -> Result<(), String> {
     // quote() refuses empty, control and non-ASCII text, the same test the driver applies later.
     let b = s.as_bytes();
     let drive = b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'\\';
