@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Example configuration for spawn-sandbox-broker. Check it with
+#   spawn-sandbox-broker --config sandbox-broker.toml --check
+pipe = "antspawn-sandbox-broker"
+
+# SIDs allowed to connect (1..=16). This one is a placeholder: use the runner accounts' real SIDs,
+# e.g. (New-Object Security.Principal.NTAccount 'antspawn-run').Translate([Security.Principal.SecurityIdentifier]).Value
+allow_sids = ["S-1-5-21-1-2-3-1001"]
+
+[[profiles]]
+name = "default"
+template = 'C:\antspawn\sandbox\default.wsb'
+
+[[profiles]]
+name = "staging"
+template = 'C:\antspawn\sandbox\staging.wsb'
+
+[limits]                      # optional; defaults are 4 creates a minute and 14400 s (4 h)
+creates_per_minute = 4
+max_lifetime_s = 3600

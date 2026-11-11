@@ -62,3 +62,89 @@ fn a_missing_file_and_bad_usage_are_refused() {
     assert_eq!(run(&["--check"]).0, 2);
     assert_eq!(run(&["--bogus"]).0, 2);
 }
+
+const EXAMPLE_CONFIG: &str = include_str!("../examples/sandbox/sandbox-broker.example.toml");
+const EXAMPLE_TEMPLATES: [(&str, &str); 2] = [
+    ("default", include_str!("../examples/sandbox/default.wsb")),
+    ("staging", include_str!("../examples/sandbox/staging.wsb")),
+];
+
+/// The shipped example config is accepted by the real binary and offers exactly the shipped templates.
+#[test]
+fn the_shipped_example_config_is_accepted_and_offers_its_templates() {
+    let f = file("example", EXAMPLE_CONFIG);
+    let (code, out, err) = run(&["--config", &f, "--check"]);
+    assert_eq!(code, 0, "{err}");
+    for (name, _) in EXAMPLE_TEMPLATES {
+        assert!(out.contains(name), "{out}");
+    }
+    assert_eq!(EXAMPLE_CONFIG.matches("[[profiles]]").count(), 2);
+    let _ = std::fs::remove_file(f);
+}
+
+/// A fake `wsb` that records the configuration `start -c` was given and answers with an id.
+struct Fake(std::cell::RefCell<Vec<String>>);
+
+impl antspawn::wsb_driver::Wsb for &Fake {
+    fn run(&self, args: &[&str]) -> Result<String, String> {
+        if args[0] == "start" {
+            self.0.borrow_mut().push(args[2].to_string());
+        }
+        Ok("Id: 0f3a9c2e-1b4d-4e5f-8a6b-7c8d9e0f1a2b\n".to_string())
+    }
+}
+
+/// The real driver starts each shipped file as it is on disk and hands `wsb` exactly its text (a file
+/// that opened with a comment would be refused: the driver wants `<Configuration` first). Control: the
+/// same file with a comment put in front is refused and never reaches `wsb`.
+#[test]
+fn the_driver_accepts_each_shipped_template_verbatim() {
+    use antspawn::sandbox_broker::SandboxDriver;
+    use antspawn::wsb_driver::WsbDriver;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/sandbox");
+    let fake = Fake(Default::default());
+    let mut templates = std::collections::BTreeMap::new();
+    for (name, _) in EXAMPLE_TEMPLATES {
+        templates.insert(name.to_string(), dir.join(format!("{name}.wsb")));
+    }
+    let bad = std::env::temp_dir().join(format!("antspawn-sbc-bad-{}.wsb", std::process::id()));
+    std::fs::write(&bad, format!("<!-- c -->\n{}", EXAMPLE_TEMPLATES[0].1)).unwrap();
+    templates.insert("bad".to_string(), bad.clone());
+    let mut d = WsbDriver::new(&fake, templates);
+    for (name, text) in EXAMPLE_TEMPLATES {
+        assert!(d.start(name).is_ok(), "{name}");
+        assert_eq!(fake.0.borrow().last().unwrap(), text, "{name}");
+    }
+    let before = fake.0.borrow().len();
+    assert!(d.start("bad").is_err());
+    assert_eq!(
+        fake.0.borrow().len(),
+        before,
+        "a refused template reached wsb"
+    );
+    let _ = std::fs::remove_file(bad);
+}
+
+/// Every shipped template keeps the lockdown: no network, no GPU, no clipboard, protected client,
+/// nothing writable, no command at logon.
+#[test]
+fn the_shipped_templates_are_locked_down() {
+    for (name, t) in EXAMPLE_TEMPLATES {
+        for must in [
+            "<Networking>Disable</Networking>",
+            "<VGpu>Disable</VGpu>",
+            "<ClipboardRedirection>Disable</ClipboardRedirection>",
+            "<ProtectedClient>Enable</ProtectedClient>",
+        ] {
+            assert_eq!(t.matches(must).count(), 1, "{name} lacks {must}");
+        }
+        assert!(
+            !t.contains("<ReadOnly>false"),
+            "{name} has a writable folder"
+        );
+        assert!(
+            !t.contains("<LogonCommand"),
+            "{name} runs a command at logon"
+        );
+    }
+}
