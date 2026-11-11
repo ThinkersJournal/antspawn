@@ -17,7 +17,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use ring::digest;
 
+use crate::bind::{Acl, BindGrant, Journal};
 use crate::launcher::LaunchError;
+use crate::launcher::Launcher;
 use crate::runner::safe_relative;
 use crate::session::{ExecOutcome, ExecRequest, Session};
 use crate::session_proto::{FileInfo, MAX_CHUNK};
@@ -42,6 +44,9 @@ pub struct WorkspaceSession {
     root: PathBuf,
     policy: Policy,
     base: Manifest,
+    mode: Mode,
+    /// `bind` only. Declared after `inner` so the session ends before the grant is taken away.
+    grant: Option<BindGrant>,
 }
 
 /// The files a session changed, fetched into a launcher-side directory that is removed on drop.
@@ -79,11 +84,45 @@ impl WorkspaceSession {
                 root: root.to_path_buf(),
                 policy,
                 base,
+                mode: Mode::CopyBack,
+                grant: None,
             }),
             Err(e) => {
                 let _ = inner.close();
                 Err(e)
             }
+        }
+    }
+
+    /// A session running in the real folder `root` (`bind`). The caller opened `inner` with
+    /// [`crate::Launcher::open_session_in`] after `grant` was in place; `grant` is `None` only for a
+    /// launcher that runs as the invoking user (nothing to grant).
+    pub fn bound(
+        inner: Box<dyn Session>,
+        root: &Path,
+        policy: Policy,
+        grant: Option<BindGrant>,
+    ) -> WorkspaceSession {
+        WorkspaceSession {
+            inner,
+            root: root.to_path_buf(),
+            policy,
+            base: Manifest::new(),
+            mode: Mode::Bind,
+            grant,
+        }
+    }
+
+    /// Which mode this session runs in (recorded in the harness's result).
+    pub fn mode(&self) -> Mode {
+        self.mode
+    }
+
+    /// `bind` only: protected paths the account created after open (nothing could deny it).
+    pub fn new_protected_paths(&self) -> Result<Vec<String>, LaunchError> {
+        match &self.grant {
+            Some(g) => g.new_protected_paths().map_err(bad),
+            None => Ok(Vec::new()),
         }
     }
 
@@ -94,6 +133,11 @@ impl WorkspaceSession {
 
     /// Fetch what the session changed into a staging directory and diff it against the base.
     pub fn changes(&mut self) -> Result<Staged, LaunchError> {
+        if self.mode == Mode::Bind {
+            return Err(bad(
+                "workspace mode `bind` edits the project in place: there is no change set to fetch",
+            ));
+        }
         let dir = std::env::temp_dir().join(format!(
             "antspawn-stage-{}-{}",
             std::process::id(),
@@ -216,7 +260,15 @@ impl Session for WorkspaceSession {
         self.inner.exec(req)
     }
     fn close(self: Box<Self>) -> Result<(), LaunchError> {
-        self.inner.close()
+        let WorkspaceSession { inner, grant, .. } = *self;
+        // The session ends first (its tree is killed), then the grant is taken away and proven gone.
+        let ended = inner.close();
+        let revoked = grant.map_or(Ok(()), |g| g.revoke().map_err(bad));
+        match (ended, revoked) {
+            (Ok(()), r) => r,
+            (Err(e), Ok(())) => Err(e),
+            (Err(e), Err(r)) => Err(bad(format!("{e}; and the grant: {r}"))),
+        }
     }
     fn put(&mut self, path: &str, offset: u64, data: &[u8]) -> Result<u64, LaunchError> {
         self.inner.put(path, offset, data)
@@ -227,6 +279,25 @@ impl Session for WorkspaceSession {
     fn list(&mut self, after: Option<&str>) -> Result<(Vec<FileInfo>, bool), LaunchError> {
         self.inner.list(after)
     }
+}
+
+/// Open a `bind` session on `launcher`: grant first (denies, then Modify), then start the session in
+/// `root`. If the session cannot start the grant is removed again before the error returns.
+pub fn open_bound(
+    launcher: &dyn Launcher,
+    root: &Path,
+    policy: Policy,
+    journal: &Journal,
+    acl: Box<dyn Acl>,
+    alive: &dyn Fn(u32) -> bool,
+) -> Result<WorkspaceSession, LaunchError> {
+    let grant = match launcher.bind_principal() {
+        Some(who) => Some(BindGrant::open(root, &who, &policy, journal, acl, alive).map_err(bad)?),
+        None => None,
+    };
+    // On error `grant` drops here and revokes (best effort; the journal keeps it if that fails).
+    let inner = launcher.open_session_in(Some(root))?;
+    Ok(WorkspaceSession::bound(inner, root, policy, grant))
 }
 
 /// A path from the host that is safe to join under the staging directory.
@@ -612,5 +683,174 @@ mod tests {
         );
         assert!(r.is_err_and(|e| e.to_string().contains("reparse")));
         assert!(!work.join("j").exists());
+    }
+}
+
+#[cfg(test)]
+mod bind_tests {
+    use super::*;
+    use crate::bind::tests::Fake;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    /// Records the order of events across the launcher, its session and the ACL fake.
+    struct L {
+        events: Rc<RefCell<Vec<String>>>,
+        supports_bind: bool,
+        fail_open: bool,
+    }
+    struct S(Rc<RefCell<Vec<String>>>);
+
+    impl Session for S {
+        fn exec(&mut self, _: &ExecRequest) -> Result<ExecOutcome, LaunchError> {
+            Err(bad("no exec"))
+        }
+        fn close(self: Box<Self>) -> Result<(), LaunchError> {
+            self.0.borrow_mut().push("session closed".into());
+            Ok(())
+        }
+    }
+
+    impl Launcher for L {
+        fn id(&self) -> &str {
+            "fake"
+        }
+        fn provision(
+            &self,
+            _: &crate::JobSpec,
+        ) -> Result<Box<dyn crate::Environment>, LaunchError> {
+            Err(bad("no"))
+        }
+        fn bind_principal(&self) -> Option<String> {
+            Some("antspawn-run".into())
+        }
+        fn open_session_in(&self, root: Option<&Path>) -> Result<Box<dyn Session>, LaunchError> {
+            if !self.supports_bind || self.fail_open {
+                return Err(bad("cannot open"));
+            }
+            self.events
+                .borrow_mut()
+                .push(format!("session opened in {}", root.unwrap().display()));
+            Ok(Box::new(S(self.events.clone())))
+        }
+    }
+
+    fn dir(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("antspawn-wsb-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(d.join(".git")).unwrap();
+        d
+    }
+
+    fn launcher(f: &Fake, supports_bind: bool, fail_open: bool) -> L {
+        L {
+            events: f.log.clone(),
+            supports_bind,
+            fail_open,
+        }
+    }
+
+    fn open(tag: &str, l: &L, f: &Fake) -> (Result<WorkspaceSession, LaunchError>, Journal) {
+        let root = dir(tag);
+        let j = Journal::new(dir(&format!("{tag}-j")));
+        let r = open_bound(
+            l,
+            &root,
+            Policy::default(),
+            &j,
+            Box::new(f.clone()),
+            &|_| true,
+        );
+        (r, j)
+    }
+
+    fn at(log: &[String], p: &str) -> usize {
+        log.iter().rposition(|l| l.starts_with(p)).unwrap()
+    }
+
+    #[test]
+    fn the_grant_comes_first_the_session_runs_in_the_root_and_close_ends_it_then_revokes() {
+        let f = Fake::default();
+        let (r, j) = open("ok", &launcher(&f, true, false), &f);
+        let ws = r.unwrap();
+        assert_eq!(ws.mode(), Mode::Bind);
+        let log = f.log.borrow().clone();
+        assert!(at(&log, "grant ") < at(&log, "session opened"), "{log:?}");
+        assert!(log[at(&log, "session opened")].contains("antspawn-wsb-ok-"));
+        assert!(!f.state.borrow().is_empty());
+        Box::new(ws).close().unwrap();
+        let log = f.log.borrow().clone();
+        assert!(at(&log, "session closed") < at(&log, "remove "), "{log:?}");
+        assert!(f.state.borrow().is_empty(), "nothing names the account");
+        assert!(j.entries().is_empty());
+    }
+
+    #[test]
+    fn bind_has_no_change_set() {
+        let f = Fake::default();
+        let (r, _) = open("nochg", &launcher(&f, true, false), &f);
+        let mut ws = r.unwrap();
+        assert!(ws.changes().unwrap_err().to_string().contains("in place"));
+    }
+
+    #[test]
+    fn a_session_that_cannot_open_or_a_launcher_without_bind_leaves_no_grant() {
+        for (supports, fail, tag) in [(true, true, "failopen"), (false, false, "nobind")] {
+            let f = Fake::default();
+            let (r, j) = open(tag, &launcher(&f, supports, fail), &f);
+            assert!(r.is_err(), "{tag}");
+            assert!(f.state.borrow().is_empty(), "{tag}: the grant was undone");
+            assert!(j.entries().is_empty(), "{tag}");
+        }
+    }
+
+    #[test]
+    fn an_unproven_revoke_is_an_error_from_close() {
+        let f = Fake::default();
+        let (r, j) = open("sticky", &launcher(&f, true, false), &f);
+        let ws = r.unwrap();
+        let key = ws
+            .root
+            .to_string_lossy()
+            .replace('\\', "/")
+            .trim_end_matches('/')
+            .to_ascii_lowercase();
+        f.sticky.borrow_mut().insert(key);
+        let e = Box::new(ws).close().unwrap_err().to_string();
+        assert!(e.contains("still names"), "{e}");
+        assert_eq!(j.entries().len(), 1, "stays reclaimable");
+    }
+
+    /// The unisolated control: no grant, the session is just the folder, and an edit made through it
+    /// is in the real tree at once (the same edit-in-place probe the account must pass).
+    #[cfg(windows)]
+    #[test]
+    fn naive_bind_edits_in_place() {
+        let f = Fake::default();
+        let root = dir("naive");
+        let j = Journal::new(dir("naive-j"));
+        let mut ws = open_bound(
+            &crate::launchers::naive::Naive,
+            &root,
+            Policy::default(),
+            &j,
+            Box::new(f.clone()),
+            &|_| true,
+        )
+        .unwrap();
+        assert!(
+            f.log.borrow().is_empty(),
+            "naive runs as the user: nothing granted"
+        );
+        let out = ws
+            .exec(&ExecRequest::new(["cmd", "/C", "echo edited> e.txt"]))
+            .unwrap();
+        assert_eq!(out.exit, crate::launcher::Exit::Code(0));
+        assert!(root.join("e.txt").is_file());
+        Box::new(ws).close().unwrap();
+        assert!(
+            root.join("e.txt").is_file(),
+            "close does not touch the project"
+        );
     }
 }

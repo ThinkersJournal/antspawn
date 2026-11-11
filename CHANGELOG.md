@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.117
+
+- Workspace modes, slice W4 part 2 (stacked on #104): `bind` wired through the session. `Launcher` gains `open_session_in(Some(root))` (default: refused, so a bind never quietly becomes something else) and `bind_principal`; `account` passes the root in `session.toml` (new optional `root`; an older host rejects the unknown field, so a bind against an old runner fails loudly instead of running in an empty folder) and names `antspawn-run`; `naive` runs in the folder as the invoking user (the unisolated control, nothing granted). The host runs commands in the root after `session_host::bind_root` accepts it (absolute drive path, no `.`/`..`, an existing directory, not overlapping the runner's own spool, results or work dirs) and never wipes it. `workspace_session::open_bound` grants first (denies then Modify), then opens the session, and revokes the grant if the open fails; `WorkspaceSession::close` ends the session, then revokes and proves removal, and reports a failure of either. `changes()` is an error in bind (edits are in place). `Registry::open_workspace_session` serves `Mode::Bind`. Not wired to `spawn session open` yet (W5 end). **UNVERIFIED live**: needs the spawn-runner redeployed (board 416); nothing here ran as the real account. Unmeasured: whether the account's `.git` read/`git status` works inside a real bind session (W0 measured the ACL, not a git run), cwd handling when the root is on another drive. Provisional (PM allocates).
+
 ## 0.0.116
 
 - Docs: `docs/REDEPLOY-RUNNER.md` and `docs/proof/PASTE-redeploy-runner.ps1`, the procedure for swapping `C:\Program Files\antspawn\spawn-runner.exe` (CI artifact, hash-checked, elevated swap, read back, rollback). Only the swap is elevated; fetching the artifact and the read-back are not. Provisional (PM allocates).
