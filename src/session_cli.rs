@@ -91,7 +91,10 @@ fn serve_lines<R: BufRead, W: Write>(
             }
         };
         let id = match &request {
-            Request::Exec { id, .. } => Some(*id),
+            Request::Exec { id, .. }
+            | Request::Put { id, .. }
+            | Request::Get { id, .. }
+            | Request::List { id, .. } => Some(*id),
             Request::Close {} => None,
         };
         if matches!(request, Request::Close {}) {

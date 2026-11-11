@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use crate::launcher::Exit;
 use crate::runner::safe_relative;
 use crate::session::{ExecOutcome, ExecRequest};
+use crate::session_files::WorkFiles;
 use crate::session_proto::{ProtoError, Request, Response, read_frame, write_frame};
 use crate::streams::{Streams, Tail, settle};
 
@@ -121,6 +122,7 @@ pub enum Ended {
 pub fn serve_session<R: Read, W: Write>(
     r: &mut R,
     w: &mut W,
+    files: &WorkFiles,
     mut exec: impl FnMut(&ExecRequest) -> ExecOutcome,
 ) -> Ended {
     loop {
@@ -141,17 +143,57 @@ pub fn serve_session<R: Read, W: Write>(
                 Err(e) => Ended::Broken(e),
             };
         }
-        let asked = match &req {
-            Request::Exec { id, .. } => *id,
+        let answer = match req {
             Request::Close {} => unreachable!("returned above"),
-        };
-        let answer = match req.into_exec() {
-            Ok((id, er)) => Response::from_outcome(id, &exec(&er)),
-            Err(e) => error(Some(asked), e.to_string()),
+            Request::Exec { id, .. } => match req.into_exec() {
+                Ok((id, er)) => Response::from_outcome(id, &exec(&er)),
+                Err(e) => error(Some(id), e.to_string()),
+            },
+            other => file_op(files, other),
         };
         if let Err(e) = reply(w, &answer) {
             return Ended::Broken(e);
         }
+    }
+}
+
+/// Answer a `put`, `get` or `list` against the session's workspace; a refusal is an `error` frame
+/// and the session goes on.
+fn file_op(files: &WorkFiles, req: Request) -> Response {
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD;
+    match req {
+        Request::Put {
+            id,
+            path,
+            offset,
+            data,
+        } => match STANDARD.decode(&data) {
+            Err(e) => error(Some(id), format!("put: data is not base64: {e}")),
+            Ok(bytes) => match files.put(&path, offset, &bytes) {
+                Ok(size) => Response::Stored { id, size },
+                Err(m) => error(Some(id), format!("put: {m}")),
+            },
+        },
+        Request::Get {
+            id,
+            path,
+            offset,
+            len,
+        } => match files.get(&path, offset, len) {
+            Ok((bytes, eof)) => Response::Data {
+                id,
+                data: STANDARD.encode(bytes),
+                eof,
+            },
+            Err(m) => error(Some(id), format!("get: {m}")),
+        },
+        Request::List { id, after } => match files.list(after.as_deref()) {
+            Ok((files, more)) => Response::Files { id, files, more },
+            Err(m) => error(Some(id), format!("list: {m}")),
+        },
+        Request::Exec { id, .. } => error(Some(id), "not a file operation".into()),
+        Request::Close {} => error(None, "not a file operation".into()),
     }
 }
 
@@ -294,6 +336,10 @@ mod tests {
     use crate::session_proto::Status;
     use std::io::Cursor;
 
+    fn nofiles() -> WorkFiles {
+        WorkFiles::new(std::env::temp_dir().join("antspawn-host-nofiles"), 1000)
+    }
+
     fn frame(body: &str) -> Vec<u8> {
         let mut v = (body.len() as u32).to_le_bytes().to_vec();
         v.extend_from_slice(body.as_bytes());
@@ -330,11 +376,16 @@ mod tests {
     fn exec_then_close_runs_once_and_answers_in_order() {
         let mut out = Vec::new();
         let mut calls = 0;
-        let ended = serve_session(&mut requests(&[EXEC, r#"{"op":"close"}"#]), &mut out, |r| {
-            calls += 1;
-            assert_eq!(r.cmd, ["x"]);
-            ok_outcome()
-        });
+        let ended = serve_session(
+            &mut requests(&[EXEC, r#"{"op":"close"}"#]),
+            &mut out,
+            &nofiles(),
+            |r| {
+                calls += 1;
+                assert_eq!(r.cmd, ["x"]);
+                ok_outcome()
+            },
+        );
         assert_eq!(ended, Ended::Closed);
         assert_eq!(calls, 1);
         let a = answers(out);
@@ -353,10 +404,69 @@ mod tests {
     }
 
     #[test]
+    fn put_get_and_list_are_served_and_a_bad_path_is_an_error_frame_not_the_end() {
+        use base64::Engine;
+        let dir = temp_work("files");
+        let wf = WorkFiles::new(&dir, 1000);
+        let data = base64::engine::general_purpose::STANDARD.encode("hi there");
+        let msgs = [
+            format!(r#"{{"op":"put","id":1,"path":"d/a.txt","offset":0,"data":"{data}"}}"#),
+            r#"{"op":"put","id":2,"path":"../evil","offset":0,"data":""}"#.to_string(),
+            r#"{"op":"get","id":3,"path":"d/a.txt","offset":3,"len":100}"#.to_string(),
+            r#"{"op":"list","id":4}"#.to_string(),
+            r#"{"op":"close"}"#.to_string(),
+        ];
+        let refs: Vec<&str> = msgs.iter().map(String::as_str).collect();
+        let mut out = Vec::new();
+        let ended = serve_session(&mut requests(&refs), &mut out, &wf, |_| ok_outcome());
+        assert_eq!(ended, Ended::Closed);
+        let a = answers(out);
+        assert!(
+            matches!(a[0], Response::Stored { id: 1, size: 8 }),
+            "{:?}",
+            a[0]
+        );
+        assert!(
+            matches!(&a[1], Response::Error { id: Some(2), .. }),
+            "{:?}",
+            a[1]
+        );
+        match &a[2] {
+            Response::Data {
+                id: 3,
+                data,
+                eof: true,
+            } => assert_eq!(
+                base64::engine::general_purpose::STANDARD
+                    .decode(data)
+                    .unwrap(),
+                b"there"
+            ),
+            other => panic!("{other:?}"),
+        }
+        match &a[3] {
+            Response::Files {
+                id: 4,
+                files,
+                more: false,
+            } => {
+                assert_eq!(files.len(), 1);
+                assert_eq!((files[0].path.as_str(), files[0].size), ("d/a.txt", 8));
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(a[4], Response::Closed {}));
+        assert!(!dir.parent().unwrap().join("evil").exists());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn a_peer_that_goes_away_ends_the_session_as_disconnected() {
         // No close frame: the end of the stream is the launcher dying.
         let mut out = Vec::new();
-        let ended = serve_session(&mut requests(&[EXEC]), &mut out, |_| ok_outcome());
+        let ended = serve_session(&mut requests(&[EXEC]), &mut out, &nofiles(), |_| {
+            ok_outcome()
+        });
         assert_eq!(ended, Ended::Disconnected);
         assert_eq!(answers(out).len(), 1);
     }
@@ -374,7 +484,7 @@ mod tests {
         msgs.push(r#"{"op":"close"}"#);
         let mut out = Vec::new();
         let mut calls = 0;
-        let ended = serve_session(&mut requests(&msgs), &mut out, |_| {
+        let ended = serve_session(&mut requests(&msgs), &mut out, &nofiles(), |_| {
             calls += 1;
             ok_outcome()
         });
@@ -405,7 +515,7 @@ mod tests {
         cut.truncate(cut.len() - 3);
         for (name, bytes) in [("oversized", over), ("zero", zero), ("truncated", cut)] {
             let mut out = Vec::new();
-            let ended = serve_session(&mut Cursor::new(bytes), &mut out, |_| {
+            let ended = serve_session(&mut Cursor::new(bytes), &mut out, &nofiles(), |_| {
                 panic!("{name}: reached the executor")
             });
             assert!(matches!(ended, Ended::Broken(_)), "{name}: {ended:?}");
