@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.116
+
+- Docs: `docs/REDEPLOY-RUNNER.md` and `docs/proof/PASTE-redeploy-runner.ps1`, the procedure for swapping `C:\Program Files\antspawn\spawn-runner.exe` (CI artifact, hash-checked, elevated swap, read back, rollback). Only the swap is elevated; fetching the artifact and the read-back are not. Provisional (PM allocates).
+
 ## 0.0.114
 
 - Workspace modes, slice W5 part 2 (stacked on #102): the launcher side of copy-back. `Session` gains `put`, `get` and `list` (default: refused), served by the account session over the pipe and by `naive` straight from its directory. `WorkspaceSession` wraps any session: on open it walks the project and `put`s every file in 512 KiB chunks, building the BASE manifest from the bytes it actually read and sent (the host's hashes are never trusted for the base; a reparse point stops the copy-in; per-file and total caps apply; a failed open closes the session it opened). `changes()` pages `list`, fetches only differing files into a launcher-side staging directory (removed on drop), re-hashes them locally, and diffs against the base; `apply(&staged, &Approvals)` writes them through `workspace::apply` as the user. AntSpawn never approves: refusals (deletes, protected paths) need the harness's `Approvals`. The host is untrusted: an unsafe, repeated or oversize path in its listing is an error before any fetch, and a file that outgrows the cap while read is refused. `Registry::open_workspace_session` runs the same matrix check as `open_session`; `bind` is refused until W4. Not yet wired to `spawn session open`. Tested against a directory-backed session and hostile fakes; the real account pipe path is UNVERIFIED until the spawn-runner is redeployed and run. Provisional (PM allocates).
