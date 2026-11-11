@@ -14,6 +14,7 @@ use std::collections::BTreeMap;
 
 use crate::launcher::{Exit, LaunchError};
 use crate::runner::safe_relative;
+use crate::session_proto::FileInfo;
 use crate::streams::Streams;
 
 /// One command to run inside a session.
@@ -72,6 +73,30 @@ pub trait Session {
     fn exec(&mut self, req: &ExecRequest) -> Result<ExecOutcome, LaunchError>;
     /// End the session and everything in it.
     fn close(self: Box<Self>) -> Result<(), LaunchError>;
+
+    /// Write one chunk of `path` in the session's workspace (slice W5): offset 0 creates or
+    /// truncates, any other offset must equal the file's length now. Returns the length after.
+    fn put(&mut self, _path: &str, _offset: u64, _data: &[u8]) -> Result<u64, LaunchError> {
+        Err(no_files())
+    }
+    /// Read up to `len` bytes of `path` from `offset`; `true` when that reached the end of the file.
+    fn get(
+        &mut self,
+        _path: &str,
+        _offset: u64,
+        _len: u64,
+    ) -> Result<(Vec<u8>, bool), LaunchError> {
+        Err(no_files())
+    }
+    /// Regular files in the workspace with size and SHA-256, sorted, after `after`; `true` when
+    /// another page follows.
+    fn list(&mut self, _after: Option<&str>) -> Result<(Vec<FileInfo>, bool), LaunchError> {
+        Err(no_files())
+    }
+}
+
+fn no_files() -> LaunchError {
+    LaunchError::Other("this session does not provide workspace file operations".into())
 }
 
 #[cfg(test)]

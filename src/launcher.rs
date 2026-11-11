@@ -197,6 +197,23 @@ impl Registry {
         }
         Ok(self.open_named(id, &needs)?.open_session()?)
     }
+
+    /// [`Registry::open_session`] plus the project at `root`, copied in (slice W5). The same matrix
+    /// check applies; the returned session also answers `changes()` and `apply()`. A mode the
+    /// launcher cannot serve is refused and the session it opened is closed, never left running.
+    pub fn open_workspace_session(
+        &self,
+        id: &str,
+        needs: &Needs,
+        root: &Path,
+        mode: crate::workspace::Mode,
+        policy: crate::workspace::Policy,
+    ) -> Result<crate::workspace_session::WorkspaceSession, OpenSessionError> {
+        let inner = self.open_session(id, needs)?;
+        Ok(crate::workspace_session::WorkspaceSession::open(
+            inner, root, mode, policy,
+        )?)
+    }
 }
 
 #[cfg(test)]

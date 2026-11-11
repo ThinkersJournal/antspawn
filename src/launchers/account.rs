@@ -35,9 +35,11 @@ use crate::runner::{
 };
 use crate::session::{ExecOutcome, ExecRequest, Session};
 use crate::session_host::SessionFile;
-use crate::session_proto::{Request, Response, read_frame, write_frame};
+use crate::session_proto::{FileInfo, Request, Response, read_frame, write_frame};
 use crate::spec::{JobSpec, MountMode};
 use crate::streams::Streams;
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
 
 /// How long the runner gets to pick a job up and answer, beyond the job's own time limit.
 const GRACE: Duration = Duration::from_secs(60);
@@ -243,33 +245,60 @@ struct AccountSession {
 impl Session for AccountSession {
     fn exec(&mut self, req: &ExecRequest) -> Result<ExecOutcome, LaunchError> {
         req.validate().map_err(LaunchError::Other)?;
-        let id = self.next_id;
-        self.next_id += 1;
-        let pipe = self
-            .pipe
-            .as_mut()
-            .ok_or_else(|| LaunchError::Other("the session is closed".into()))?;
-        let broken =
-            |e: crate::session_proto::ProtoError| LaunchError::Other(format!("session host: {e}"));
-        write_frame(pipe, &Request::exec(id, req)).map_err(broken)?;
-        match read_frame::<_, Response>(pipe).map_err(broken)? {
-            Some(Response::Error { message, .. }) => Err(LaunchError::Other(format!(
-                "session host refused: {message}"
-            ))),
-            Some(Response::Closed {}) => Err(LaunchError::Other("the session host closed".into())),
-            Some(r) => {
-                let (got, outcome) = r.into_outcome().map_err(broken)?;
-                if got == id {
-                    Ok(outcome)
-                } else {
-                    Err(LaunchError::Other(format!(
-                        "session host answered exec {got}, expected {id}"
-                    )))
-                }
+        let (id, r) = self.call(|id| Request::exec(id, req))?;
+        let (got, outcome) = r.into_outcome().map_err(broken_host)?;
+        if got == id {
+            Ok(outcome)
+        } else {
+            Err(LaunchError::Other(format!(
+                "session host answered exec {got}, expected {id}"
+            )))
+        }
+    }
+
+    fn put(&mut self, path: &str, offset: u64, data: &[u8]) -> Result<u64, LaunchError> {
+        let (id, r) = self.call(|id| Request::Put {
+            id,
+            path: path.to_owned(),
+            offset,
+            data: STANDARD.encode(data),
+        })?;
+        match r {
+            Response::Stored { id: got, size } if got == id => Ok(size),
+            other => Err(unexpected("put", id, &other)),
+        }
+    }
+
+    fn get(&mut self, path: &str, offset: u64, len: u64) -> Result<(Vec<u8>, bool), LaunchError> {
+        let (id, r) = self.call(|id| Request::Get {
+            id,
+            path: path.to_owned(),
+            offset,
+            len,
+        })?;
+        match r {
+            Response::Data { id: got, data, eof } if got == id => {
+                let bytes = STANDARD
+                    .decode(data)
+                    .map_err(|e| LaunchError::Other(format!("session host sent bad data: {e}")))?;
+                Ok((bytes, eof))
             }
-            None => Err(LaunchError::Other(
-                "the session host went away (disconnected)".into(),
-            )),
+            other => Err(unexpected("get", id, &other)),
+        }
+    }
+
+    fn list(&mut self, after: Option<&str>) -> Result<(Vec<FileInfo>, bool), LaunchError> {
+        let (id, r) = self.call(|id| Request::List {
+            id,
+            after: after.map(str::to_owned),
+        })?;
+        match r {
+            Response::Files {
+                id: got,
+                files,
+                more,
+            } if got == id => Ok((files, more)),
+            other => Err(unexpected("list", id, &other)),
         }
     }
 
@@ -301,7 +330,39 @@ impl Session for AccountSession {
     }
 }
 
+fn broken_host(e: crate::session_proto::ProtoError) -> LaunchError {
+    LaunchError::Other(format!("session host: {e}"))
+}
+
+fn unexpected(op: &str, id: u64, got: &Response) -> LaunchError {
+    LaunchError::Other(format!(
+        "session host answered {op} {id} with the wrong reply: {got:?}"
+    ))
+}
+
 impl AccountSession {
+    /// One request and its answer. A refusal or a vanished host is an error here, so a caller only
+    /// sees real replies.
+    fn call(&mut self, make: impl FnOnce(u64) -> Request) -> Result<(u64, Response), LaunchError> {
+        let id = self.next_id;
+        self.next_id += 1;
+        let pipe = self
+            .pipe
+            .as_mut()
+            .ok_or_else(|| LaunchError::Other("the session is closed".into()))?;
+        write_frame(pipe, &make(id)).map_err(broken_host)?;
+        match read_frame::<_, Response>(pipe).map_err(broken_host)? {
+            Some(Response::Error { message, .. }) => Err(LaunchError::Other(format!(
+                "session host refused: {message}"
+            ))),
+            Some(Response::Closed {}) => Err(LaunchError::Other("the session host closed".into())),
+            Some(r) => Ok((id, r)),
+            None => Err(LaunchError::Other(
+                "the session host went away (disconnected)".into(),
+            )),
+        }
+    }
+
     fn remove(&self) -> Result<(), LaunchError> {
         let mut first: Option<std::io::Error> = None;
         for d in [
