@@ -31,6 +31,7 @@ pub mod streams;
 #[cfg(windows)]
 pub mod wfp;
 pub mod workspace;
+pub mod workspace_session;
 pub mod wsb_driver;
 
 pub use capability::Capability;

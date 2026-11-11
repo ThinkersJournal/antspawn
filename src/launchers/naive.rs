@@ -18,6 +18,8 @@ use std::time::{Duration, Instant};
 
 use crate::launcher::{Environment, Exit, LaunchError, Launcher};
 use crate::session::{ExecOutcome, ExecRequest, Session};
+use crate::session_files::WorkFiles;
+use crate::session_proto::FileInfo;
 use crate::spec::JobSpec;
 use crate::streams::{Streams, Tail, settle};
 
@@ -91,6 +93,32 @@ impl Session for NaiveSession {
     fn close(self: Box<Self>) -> Result<(), LaunchError> {
         // Deliberately leaves `self.dir` as it is.
         Ok(())
+    }
+
+    // The unisolated launcher serves the file operations straight from its directory.
+    fn put(&mut self, path: &str, offset: u64, data: &[u8]) -> Result<u64, LaunchError> {
+        self.files()
+            .put(path, offset, data)
+            .map_err(LaunchError::Other)
+    }
+
+    fn get(&mut self, path: &str, offset: u64, len: u64) -> Result<(Vec<u8>, bool), LaunchError> {
+        self.files()
+            .get(path, offset, len)
+            .map_err(LaunchError::Other)
+    }
+
+    fn list(&mut self, after: Option<&str>) -> Result<(Vec<FileInfo>, bool), LaunchError> {
+        self.files().list(after).map_err(LaunchError::Other)
+    }
+}
+
+impl NaiveSession {
+    fn files(&self) -> WorkFiles {
+        WorkFiles::new(
+            &self.dir,
+            crate::workspace::Policy::default().max_file_bytes,
+        )
     }
 }
 
