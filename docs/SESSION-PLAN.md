@@ -39,7 +39,7 @@ probe shows deny beats the grant (B1); a path denylist in the policy filter (B2)
 | P1 | `Layout` and `AccountLauncher` take a named account (today fixed `antspawn-run` / `AntSpawnRunner`); pool = the set the setup registered | single-account behaviour unchanged (existing tests) |
 | P2 | Lease allocator: a session takes a free account, released at close, reclaimed when its owner is gone | two opens get two accounts; a third is refused naming "pool exhausted" |
 | P3 | `concurrent` probe and `no-read-other-session`: two sessions at once, wall time not serial, each denied the other's canary | known-bad control: both sessions forced onto one account must FAIL |
-| P4 | Fold the firewall block into the pool setup (`runner-account-setup.ps1` deliberately leaves network on, board 341); one elevated paste per account | **needs CireSnave's elevated paste per account, via the PM**; N fixed at setup |
+| P4 | Fold the firewall block into the pool setup (`runner-account-setup.ps1` deliberately leaves network on, board 341); one elevated paste per account | **needs CireSnave's elevated paste per account, via the PM**; N = 4 (CireSnave 2026-11-12, "420: B."), fixed at setup |
 
 ### A2: both workspace modes (alongside; B2 can start after S3)
 | # | Slice | Proof |
@@ -70,5 +70,5 @@ Two ops answered by the CLI itself (the pipe host refuses them; `bind` and plain
 
 ## What I need from the PM
 - Go on S1 now (no elevation needed). W0 needs only the already-provisioned `antspawn-run`.
-- Before P4: CireSnave's choice of N.
+- Before P4: CireSnave chose N = 4 (2026-11-12).
 - Proof for C2 against the org App is a separate reply.

@@ -2,7 +2,7 @@
 //! The account pool on REAL restricted accounts: runner-only (slice A3 P3), UNVERIFIED until the
 //! per-account setup (P4, CireSnave's elevated paste) has run. Never `#[ignore]`d.
 //!
-//! Configure with `ANTSPAWN_POOL=account:task,account:task` (at least two registered accounts) and
+//! Configure with `ANTSPAWN_POOL=account:task,...` (the pool is four accounts, board 420; at least two are needed) and
 //! `ANTSPAWN_POOL_PROBE=<path to spawn-probe.exe the pool accounts can run>`; without both the test
 //! prints `UNVERIFIED` and returns. Record real runs in `docs/MEASUREMENTS.md` with date and ref.
 //!
