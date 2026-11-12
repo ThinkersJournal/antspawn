@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.118
+
+- Tooling: adopt the changelog-fragment kit (`tools/stamp-version.py`, `tools/check-fragment.py`, `.github/workflows/changelog-fragment.yml`, `changelog.d/README.md`). From the next PR on, a PR carries one `changelog.d/` fragment and no version edit; the PM stamps at merge. Dry run with a throwaway fragment listed Cargo.toml, Cargo.lock and CHANGELOG.md. Provisional (PM allocates).
+
 ## 0.0.116
 
 - Docs: `docs/REDEPLOY-RUNNER.md` and `docs/proof/PASTE-redeploy-runner.ps1`, the procedure for swapping `C:\Program Files\antspawn\spawn-runner.exe` (CI artifact, hash-checked, elevated swap, read back, rollback). Only the swap is elevated; fetching the artifact and the read-back are not. Provisional (PM allocates).
