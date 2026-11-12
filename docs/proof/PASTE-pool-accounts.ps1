@@ -51,6 +51,27 @@ $PoolRoot = [IO.Path]::GetFullPath($PoolRoot)
 $here = $PSScriptRoot
 . (Join-Path $here '..\..\scripts\AntSpawnTaskSd.ps1')   # Get-TaskSdProblems
 
+# Every string handed to the account cmdlets, against the limits those cmdlets enforce. A dry run never
+# calls them, so THIS is what makes the dry run catch an over-long value. New-LocalUser -Description is
+# limited to 48 characters and ours was 49: the first real -Apply (2026-11-12) stopped at the first account.
+# Limits: SAM account name 20, New-LocalUser -Description 48, local password 127, task name 238.
+# Checked for EVERY account before anything is changed.
+$PoolDescription = 'AntSpawn pool runner. Nobody has the password.'
+$passwordLength = [Math]::Ceiling(48 / 3) * 4   # the password is base64 of 48 bytes (see below)
+for ($n = 1; $n -le $Count; $n++) {
+    $limitChecks = @(
+        @("account name $Prefix$n", "$Prefix$n", 20),
+        @('account -Description', $PoolDescription, 48),
+        @('generated password', ('x' * $passwordLength), 127),
+        @("task name $TaskPrefix$n", "$TaskPrefix$n", 238),
+        @('task -User string', "$env:COMPUTERNAME\$Prefix$n", 104)
+    )
+    foreach ($lc in $limitChecks) {
+        if ($lc[1].Length -gt $lc[2]) { throw "$($lc[0]) is $($lc[1].Length) characters; the cmdlet allows $($lc[2]). Nothing was changed." }
+    }
+    if ("$Prefix$n" -match '["/\\[\]:;|=,+*?<>]') { throw "$Prefix$n contains a character a local user name cannot have. Nothing was changed." }
+}
+
 $principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
 if ($Apply -and -not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     throw 'Run this in an elevated PowerShell for -Apply (dry-run needs no elevation).'
@@ -189,7 +210,7 @@ for ($n = 1; $n -le $Count; $n++) {
         if (Get-LocalUser -Name $name -ErrorAction SilentlyContinue) { Set-LocalUser -Name $name -Password $pw }
         else {
             New-LocalUser -Name $name -Password $pw -PasswordNeverExpires -UserMayNotChangePassword -AccountNeverExpires `
-                -Description 'AntSpawn pool runner. Nobody holds this password.' | Out-Null
+                -Description $PoolDescription | Out-Null
         }
     }
     $account = Get-LocalUser -Name $name -ErrorAction SilentlyContinue
