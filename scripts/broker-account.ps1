@@ -62,6 +62,24 @@ $Root = [IO.Path]::GetFullPath($Root)
 $Config = Join-Path $Root 'config\broker.toml'
 . (Join-Path $PSScriptRoot 'AntSpawnTaskSd.ps1')   # Get-TaskSdProblems
 
+# Every string handed to the account cmdlets, against the limits those cmdlets enforce, BEFORE anything is
+# changed and in the dry run too (a dry run never calls New-LocalUser; the pool paste's first real -Apply
+# stopped on a 49-character -Description). Limits: SAM account name 20, -Description 48, local password 127,
+# task name 238, task -User string 104.
+$BrokerDescription = 'AntSpawn VM broker. Nobody holds the password.'
+$passwordLength = [Math]::Ceiling(48 / 3) * 4   # the password is base64 of 48 bytes (see below)
+$limitChecks = @(
+    @('account name', $Name, 20),
+    @('account -Description', $BrokerDescription, 48),
+    @('generated password', ('x' * $passwordLength), 127),
+    @('task name', $Task, 238),
+    @('task -User string', "$env:COMPUTERNAME\$Name", 104)
+)
+foreach ($lc in $limitChecks) {
+    if ($lc[1].Length -gt $lc[2]) { throw "$($lc[0]) is $($lc[1].Length) characters; the cmdlet allows $($lc[2]). Nothing was changed." }
+}
+if ($Name -match '["/\\[\]:;|=,+*?<>]') { throw "$Name contains a character a local user name cannot have. Nothing was changed." }
+
 $principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
 if ($Apply -and -not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     throw 'Run this in an elevated PowerShell for -Apply (dry-run needs no elevation).'
@@ -193,7 +211,7 @@ Step "create local user $Name (random password, never expires, cannot change it)
     if (Get-LocalUser -Name $Name -ErrorAction SilentlyContinue) { Set-LocalUser -Name $Name -Password $pw }
     else {
         New-LocalUser -Name $Name -Password $pw -PasswordNeverExpires -UserMayNotChangePassword -AccountNeverExpires `
-            -Description 'AntSpawn VM broker. Nobody holds the password.' | Out-Null
+            -Description $BrokerDescription | Out-Null
     }
 }
 $account = Get-LocalUser -Name $Name -ErrorAction SilentlyContinue

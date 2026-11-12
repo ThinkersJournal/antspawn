@@ -32,28 +32,82 @@ fn code(src: &str) -> Vec<String> {
 
 #[test]
 fn the_account_description_fits_new_localuser_limit_of_48_characters() {
+    fn problem(src: &str) -> Result<usize, String> {
+        let lines = code(src);
+        let uses: Vec<&String> = lines
+            .iter()
+            .filter(|l| l.contains("-Description "))
+            .collect();
+        if uses.len() != 1 || !uses[0].contains("-Description $BrokerDescription") {
+            return Err(format!(
+                "-Description must be given $BrokerDescription once: {uses:?}"
+            ));
+        }
+        let defs: Vec<&String> = lines
+            .iter()
+            .filter(|l| l.starts_with("$BrokerDescription = '"))
+            .collect();
+        if defs.len() != 1 {
+            return Err(format!("expected one $BrokerDescription line: {defs:?}"));
+        }
+        let start = "$BrokerDescription = '".len();
+        let text = &defs[0][start..start + defs[0][start..].find('\'').ok_or("unterminated")?];
+        let n = text.chars().count();
+        if n > 48 {
+            return Err(format!("{n} characters, the limit is 48: {text}"));
+        }
+        Ok(n)
+    }
+    let src = script();
+    problem(&src).unwrap();
+    // Control: the 49-character pool text that stopped the first real -Apply (2026-11-12) is rejected by
+    // the same checker, and so is an inline literal on the cmdlet.
+    let cur = "$BrokerDescription = 'AntSpawn VM broker. Nobody holds the password.'";
+    assert_eq!(
+        src.matches(cur).count(),
+        1,
+        "anchor moved; update this test"
+    );
+    let old = "AntSpawn pool runner. Nobody holds this password.";
+    assert_eq!(old.chars().count(), 49);
+    let e = problem(&src.replace(cur, &format!("$BrokerDescription = '{old}'"))).unwrap_err();
+    assert!(e.contains("49 characters"), "{e}");
+    assert!(
+        problem(&src.replace(
+            "-Description $BrokerDescription",
+            &format!("-Description '{old}'")
+        ))
+        .is_err()
+    );
+}
+
+#[test]
+fn the_limits_are_checked_before_any_change_and_in_the_dry_run() {
     let src = script();
     let lines = code(&src);
-    let found: Vec<&String> = lines
+    let check = lines
         .iter()
-        .filter(|l| l.contains("-Description "))
-        .collect();
-    assert_eq!(found.len(), 1, "{found:?}");
-    let l = found[0];
-    let start = l.find("-Description '").expect("a single-quoted literal") + "-Description '".len();
-    let text = &l[start..start + l[start..].find('\'').unwrap()];
+        .position(|l| l.contains("the cmdlet allows"))
+        .expect("the up-front limit check");
+    let first_change = lines
+        .iter()
+        .position(|l| l.starts_with("Step ") || l.contains("New-LocalUser"))
+        .unwrap();
+    assert!(check < first_change);
     assert!(
-        text.chars().count() <= 48,
-        "{} chars: {text}",
-        text.chars().count()
+        !lines[..check]
+            .iter()
+            .any(|l| l.starts_with("if ($Apply)") || l.starts_with("if ($Undo)")),
+        "the check must not be gated on -Apply/-Undo"
     );
-    // Control: the 59-character text that failed on 2026-10-31 is over the limit this test enforces.
-    assert!(
-        "AntSpawn runner account (restricted, runs one job at a time)"
-            .chars()
-            .count()
-            > 48
-    );
+    for needle in [
+        "account name",
+        "generated password",
+        "task name",
+        "task -User string",
+    ] {
+        assert!(src.contains(needle), "{needle}");
+    }
 }
 
 #[test]
