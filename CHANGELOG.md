@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.127 — account pool sized to four accounts
+
+CireSnave's ruling on board 420 (2026-11-12, "420: B.") fixes the pool at four accounts. `docs/ACCOUNT-POOL-SETUP.md` now gives the run and undo lines as `-Count 4` and the four-member `ANTSPAWN_POOL`, and `docs/SESSION-PLAN.md` records N = 4. The script already accepts 1-8, so no code changes. Not measured: a `-Count 4` dry run, any `-Apply`, and the pool test beyond two concurrent sessions (it exercises two of the four accounts, plus its two known-bad controls).
+
 ## 0.0.126 — `spawn session` copy mode returns and applies the change set
 
 `spawn session --workspace copy` now answers two more lines: `{"op":"changes","id":N}` returns the added, modified and deleted files with sizes and hashes, the `later_step` paths, what policy refuses without an exact-path approval, and a `set_hash`; `{"op":"apply","id":N,"set_hash":..,"deletes":[..],"protected":[..]}` writes exactly that staged set into the real project as the invoking user, all or nothing (a different hash, nothing staged, a refusal or a conflict writes nothing). A clean apply moves the base, so the next `changes` reports only what came after. `bind`, plain sessions and the pipe host refuse both ops. The `set_hash` byte format is in `docs/SESSION-PLAN.md`. Verified by unit tests (a known hash vector, the reviewed-set binding, the moved base, the JSON fields); not run against the real account, which waits on the runner swap.
