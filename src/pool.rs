@@ -190,9 +190,18 @@ pub struct AccountPool {
 }
 
 impl AccountPool {
+    /// `layout` is the pool root (`%ProgramData%\antspawn-pool`): leases live under it and each
+    /// account has its own tree at `<root>/<account>` (see [`AccountPool::account_layout`]), which
+    /// `docs/proof/PASTE-pool-accounts.ps1` makes and whose task serves it with `--root`.
     pub fn new(layout: Layout, members: Vec<AccountIdentity>) -> Result<Self, PoolError> {
         let pool = Pool::new(&layout, members)?;
         Ok(AccountPool { layout, pool })
+    }
+
+    /// The spool/results/work tree of one pool account: no directory is shared between accounts, so
+    /// one cannot read another's jobs and one runner never hosts a session meant for another.
+    pub fn account_layout(&self, account: &str) -> Layout {
+        Layout::new(self.layout.root.join(account))
     }
 
     /// Lease an account and open a session on it (`root` as for [`Launcher::open_session_in`]).
@@ -201,7 +210,10 @@ impl AccountPool {
     /// [`LeasedSession::principal`] says who was leased, and wiring the grant to it is a later slice.
     pub fn open_session_in(&self, root: Option<&Path>) -> Result<LeasedSession, LaunchError> {
         let lease = self.pool.acquire()?;
-        let launcher = Account::with_identity(self.layout.clone(), lease.identity().clone());
+        let launcher = Account::with_identity(
+            self.account_layout(&lease.identity().account),
+            lease.identity().clone(),
+        );
         let inner = launcher.open_session_in(root)?;
         Ok(LeasedSession {
             inner: Some(inner),
@@ -292,6 +304,18 @@ mod tests {
         odd[0].account = "..\\x".into();
         assert!(Pool::in_dir(&d, odd).is_err());
         assert!(Pool::in_dir(&d, ids(2)).is_ok());
+    }
+
+    #[test]
+    fn each_account_has_its_own_tree() {
+        let p = AccountPool::new(Layout::new("R"), ids(2)).unwrap();
+        let (a, b) = (
+            p.account_layout("antspawn-run1"),
+            p.account_layout("antspawn-run2"),
+        );
+        assert_eq!(a.root, PathBuf::from("R").join("antspawn-run1"));
+        assert_ne!(a.spool(), b.spool());
+        assert!(!a.work().starts_with(&b.root) && !b.work().starts_with(&a.root));
     }
 
     #[cfg(windows)]

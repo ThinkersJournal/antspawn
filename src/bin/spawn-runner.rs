@@ -18,7 +18,9 @@
 //!   and the session's scratch dir (its commands' `TEMP`/`TMP`) and only then publishes `exit.code`.
 //!   A command in flight is killed the moment the pipe's client is gone, not after it finishes.
 //!
-//! The layout root is `ANTSPAWN_ROOT` or `%ProgramData%\antspawn` (see `antspawn::runner`).
+//! The layout root is `--root <dir>` (before the verb: `spawn-runner --root D serve`; the account pool's
+//! tasks use it, one root per account), else `ANTSPAWN_ROOT`, else `%ProgramData%\antspawn` (see
+//! `antspawn::runner`). Children it starts get the same root.
 
 use antspawn::runner::{Layout, RunnerConfig, check_spec, copy_tree, encode_exit, valid_job_id};
 use antspawn::session_host::{Ended, SessionFile, run_command, serve_session, wait_child};
@@ -29,13 +31,26 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let layout = Layout::from_env();
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let layout = if args.first().map(String::as_str) == Some("--root") {
+        if args.len() < 3 || args[1].is_empty() {
+            eprintln!("spawn-runner: --root needs a directory and a verb");
+            return ExitCode::from(2);
+        }
+        let root = args[1].clone();
+        args.drain(..2);
+        Layout::new(root)
+    } else {
+        Layout::from_env()
+    };
     let r = match args.iter().map(String::as_str).collect::<Vec<_>>()[..] {
         ["serve"] => serve(&layout),
         ["exec", id] if valid_job_id(id) => exec(&layout, id),
         ["session", id] if valid_job_id(id) => session(&layout, id),
-        _ => Err("usage: spawn-runner serve | exec <job-id> | session <session-id>".into()),
+        _ => Err(
+            "usage: spawn-runner [--root <dir>] serve | exec <job-id> | session <session-id>"
+                .into(),
+        ),
     };
     match r {
         Ok(()) => ExitCode::SUCCESS,
@@ -86,7 +101,10 @@ fn serve(layout: &Layout) -> Result<(), String> {
         for id in sessions {
             let results = layout.job_results(&id);
             std::fs::create_dir_all(&results).map_err(|e| format!("{}: {e}", results.display()))?;
-            let status = Command::new(&me).args(["session", &id]).status();
+            let status = Command::new(&me)
+                .args(["session", &id])
+                .env("ANTSPAWN_ROOT", &layout.root)
+                .status();
             // The host has exited, so its job (and every process in it) is dead: wipe, then publish.
             let _ = std::fs::remove_dir_all(layout.job_work(&id));
             let _ = std::fs::remove_dir_all(layout.job_scratch(&id));
@@ -101,7 +119,10 @@ fn serve(layout: &Layout) -> Result<(), String> {
         for id in ids {
             let results = layout.job_results(&id);
             std::fs::create_dir_all(&results).map_err(|e| format!("{}: {e}", results.display()))?;
-            let status = Command::new(&me).args(["exec", &id]).status();
+            let status = Command::new(&me)
+                .args(["exec", &id])
+                .env("ANTSPAWN_ROOT", &layout.root)
+                .status();
             // Only now is every process of the job dead; wipe, then publish.
             let _ = std::fs::remove_dir_all(layout.job_work(&id));
             let tmp = results.join("result.tmp");
