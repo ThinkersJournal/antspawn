@@ -278,6 +278,26 @@ impl ChangeSet {
             .chain(self.deleted.iter())
     }
 
+    /// SHA-256 (hex) of a canonical listing: one `A`, `M` or `D` line per entry in path order,
+    /// with size and content hash for adds and modifies. Two sets have one hash only if they name
+    /// the same paths with the same content, so a reviewer's approval binds to what is applied.
+    pub fn set_hash(&self) -> String {
+        let mut ctx = digest::Context::new(&digest::SHA256);
+        for (tag, map) in [("A", &self.added), ("M", &self.modified)] {
+            for (p, e) in map {
+                ctx.update(format!("{tag}\t{p}\t{}\t{}\n", e.size, e.sha256).as_bytes());
+            }
+        }
+        for p in &self.deleted {
+            ctx.update(format!("D\t{p}\n").as_bytes());
+        }
+        ctx.finish()
+            .as_ref()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    }
+
     /// Entries that run on a later step outside the sandbox (build scripts, CI): shown so an
     /// approval names what it enables.
     pub fn later_step(&self, policy: &Policy) -> Vec<&String> {

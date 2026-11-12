@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.126 — `spawn session` copy mode returns and applies the change set
+
+`spawn session --workspace copy` now answers two more lines: `{"op":"changes","id":N}` returns the added, modified and deleted files with sizes and hashes, the `later_step` paths, what policy refuses without an exact-path approval, and a `set_hash`; `{"op":"apply","id":N,"set_hash":..,"deletes":[..],"protected":[..]}` writes exactly that staged set into the real project as the invoking user, all or nothing (a different hash, nothing staged, a refusal or a conflict writes nothing). A clean apply moves the base, so the next `changes` reports only what came after. `bind`, plain sessions and the pipe host refuse both ops. The `set_hash` byte format is in `docs/SESSION-PLAN.md`. Verified by unit tests (a known hash vector, the reviewed-set binding, the moved base, the JSON fields); not run against the real account, which waits on the runner swap.
+
 ## 0.0.125 — `spawn-runner --root` and a tree per pool account (A3 P2b)
 
 `spawn-runner [--root <dir>] serve|exec|session`: the flag sets the layout root (over `ANTSPAWN_ROOT` and the ProgramData default), and the `exec`/`session` children `serve` starts inherit it. `AccountPool` now gives each leased account its own tree, `<pool root>/<account>`, instead of one shared layout, so no directory is shared between pool accounts. Needed by the pool paste (`docs/proof/PASTE-pool-accounts.ps1`, whose tasks run `spawn-runner --root <tree> serve`); the single-account setup and its task are unchanged. Verified by `tests/runner.rs` (the flag beats a decoy `ANTSPAWN_ROOT`, the job answers in that tree only, a bare `--root` exits 2) and a pool unit test; a real account is not exercised.

@@ -24,8 +24,8 @@ use crate::runner::safe_relative;
 use crate::session::{ExecOutcome, ExecRequest, Session};
 use crate::session_proto::{FileInfo, MAX_CHUNK};
 use crate::workspace::{
-    ApplyReport, Approvals, ChangeSet, Entry, Manifest, Mode, Policy, WorkspaceError, apply,
-    hash_file, walk,
+    ApplyReport, Approvals, ChangeSet, Entry, Manifest, Mode, Policy, Refusal, WorkspaceError,
+    apply, check, hash_file, walk,
 };
 
 static STAGES: AtomicU64 = AtomicU64::new(0);
@@ -47,6 +47,19 @@ pub struct WorkspaceSession {
     mode: Mode,
     /// `bind` only. Declared after `inner` so the session ends before the grant is taken away.
     grant: Option<BindGrant>,
+    /// The set the last [`Session::stage_changes`] fetched, for [`Session::apply_staged`].
+    staged: Option<Staged>,
+}
+
+/// What a person reviews before approving an apply: the staged change set, what runs later outside
+/// the sandbox, what policy refuses without an approval by exact path, and the hash that binds them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StagedSummary {
+    pub changes: ChangeSet,
+    pub later_step: Vec<String>,
+    pub refused: Vec<Refusal>,
+    /// [`ChangeSet::set_hash`] of `changes`; `apply_staged` must be given it back.
+    pub set_hash: String,
 }
 
 /// The files a session changed, fetched into a launcher-side directory that is removed on drop.
@@ -86,6 +99,7 @@ impl WorkspaceSession {
                 base,
                 mode: Mode::CopyBack,
                 grant: None,
+                staged: None,
             }),
             Err(e) => {
                 let _ = inner.close();
@@ -110,6 +124,7 @@ impl WorkspaceSession {
             base: Manifest::new(),
             mode: Mode::Bind,
             grant,
+            staged: None,
         }
     }
 
@@ -278,6 +293,47 @@ impl Session for WorkspaceSession {
     }
     fn list(&mut self, after: Option<&str>) -> Result<(Vec<FileInfo>, bool), LaunchError> {
         self.inner.list(after)
+    }
+    fn stage_changes(&mut self) -> Result<StagedSummary, LaunchError> {
+        self.staged = None; // an earlier staging is replaced, and a failure leaves none
+        let staged = self.changes()?;
+        let summary = StagedSummary {
+            changes: staged.changes.clone(),
+            later_step: staged
+                .changes
+                .later_step(&self.policy)
+                .into_iter()
+                .cloned()
+                .collect(),
+            refused: check(&staged.changes, &self.policy, &Approvals::default()),
+            set_hash: staged.changes.set_hash(),
+        };
+        self.staged = Some(staged);
+        Ok(summary)
+    }
+    fn apply_staged(&mut self, set_hash: &str, ok: &Approvals) -> Result<ApplyReport, LaunchError> {
+        let Some(staged) = self.staged.as_ref() else {
+            return Err(bad("nothing is staged: ask for `changes` first"));
+        };
+        let have = staged.changes.set_hash();
+        if have != set_hash {
+            return Err(bad(format!(
+                "set_hash {set_hash} is not the staged set ({have}); nothing was written"
+            )));
+        }
+        let report = self.apply(staged, ok)?;
+        if report.is_clean() {
+            // The real tree now holds these files: they are the new base, so the next `changes`
+            // reports only what happens after this apply.
+            let staged = self.staged.take().expect("checked above");
+            for (p, e) in staged.changes.added.iter().chain(&staged.changes.modified) {
+                self.base.insert(p.clone(), e.clone());
+            }
+            for p in &staged.changes.deleted {
+                self.base.remove(p);
+            }
+        }
+        Ok(report)
     }
 }
 
@@ -485,6 +541,89 @@ mod tests {
             fs::read(st.dir.join("big.bin")).unwrap().len(),
             body.len() + 1
         );
+    }
+
+    #[test]
+    fn set_hash_is_the_documented_byte_format() {
+        // docs/SESSION-PLAN.md: sha256 over `A\t<path>\t<size>\t<sha256>\n` per add, the same with
+        // `M` per modify (path order), then `D\t<path>\n` per delete.
+        let mut cs = ChangeSet::default();
+        cs.added.insert(
+            "a".into(),
+            Entry {
+                size: 1,
+                sha256: "00".into(),
+            },
+        );
+        cs.deleted.insert("b".into());
+        assert_eq!(
+            cs.set_hash(),
+            "623fae20032d5eb13814a671438750f2c38e653e15c63464d51c204339597e6b"
+        );
+        // Control: the empty set hashes the empty string, and a different path changes the hash.
+        assert_eq!(
+            ChangeSet::default().set_hash(),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        cs.deleted.insert("c".into());
+        assert_ne!(
+            cs.set_hash(),
+            "623fae20032d5eb13814a671438750f2c38e653e15c63464d51c204339597e6b"
+        );
+    }
+
+    #[test]
+    fn stage_then_apply_is_bound_to_the_reviewed_set_and_moves_the_base() {
+        let (mut ws, real, work) = open("trait");
+        // Nothing staged yet.
+        let e = ws.apply_staged("x", &Approvals::default()).unwrap_err();
+        assert!(e.to_string().contains("nothing is staged"), "{e}");
+        write(&work, "b.txt", b"BEE");
+        write(&work, "build.rs", b"fn main() {}");
+        fs::remove_file(work.join("src/a.rs")).unwrap();
+        let sum = ws.stage_changes().unwrap();
+        assert_eq!(sum.later_step, ["build.rs"]);
+        assert_eq!(
+            sum.refused
+                .iter()
+                .map(|r| r.path.as_str())
+                .collect::<Vec<_>>(),
+            ["src/a.rs"],
+            "a delete is refused until approved by exact path"
+        );
+        assert_eq!(sum.set_hash, sum.changes.set_hash());
+        // A hash that is not the staged set's writes nothing.
+        let e = ws
+            .apply_staged(&"0".repeat(64), &Approvals::default())
+            .unwrap_err();
+        assert!(e.to_string().contains("is not the staged set"), "{e}");
+        assert_eq!(fs::read(real.join("b.txt")).unwrap(), b"bee");
+        // The right hash without the approval: refused, all or nothing, still staged.
+        let r = ws
+            .apply_staged(&sum.set_hash, &Approvals::default())
+            .unwrap();
+        assert!(!r.is_clean());
+        assert_eq!(fs::read(real.join("b.txt")).unwrap(), b"bee");
+        assert!(real.join("src/a.rs").exists());
+        // Approved: lands, and the base moves so the next `changes` is empty.
+        let ok = Approvals {
+            deletes: ["src/a.rs".to_string()].into(),
+            ..Approvals::default()
+        };
+        let r = ws.apply_staged(&sum.set_hash, &ok).unwrap();
+        assert!(r.is_clean(), "{r:?}");
+        assert_eq!(fs::read(real.join("b.txt")).unwrap(), b"BEE");
+        assert!(real.join("build.rs").is_file());
+        assert!(!real.join("src/a.rs").exists());
+        // What was staged is spent: the same hash applies nothing a second time.
+        let e = ws.apply_staged(&sum.set_hash, &ok).unwrap_err();
+        assert!(e.to_string().contains("nothing is staged"), "{e}");
+        assert!(ws.stage_changes().unwrap().changes.is_empty());
+        // A later edit is reported against the new base only.
+        write(&work, "b.txt", b"BEEE");
+        let again = ws.stage_changes().unwrap();
+        assert_eq!(again.changes.modified.keys().collect::<Vec<_>>(), ["b.txt"]);
+        assert!(again.changes.added.is_empty() && again.changes.deleted.is_empty());
     }
 
     #[test]

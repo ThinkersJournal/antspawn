@@ -53,6 +53,14 @@ probe shows deny beats the grant (B1); a path denylist in the policy filter (B2)
 
 Order: S1-S5, then P1-P3 and W0-W3 interleaved (they are independent), then W4-W5, P4 last (waits on the paste).
 
+### `copy` mode on the `spawn session` lines: `changes` and `apply` (agent-loop's ask, 2026-11-12)
+Two ops answered by the CLI itself (the pipe host refuses them; `bind` and plain sessions answer `error`). Output is one JSON line per request, like every other op.
+
+- `{"op":"changes","id":N}` fetches what the session changed and stages it. Reply: `{"op":"changes","id":N,"added":[{"path","size","sha256"}],"modified":[same],"deleted":["p"],"later_step":["p"],"refused":[{"path","why"}],"set_hash":"<64 hex>"}`. `refused` is what policy refuses unless the apply names it by exact path (protected paths, deletes, the size cap); `later_step` is what runs on a later step outside the sandbox (`build.rs`, `Makefile`, `justfile`, `package.json`). Another `changes` replaces the staging.
+- `{"op":"apply","id":N,"set_hash":"..","deletes":["p"],"protected":["p"]}` writes the staged set into the real project in the spawn process, as the invoking user, all or nothing. Reply: `{"op":"applied","id":N,"set_hash","applied":["p"],"refused":[{"path","why"}],"conflicts":[{"path","why"}]}`. `refused` or `conflicts` non-empty means nothing was written and the set is still staged. A `set_hash` that is not the staged set's, or nothing staged, is an `error`, never a partial apply. A real file that no longer matches the base is a conflict, never overwritten. The approval (`deletes`, `protected`) is the harness's, never this crate's.
+- After a clean apply the applied files become the new base, so the next `changes` reports only what happened since.
+- **`set_hash` byte format:** SHA-256, lowercase hex, over the concatenation of: one line `A\t<path>\t<size>\t<sha256>\n` per added file in path order, then one `M\t<path>\t<size>\t<sha256>\n` per modified file in path order, then one `D\t<path>\n` per deleted path in path order. `<size>` is decimal, `<sha256>` is the file's lowercase hex SHA-256, paths are the `/`-separated relative paths as listed. The empty set hashes the empty string. A test (`set_hash_is_the_documented_byte_format`) pins one known vector.
+
 ## Costs and risks stated now
 - A session pins its account's runner for its life (one task, one job): that is why A3 follows A1 rather than preceding it.
 - `bind` widens the account's reach to the whole granted tree; any host-side run of what it wrote (tests, hooks, CI) is an escape. That is the user's ruled choice; the default is `copy`.

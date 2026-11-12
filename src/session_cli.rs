@@ -12,13 +12,100 @@
 //! A malformed or refused line is answered with an `error` and the session stays usable; a line
 //! above [`crate::session_proto::MAX_FRAME`] ends it, because the stream can no longer be trusted.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, BufRead, Read, Write};
 
+use serde::Deserialize;
+use serde_json::{Value, json};
+
+use crate::launcher::LaunchError;
 use crate::session::Session;
 use crate::session_proto::{MAX_FRAME, Request, Response};
+use crate::workspace::{Approvals, Entry};
 
 fn reply<W: Write>(out: &mut W, r: &Response) -> io::Result<()> {
     let mut line = serde_json::to_vec(r).map_err(io::Error::other)?;
+    line.push(b'\n');
+    out.write_all(&line)?;
+    out.flush()
+}
+
+/// Ops this CLI answers itself and the pipe host never sees (`copy-back` workspaces): the change
+/// set comes out for review, then an apply of exactly that set goes in. See `docs/SESSION-PLAN.md`.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+enum CliRequest {
+    Changes {
+        id: u64,
+    },
+    Apply {
+        id: u64,
+        set_hash: String,
+        #[serde(default)]
+        deletes: BTreeSet<String>,
+        #[serde(default)]
+        protected: BTreeSet<String>,
+    },
+}
+
+impl CliRequest {
+    fn id(&self) -> u64 {
+        match self {
+            CliRequest::Changes { id } | CliRequest::Apply { id, .. } => *id,
+        }
+    }
+}
+
+fn entries(m: &BTreeMap<String, Entry>) -> Value {
+    Value::Array(
+        m.iter()
+            .map(|(p, e)| json!({"path": p, "size": e.size, "sha256": e.sha256}))
+            .collect(),
+    )
+}
+
+fn why_list<'a>(it: impl Iterator<Item = (&'a String, &'a String)>) -> Value {
+    Value::Array(it.map(|(p, w)| json!({"path": p, "why": w})).collect())
+}
+
+fn cli_answer(s: &mut dyn Session, req: CliRequest) -> Value {
+    let id = req.id();
+    let err = |e: LaunchError| json!({"op": "error", "id": id, "message": e.to_string()});
+    match req {
+        CliRequest::Changes { .. } => match s.stage_changes() {
+            Ok(st) => json!({
+                "op": "changes",
+                "id": id,
+                "added": entries(&st.changes.added),
+                "modified": entries(&st.changes.modified),
+                "deleted": st.changes.deleted,
+                "later_step": st.later_step,
+                "refused": why_list(st.refused.iter().map(|r| (&r.path, &r.why))),
+                "set_hash": st.set_hash,
+            }),
+            Err(e) => err(e),
+        },
+        CliRequest::Apply {
+            set_hash,
+            deletes,
+            protected,
+            ..
+        } => match s.apply_staged(&set_hash, &Approvals { deletes, protected }) {
+            Ok(r) => json!({
+                "op": "applied",
+                "id": id,
+                "set_hash": set_hash,
+                "applied": r.applied,
+                "refused": why_list(r.refused.iter().map(|x| (&x.path, &x.why))),
+                "conflicts": why_list(r.conflicts.iter().map(|x| (&x.path, &x.why))),
+            }),
+            Err(e) => err(e),
+        },
+    }
+}
+
+fn reply_value<W: Write>(out: &mut W, v: &Value) -> io::Result<()> {
+    let mut line = serde_json::to_vec(v).map_err(io::Error::other)?;
     line.push(b'\n');
     out.write_all(&line)?;
     out.flush()
@@ -75,6 +162,14 @@ fn serve_lines<R: BufRead, W: Write>(
         }
         let text = line.trim_ascii();
         if text.is_empty() {
+            continue;
+        }
+        if let Ok(cli) = serde_json::from_slice::<CliRequest>(text) {
+            let answer = match session.as_mut() {
+                Some(s) => cli_answer(s.as_mut(), cli),
+                None => json!({"op": "error", "id": cli.id(), "message": "the session is closed"}),
+            };
+            reply_value(output, &answer)?;
             continue;
         }
         let request: Request = match serde_json::from_slice(text) {
@@ -183,6 +278,116 @@ mod tests {
             .collect();
         let log = log.lock().unwrap().clone();
         (replies, log)
+    }
+
+    #[test]
+    fn changes_and_apply_on_a_session_without_a_workspace_are_errors_under_their_id() {
+        let (r, log) = run(concat!(
+            r#"{"op":"changes","id":3}"#,
+            "\n",
+            r#"{"op":"apply","id":4,"set_hash":"x"}"#,
+            "\n",
+            r#"{"op":"changes","id":5,"extra":1}"#,
+            "\n",
+            r#"{"op":"close"}"#,
+            "\n"
+        ));
+        assert_eq!(
+            (r[0]["op"].as_str(), r[0]["id"].as_u64()),
+            (Some("error"), Some(3))
+        );
+        assert_eq!(
+            (r[1]["op"].as_str(), r[1]["id"].as_u64()),
+            (Some("error"), Some(4))
+        );
+        // an unknown field is an error too (it reaches the plain parser, which has no such op)
+        assert_eq!(r[2]["op"], "error");
+        assert_eq!(r[3]["op"], "closed");
+        assert_eq!(log, ["close"], "none of it reached exec");
+    }
+
+    #[test]
+    fn changes_and_apply_answer_with_the_documented_fields() {
+        use crate::workspace::{ApplyReport, ChangeSet, Refusal};
+        struct Ws;
+        impl Session for Ws {
+            fn exec(&mut self, _: &ExecRequest) -> Result<ExecOutcome, LaunchError> {
+                Err(LaunchError::Other("no exec".into()))
+            }
+            fn close(self: Box<Self>) -> Result<(), LaunchError> {
+                Ok(())
+            }
+            fn stage_changes(
+                &mut self,
+            ) -> Result<crate::workspace_session::StagedSummary, LaunchError> {
+                let mut changes = ChangeSet::default();
+                changes.added.insert(
+                    "n.txt".into(),
+                    Entry {
+                        size: 2,
+                        sha256: "ab".into(),
+                    },
+                );
+                changes.deleted.insert("old.txt".into());
+                Ok(crate::workspace_session::StagedSummary {
+                    set_hash: changes.set_hash(),
+                    later_step: vec!["build.rs".into()],
+                    refused: vec![Refusal {
+                        path: "old.txt".into(),
+                        why: "delete not approved".into(),
+                    }],
+                    changes,
+                })
+            }
+            fn apply_staged(
+                &mut self,
+                h: &str,
+                ok: &Approvals,
+            ) -> Result<ApplyReport, LaunchError> {
+                assert!(ok.deletes.contains("old.txt") && ok.protected.contains(".github/x"));
+                Ok(ApplyReport {
+                    applied: vec![format!("hash {h}")],
+                    ..ApplyReport::default()
+                })
+            }
+        }
+        let mut out = Vec::new();
+        serve(
+            Box::new(Ws),
+            io::Cursor::new(
+                concat!(
+                    r#"{"op":"changes","id":1}"#,
+                    "\n",
+                    r#"{"op":"apply","id":2,"set_hash":"H","deletes":["old.txt"],"protected":[".github/x"]}"#,
+                    "\n"
+                )
+                .as_bytes()
+                .to_vec(),
+            ),
+            &mut out,
+        )
+        .unwrap();
+        let r: Vec<serde_json::Value> = String::from_utf8(out)
+            .unwrap()
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert_eq!(r[0]["op"], "changes");
+        assert_eq!(r[0]["id"], 1);
+        assert_eq!(
+            r[0]["added"][0],
+            serde_json::json!({"path":"n.txt","size":2,"sha256":"ab"})
+        );
+        assert_eq!(r[0]["modified"], serde_json::json!([]));
+        assert_eq!(r[0]["deleted"], serde_json::json!(["old.txt"]));
+        assert_eq!(r[0]["later_step"], serde_json::json!(["build.rs"]));
+        assert_eq!(r[0]["refused"][0]["path"], "old.txt");
+        assert_eq!(r[0]["set_hash"].as_str().unwrap().len(), 64);
+        assert_eq!(r[1]["op"], "applied");
+        assert_eq!(r[1]["id"], 2);
+        assert_eq!(r[1]["set_hash"], "H");
+        assert_eq!(r[1]["applied"], serde_json::json!(["hash H"]));
+        assert_eq!(r[1]["conflicts"], serde_json::json!([]));
     }
 
     #[test]
