@@ -3,6 +3,9 @@
 ## 0.0.116
 
 - Docs: `docs/REDEPLOY-RUNNER.md` and `docs/proof/PASTE-redeploy-runner.ps1`, the procedure for swapping `C:\Program Files\antspawn\spawn-runner.exe` (CI artifact, hash-checked, elevated swap, read back, rollback). Only the swap is elevated; fetching the artifact and the read-back are not. Provisional (PM allocates).
+## 0.0.115
+
+- Workspace modes, slice W4 part 1 (`bind`): the `bind` module, the launcher-side grant engine. `BindGrant::open` denies every write (exact rights `WD,AD,WEA,WA,D,DC`, no SYNCHRONIZE, as W0 measured) on each protected path that exists in the project, THEN grants the account Modify on the root, so a protected path is never writable; a link anywhere in the tree is refused before any ACL change. A journal entry (`%LOCALAPPDATA%\antspawn\grants`, launcher-user-owned) is written before the first change; `revoke` removes the account's entries and READS BACK that it is no longer named on the root or any denied path, failing loudly (and keeping the journal) if not. `reclaim` undoes the binds whose launcher pid is gone; two sessions on one root, or on nested roots, are refused while the first owner lives, and a dead owner's bind is reclaimed by the next open. `new_protected_paths` reports a protected path the account made after open (nothing could deny it). ACL calls go through an `Acl` trait: `Icacls` is real, tests use a recording fake, and one test runs the real `icacls` on a throwaway tree with the built-in Guests group standing in for the account (grant, exact-rights deny and read-back removal all observed). Not wired yet: the session host's cwd, `session.toml` `root`, `open_workspace_session` for bind, and the CLI (next part, needs the spawn-runner redeployed). Unmeasured: `icacls /T` cost on a large tree, pid reuse (a recycled pid keeps a dead launcher's grant until the next reclaim finds it dead), the account's behaviour against these ACLs end to end. Provisional (PM allocates).
 
 ## 0.0.114
 
