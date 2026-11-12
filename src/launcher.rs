@@ -65,6 +65,23 @@ pub trait Launcher {
             self.id()
         )))
     }
+    /// A session whose commands run in the real folder `root` (workspace `bind`, slice W4); `None` is
+    /// [`Launcher::open_session`]. A launcher that cannot run in a granted folder keeps this default
+    /// and refuses, so a bind never quietly becomes something else.
+    fn open_session_in(&self, root: Option<&Path>) -> Result<Box<dyn Session>, LaunchError> {
+        match root {
+            None => self.open_session(),
+            Some(_) => Err(LaunchError::Other(format!(
+                "launcher `{}` does not provide workspace mode `bind`",
+                self.id()
+            ))),
+        }
+    }
+    /// The account a `bind` must grant access to. `None`: the session runs as the invoking user, so
+    /// there is nothing to grant (only `naive`, which isolates nothing).
+    fn bind_principal(&self) -> Option<String> {
+        None
+    }
 }
 
 /// A launcher that was considered for some needs.
@@ -191,11 +208,16 @@ impl Registry {
         id: &str,
         needs: &Needs,
     ) -> Result<Box<dyn Session>, OpenSessionError> {
+        Ok(self.session_launcher(id, needs)?.open_session()?)
+    }
+
+    /// The named launcher, after the matrix certified it for `needs` plus `session`.
+    fn session_launcher(&self, id: &str, needs: &Needs) -> Result<&dyn Launcher, OpenError> {
         let mut needs = needs.clone();
         if !needs.capabilities.contains(&Capability::Session) {
             needs.capabilities.push(Capability::Session);
         }
-        Ok(self.open_named(id, &needs)?.open_session()?)
+        self.open_named(id, &needs)
     }
 
     /// [`Registry::open_session`] plus the project at `root`, copied in (slice W5). The same matrix
@@ -209,6 +231,19 @@ impl Registry {
         mode: crate::workspace::Mode,
         policy: crate::workspace::Policy,
     ) -> Result<crate::workspace_session::WorkspaceSession, OpenSessionError> {
+        if mode == crate::workspace::Mode::Bind {
+            let launcher = self.session_launcher(id, needs)?;
+            let journal = crate::bind::Journal::default_dir()
+                .map_err(|e| OpenSessionError::Launch(LaunchError::Other(e)))?;
+            return Ok(crate::workspace_session::open_bound(
+                launcher,
+                root,
+                policy,
+                &journal,
+                Box::new(crate::bind::Icacls),
+                &crate::bind::pid_alive,
+            )?);
+        }
         let inner = self.open_session(id, needs)?;
         Ok(crate::workspace_session::WorkspaceSession::open(
             inner, root, mode, policy,

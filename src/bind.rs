@@ -447,18 +447,18 @@ fn find_protected(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::cell::RefCell;
     use std::rc::Rc;
 
     #[derive(Default, Clone)]
-    struct Fake {
-        log: Rc<RefCell<Vec<String>>>,
+    pub(crate) struct Fake {
+        pub(crate) log: Rc<RefCell<Vec<String>>>,
         /// Paths that still "mention" the account after removal (a removal that did not take).
-        sticky: Rc<RefCell<BTreeSet<String>>>,
-        state: Rc<RefCell<BTreeSet<String>>>,
-        fail_grant: bool,
+        pub(crate) sticky: Rc<RefCell<BTreeSet<String>>>,
+        pub(crate) state: Rc<RefCell<BTreeSet<String>>>,
+        pub(crate) fail_grant: bool,
     }
 
     impl Acl for Fake {

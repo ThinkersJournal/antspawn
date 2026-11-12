@@ -259,6 +259,12 @@ fn session(layout: &Layout, id: &str) -> Result<(), String> {
     let scratch = layout.job_scratch(id);
     fresh_dir(&work).map_err(fail)?;
     fresh_dir(&scratch).map_err(fail)?;
+    // `bind`: commands run in the project the launcher granted us, which this host never wipes (the
+    // work dir above stays empty and is all that `serve` removes). Refused if it overlaps our folders.
+    let exec_dir = match &file.root {
+        Some(r) => antspawn::session_host::bind_root(r, layout).map_err(fail)?,
+        None => work.clone(),
+    };
     let job = sandbox::contain(None).map_err(|e| fail(format!("job object: {e}")))?;
 
     // The pipe is created inside the job, so the host dies with everything else it started.
@@ -271,7 +277,7 @@ fn session(layout: &Layout, id: &str) -> Result<(), String> {
     );
     let ended = serve_session(&mut &pipe, &mut &pipe, &files, |req| {
         run_command(
-            &work,
+            &exec_dir,
             &scratch,
             req,
             cfg.max_time_s,

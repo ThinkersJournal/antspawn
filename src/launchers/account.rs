@@ -45,6 +45,8 @@ use base64::engine::general_purpose::STANDARD;
 const GRACE: Duration = Duration::from_secs(60);
 /// How long an ended session may sit uncollected before the next `open_session` reaps it.
 const ORPHAN_AGE: Duration = Duration::from_secs(120);
+/// The restricted account the setup script creates (`scripts/account-setup.ps1`).
+pub const ACCOUNT_NAME: &str = "antspawn-run";
 
 /// The restricted-account launcher.
 #[derive(Debug, Clone)]
@@ -127,6 +129,14 @@ impl Launcher for Account {
     }
 
     fn open_session(&self) -> Result<Box<dyn Session>, LaunchError> {
+        self.open_session_in(None)
+    }
+
+    fn bind_principal(&self) -> Option<String> {
+        Some(ACCOUNT_NAME.into())
+    }
+
+    fn open_session_in(&self, root: Option<&Path>) -> Result<Box<dyn Session>, LaunchError> {
         self.config()?;
         // Sessions whose owner died before it could collect them: ended long enough ago that no
         // live owner is still reading the entry. Best effort; a stuck one is reported by its absence
@@ -136,6 +146,7 @@ impl Launcher for Account {
         let file = SessionFile {
             launcher_sid: current_sid()?,
             nonce: new_nonce()?,
+            root: root.map(Path::to_path_buf),
         };
         file.validate().map_err(LaunchError::Other)?;
         // From here, dropping `session` removes whatever was created.

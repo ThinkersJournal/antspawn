@@ -32,6 +32,64 @@ pub struct SessionFile {
     pub launcher_sid: String,
     /// Unguessable suffix of the pipe name, so the name is not predictable from the session id.
     pub nonce: String,
+    /// `bind` workspace (slice W4): the real project folder the launcher granted the account. Commands
+    /// run there instead of the host's own work dir. Absent: the session has its own work dir.
+    /// An older host rejects the field (`deny_unknown_fields`), so a bind never silently runs in an
+    /// empty directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root: Option<std::path::PathBuf>,
+}
+
+/// The folder a `bind` session runs in, or why the host refuses it: an absolute plain drive path
+/// that is an existing directory and does not overlap the runner's own spool, results or work dirs
+/// (a bind there would hand the account another session's files). The host never deletes it.
+pub fn bind_root(
+    root: &Path,
+    layout: &crate::runner::Layout,
+) -> Result<std::path::PathBuf, String> {
+    use std::path::{Component, Prefix};
+    let drive = matches!(root.components().next(),
+        Some(Component::Prefix(p)) if matches!(p.kind(), Prefix::Disk(_)));
+    let plain = root.is_absolute()
+        && drive
+        && root
+            .components()
+            .all(|c| !matches!(c, Component::ParentDir | Component::CurDir));
+    if !plain {
+        return Err(format!(
+            "session.toml: root `{}` must be an absolute drive path without `.` or `..`",
+            root.display()
+        ));
+    }
+    if !root.is_dir() {
+        return Err(format!(
+            "session.toml: root `{}` is not a directory",
+            root.display()
+        ));
+    }
+    let norm = |p: &Path| {
+        p.to_string_lossy()
+            .replace('\\', "/")
+            .trim_end_matches('/')
+            .to_ascii_lowercase()
+    };
+    let r = norm(root);
+    for own in [
+        layout.spool(),
+        layout.results(),
+        layout.work(),
+        layout.root.clone(),
+    ] {
+        let o = norm(&own);
+        if r == o || r.starts_with(&format!("{o}/")) || o.starts_with(&format!("{r}/")) {
+            return Err(format!(
+                "session.toml: root `{}` overlaps the runner's own folder `{}`; refused",
+                root.display(),
+                own.display()
+            ));
+        }
+    }
+    Ok(root.to_path_buf())
 }
 
 /// `S-1-<authority>-<sub-authority>...`: every part after `S-1-` is a non-empty run of digits, an
@@ -527,6 +585,7 @@ mod tests {
         let f = SessionFile {
             launcher_sid: "S-1-5-21-1-2-3-1001".into(),
             nonce: "0123456789abcdef".into(),
+            root: None,
         };
         assert!(
             f.check_owner("S-1-5-21-1-2-3-1001").is_ok(),
@@ -550,6 +609,7 @@ mod tests {
         let f = SessionFile {
             launcher_sid: "S-1-5-21-1".into(),
             nonce: "0123456789abcdef".into(),
+            root: None,
         };
         let _ = f.pipe_name("a/b");
     }
@@ -560,6 +620,7 @@ mod tests {
             SessionFile {
                 launcher_sid: sid.into(),
                 nonce: nonce.into(),
+                root: None,
             }
             .validate()
         };
@@ -773,5 +834,58 @@ mod tests {
         assert!(scratch.is_dir(), "created for the command");
         let _ = std::fs::remove_dir_all(work);
         let _ = std::fs::remove_dir_all(scratch);
+    }
+}
+
+#[cfg(test)]
+mod bind_root_tests {
+    use super::*;
+    use crate::runner::Layout;
+    use std::path::PathBuf;
+
+    // The runner is Windows-only and `bind_root` demands a drive path, so the accept case needs one.
+    #[cfg(windows)]
+    #[test]
+    fn a_bind_root_must_be_a_plain_existing_folder_outside_the_runners_own() {
+        let base = std::env::temp_dir().join(format!("antspawn-bindroot-{}", std::process::id()));
+        let proj = base.join("proj");
+        let layout = Layout::new(base.join("runner"));
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::create_dir_all(layout.work().join("s1")).unwrap();
+        assert_eq!(bind_root(&proj, &layout).unwrap(), proj);
+        for (bad, why) in [
+            (PathBuf::from("rel/dir"), "relative"),
+            (proj.join("..").join("proj"), "dotdot"),
+            (base.join("missing"), "missing"),
+            (layout.work().join("s1"), "a session's work dir"),
+            (layout.work(), "the work dir"),
+            (layout.root.clone(), "the runner root"),
+            (base.clone(), "an ancestor of the runner root"),
+            (PathBuf::from("\\\\server\\share\\p"), "unc"),
+        ] {
+            assert!(bind_root(&bad, &layout).is_err(), "{why}");
+        }
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn off_windows_there_is_no_drive_path_so_every_root_is_refused() {
+        let layout = Layout::new(std::env::temp_dir().join("antspawn-bindroot-runner"));
+        assert!(bind_root(&std::env::temp_dir(), &layout).is_err());
+    }
+
+    #[test]
+    fn root_round_trips_and_an_unknown_field_is_still_refused() {
+        let f = SessionFile {
+            launcher_sid: "S-1-5-21-1-2-3-1001".into(),
+            nonce: "0123456789abcdef".into(),
+            root: Some(PathBuf::from("C:\\Projects\\x")),
+        };
+        let text = toml::to_string(&f).unwrap();
+        assert_eq!(SessionFile::from_toml(&text).unwrap(), f);
+        let none = SessionFile { root: None, ..f };
+        assert!(!toml::to_string(&none).unwrap().contains("root"));
+        let extra = format!("{}\nextra = 1\n", toml::to_string(&none).unwrap());
+        assert!(SessionFile::from_toml(&extra).is_err());
     }
 }

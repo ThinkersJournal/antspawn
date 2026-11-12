@@ -55,6 +55,17 @@ impl Launcher for Naive {
         std::fs::create_dir_all(&dir)?;
         Ok(Box::new(NaiveSession { dir }))
     }
+
+    // Runs as the invoking user, so "bound" is just the folder itself: nothing to grant, nothing
+    // isolated (the known-bad control).
+    fn open_session_in(&self, root: Option<&Path>) -> Result<Box<dyn Session>, LaunchError> {
+        match root {
+            None => self.open_session(),
+            Some(r) => Ok(Box::new(NaiveSession {
+                dir: r.to_path_buf(),
+            })),
+        }
+    }
 }
 
 /// The unisolated session: many execs in the one fixed directory, and `close` leaves it as it is.
