@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.125 — `spawn-runner --root` and a tree per pool account (A3 P2b)
+
+`spawn-runner [--root <dir>] serve|exec|session`: the flag sets the layout root (over `ANTSPAWN_ROOT` and the ProgramData default), and the `exec`/`session` children `serve` starts inherit it. `AccountPool` now gives each leased account its own tree, `<pool root>/<account>`, instead of one shared layout, so no directory is shared between pool accounts. Needed by the pool paste (`docs/proof/PASTE-pool-accounts.ps1`, whose tasks run `spawn-runner --root <tree> serve`); the single-account setup and its task are unchanged. Verified by `tests/runner.rs` (the flag beats a decoy `ANTSPAWN_ROOT`, the job answers in that tree only, a bare `--root` exits 2) and a pool unit test; a real account is not exercised.
+
 ## 0.0.124 — Account pool elevated paste and undo (A3 P4)
 
 `docs/proof/PASTE-pool-accounts.ps1` and `docs/ACCOUNT-POOL-SETUP.md`: creates N restricted accounts, each with its own directory tree, task (`spawn-runner.exe --root <tree> serve`), batch-logon right, outbound firewall block and a deny on `C:\Projects`, hash-checked against the deployed runner, with a read-back per step and a documented `-Undo`. Changes no existing ACL. Dry run only: parsed under PowerShell 5.1 and 7, dry-run and undo-dry-run output read, wrong hash refused; `-Apply` has not been run. Needs the `--root` runner flag (next slice).
