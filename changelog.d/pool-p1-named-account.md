@@ -1,0 +1,3 @@
+kind: Account launcher takes a named account and task (A3 P1)
+---
+`launchers::account::AccountIdentity { account, task }` plus `Account::with_identity` / `identity()`: the account name (bind-grant principal) and the scheduled task the launcher triggers are no longer fixed to `antspawn-run` / `AntSpawnRunner`. `Account::new` and `Default` use the old constants, so single-account behaviour is unchanged. First slice of the account pool (P2 lease allocator, P3 isolation probes, P4 elevated setup per account follow). Verified by `cargo clippy --all-targets` and a unit test that the default identity equals the constants and a named one reaches `bind_principal`.

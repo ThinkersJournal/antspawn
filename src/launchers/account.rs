@@ -48,15 +48,52 @@ const ORPHAN_AGE: Duration = Duration::from_secs(120);
 /// The restricted account the setup script creates (`scripts/account-setup.ps1`).
 pub const ACCOUNT_NAME: &str = "antspawn-run";
 
+/// Which restricted account, and which scheduled task runs the runner as it. One machine can host
+/// several (the A3 account pool); the default is the single account the setup script creates.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccountIdentity {
+    /// The Windows account name sessions run as (also the bind-grant principal).
+    pub account: String,
+    /// The scheduled task that runs `spawn-runner serve` as that account.
+    pub task: String,
+}
+
+impl AccountIdentity {
+    pub fn new(account: impl Into<String>, task: impl Into<String>) -> Self {
+        AccountIdentity {
+            account: account.into(),
+            task: task.into(),
+        }
+    }
+}
+
+impl Default for AccountIdentity {
+    fn default() -> Self {
+        AccountIdentity::new(ACCOUNT_NAME, TASK_NAME)
+    }
+}
+
 /// The restricted-account launcher.
 #[derive(Debug, Clone)]
 pub struct Account {
     layout: Layout,
+    identity: AccountIdentity,
 }
 
 impl Account {
+    /// The default (single) account.
     pub fn new(layout: Layout) -> Self {
-        Account { layout }
+        Account::with_identity(layout, AccountIdentity::default())
+    }
+
+    /// A named account and task (a pool member).
+    pub fn with_identity(layout: Layout, identity: AccountIdentity) -> Self {
+        Account { layout, identity }
+    }
+
+    /// The account and task this launcher uses.
+    pub fn identity(&self) -> &AccountIdentity {
+        &self.identity
     }
 }
 
@@ -112,6 +149,7 @@ impl Launcher for Account {
         let id = new_job_id();
         let env = AccountEnv {
             layout: self.layout.clone(),
+            task: self.identity.task.clone(),
             id: id.clone(),
             limit: Duration::from_secs(cfg.time_limit_s(spec)),
         };
@@ -133,7 +171,7 @@ impl Launcher for Account {
     }
 
     fn bind_principal(&self) -> Option<String> {
-        Some(ACCOUNT_NAME.into())
+        Some(self.identity.account.clone())
     }
 
     fn open_session_in(&self, root: Option<&Path>) -> Result<Box<dyn Session>, LaunchError> {
@@ -160,16 +198,16 @@ impl Launcher for Account {
         std::fs::create_dir_all(&spool)?;
         let text = toml::to_string(&file).map_err(|e| LaunchError::Other(e.to_string()))?;
         std::fs::write(spool.join("session.toml"), text)?;
-        start_task()?;
+        start_task(&self.identity.task)?;
         session.pipe = Some(connect(&file.pipe_name(&id))?);
         Ok(Box::new(session))
     }
 }
 
 /// Trigger the runner task (it runs `spawn-runner serve`, which hosts any pending session).
-fn start_task() -> Result<(), LaunchError> {
+fn start_task(task: &str) -> Result<(), LaunchError> {
     let out = Command::new("schtasks")
-        .args(["/Run", "/TN", TASK_NAME])
+        .args(["/Run", "/TN", task])
         .output()?;
     if out.status.success() {
         return Ok(());
@@ -177,7 +215,7 @@ fn start_task() -> Result<(), LaunchError> {
     Err(LaunchError::NotProvisioned {
         launcher: "account".into(),
         what: format!(
-            "`schtasks /Run /TN {TASK_NAME}` failed ({}): {}. The task is missing or this \
+            "`schtasks /Run /TN {task}` failed ({}): {}. The task is missing or this \
              user may not run it; the machine owner re-runs `scripts/account-setup.ps1 -Apply`.",
             out.status,
             String::from_utf8_lossy(&out.stderr).trim()
@@ -400,13 +438,14 @@ impl Drop for AccountSession {
 
 struct AccountEnv {
     layout: Layout,
+    task: String,
     id: String,
     limit: Duration,
 }
 
 impl Environment for AccountEnv {
     fn run(&mut self, _spec: &JobSpec) -> Result<Exit, LaunchError> {
-        start_task()?;
+        start_task(&self.task)?;
         let code_file = self.layout.job_results(&self.id).join("exit.code");
         let start = Instant::now();
         loop {
@@ -417,8 +456,9 @@ impl Environment for AccountEnv {
             }
             if start.elapsed() > self.limit + GRACE {
                 return Err(LaunchError::Other(format!(
-                    "the runner did not answer within {}s; is task {TASK_NAME} registered and enabled?",
-                    (self.limit + GRACE).as_secs()
+                    "the runner did not answer within {}s; is task {} registered and enabled?",
+                    (self.limit + GRACE).as_secs(),
+                    self.task
                 )));
             }
             std::thread::sleep(Duration::from_millis(200));
@@ -489,6 +529,17 @@ fn copy(from: &Path, to: &Path) -> Result<(), LaunchError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn identity_defaults_to_the_constants_and_a_named_one_reaches_the_principal() {
+        let l = Layout::new("x");
+        let d = Account::new(l.clone());
+        assert_eq!(d.identity(), &AccountIdentity::new(ACCOUNT_NAME, TASK_NAME));
+        assert_eq!(d.bind_principal().as_deref(), Some("antspawn-run"));
+        let n = Account::with_identity(l, AccountIdentity::new("antspawn-run2", "AntSpawnRunner2"));
+        assert_eq!(n.bind_principal().as_deref(), Some("antspawn-run2"));
+        assert_eq!(n.identity().task, "AntSpawnRunner2");
+    }
 
     fn session(tag: &str) -> (Layout, Box<AccountSession>) {
         let root =
