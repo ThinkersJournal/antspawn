@@ -15,6 +15,7 @@ pub mod hyperv;
 pub mod launcher;
 pub mod launchers;
 pub mod matrix;
+pub mod pool;
 pub mod probes;
 pub mod result;
 pub mod runner;
