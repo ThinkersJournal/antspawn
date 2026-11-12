@@ -7,7 +7,10 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::{ExecRequest, Exit, JobSpec, Launcher, Session};
+use crate::{ExecRequest, Exit, JobSpec, LaunchError, Launcher, Session};
+
+/// Opens one more session of the launcher or pool under test (the session probes need two at once).
+pub type OpenSession<'a> = &'a dyn Fn() -> Result<Box<dyn Session>, LaunchError>;
 
 /// A probe binary and the launcher run it is used for.
 pub struct Probes {
@@ -67,6 +70,18 @@ impl Probes {
         s.exec(&ExecRequest::new(cmd)).unwrap().exit == Exit::Code(0)
     }
 
+    /// The probe's own yes (exit 0) or no (exit 10); anything else (could not start, refused, timed
+    /// out) is inconclusive and panics, so it can never read as "isolated".
+    fn exec_answer(&self, s: &mut dyn Session, args: &[&str]) -> bool {
+        let cmd = std::iter::once(self.exe.to_str().expect("utf-8 probe path"))
+            .chain(args.iter().copied());
+        match s.exec(&ExecRequest::new(cmd)).unwrap().exit {
+            Exit::Code(0) => true,
+            Exit::Code(10) => false,
+            other => panic!("the probe was inconclusive: {other:?}"),
+        }
+    }
+
     /// The positive control for the session probes: does a file written by one exec exist for the
     /// next exec of the SAME session? A launcher where this is `false` has no session state, and
     /// `violates_clean_slate_session` would pass for the wrong reason.
@@ -93,6 +108,57 @@ impl Probes {
         let mut second = l.open_session().unwrap();
         let seen = self.exec_succeeds(second.as_mut(), &["exists", "leftover.txt"]);
         second.close().unwrap();
+        seen
+    }
+
+    /// Can two sessions be open and working at the same time? `true` = the property is VIOLATED: the
+    /// second open was refused, or either session could not run a command while the other was open.
+    /// A pool of one account violates it; a pool of two does not.
+    pub fn violates_concurrent(&self, open: OpenSession) -> bool {
+        let Ok(mut a) = open() else { return true };
+        let Ok(mut b) = open() else {
+            let _ = a.close();
+            return true;
+        };
+        let works = self.exec_succeeds(a.as_mut(), &["exists", "."])
+            && self.exec_succeeds(b.as_mut(), &["exists", "."])
+            && self.exec_succeeds(a.as_mut(), &["exists", "."]);
+        let _ = (a.close(), b.close());
+        !works
+    }
+
+    /// Can one live session read what another live session wrote? `true` = VIOLATED. Session `a`
+    /// writes a file and reports where it is; session `b`, open at the same time, tries to read it
+    /// by that path. The positive control is `a` reading its own file (panics if it cannot, since a
+    /// refusal would then prove nothing). Both sessions must open: refusing the second is
+    /// [`Probes::violates_concurrent`]'s finding, not isolation, so it panics here.
+    pub fn violates_no_read_other_session(&self, open: OpenSession) -> bool {
+        let mut a = open().expect("first session must open");
+        let mut b = open().expect("second session must open, or this probe proves nothing");
+        let out = a
+            .exec(&ExecRequest::new([self.exe.to_str().unwrap(), "cwd"]))
+            .expect("exec cwd");
+        assert_eq!(
+            out.exit,
+            Exit::Code(0),
+            "the probe could not report its directory"
+        );
+        let dir = String::from_utf8_lossy(out.streams.stdout.as_deref().unwrap_or_default())
+            .trim()
+            .to_owned();
+        assert!(!dir.is_empty(), "the session reported no directory");
+        let target = Path::new(&dir).join("other-session-secret.txt");
+        let target = target.to_str().expect("utf-8 path");
+        assert!(
+            self.exec_succeeds(a.as_mut(), &["write", target]),
+            "the first session must be able to write its own file"
+        );
+        assert!(
+            self.exec_succeeds(a.as_mut(), &["read", target]),
+            "the first session must be able to read its own file (the positive control)"
+        );
+        let seen = self.exec_answer(b.as_mut(), &["read", target]);
+        let _ = (a.close(), b.close());
         seen
     }
 
