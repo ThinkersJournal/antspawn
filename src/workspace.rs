@@ -145,17 +145,14 @@ fn io(path: &Path, e: std::io::Error) -> WorkspaceError {
 
 /// True for a symlink or, on Windows, any reparse point (junctions included).
 pub(crate) fn is_reparse(md: &fs::Metadata) -> bool {
-    if md.file_type().is_symlink() {
-        return true;
-    }
     #[cfg(windows)]
-    {
+    let reparse_point = {
         use std::os::windows::fs::MetadataExt;
-        if md.file_attributes() & 0x400 != 0 {
-            return true;
-        }
-    }
-    false
+        md.file_attributes() & 0x400 != 0
+    };
+    #[cfg(not(windows))]
+    let reparse_point = false;
+    md.file_type().is_symlink() || reparse_point
 }
 
 /// SHA-256 of a file and its size, streamed.

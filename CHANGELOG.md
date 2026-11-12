@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.128 — fix the pool paste's 49-character account description
+
+`docs/proof/PASTE-pool-accounts.ps1` stopped at its first account on CireSnave's first real `-Apply` (2026-11-12): `New-LocalUser -Description` accepts at most 48 characters and ours had 49, and the dry run never calls `New-LocalUser`, so it could not tell. The description is now `$PoolDescription` (46 characters), and a limit check now runs before anything is changed, in the dry run too, for every account: SAM account name 20, description 48, generated password 127, task name 238, task `-User` string 104, and characters a user name cannot hold. Verified: the dry run with `-Count 4` passes the check; a scratch copy with the old 49-character text is refused by the dry run ("Nothing was changed"); three script-text tests, and the real-script test goes red on the 49-character text and green restored. Not verified: any `-Apply`. The state the failed run left (`%ProgramData%\antspawn-pool` and `leases\`, no user, task or rule) is read from the PM's report, not by me.
+
 ## 0.0.127 — account pool sized to four accounts
 
 CireSnave's ruling on board 420 (2026-11-12, "420: B.") fixes the pool at four accounts. `docs/ACCOUNT-POOL-SETUP.md` now gives the run and undo lines as `-Count 4` and the four-member `ANTSPAWN_POOL`, and `docs/SESSION-PLAN.md` records N = 4. The script already accepts 1-8, so no code changes. Not measured: a `-Count 4` dry run, any `-Apply`, and the pool test beyond two concurrent sessions (it exercises two of the four accounts, plus its two known-bad controls).
