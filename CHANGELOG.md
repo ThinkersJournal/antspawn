@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.119 — Workspace modes W4 part 2 (bind through the session)
+
+Workspace modes, slice W4 part 2 : `bind` wired through the session. `Launcher` gains `open_session_in(Some(root))` (default: refused, so a bind never quietly becomes something else) and `bind_principal`; `account` passes the root in `session.toml` (new optional `root`; an older host rejects the unknown field, so a bind against an old runner fails loudly instead of running in an empty folder) and names `antspawn-run`; `naive` runs in the folder as the invoking user (the unisolated control, nothing granted). The host runs commands in the root after `session_host::bind_root` accepts it (absolute drive path, no `.`/`..`, an existing directory, not overlapping the runner's own spool, results or work dirs) and never wipes it. `workspace_session::open_bound` grants first (denies then Modify), then opens the session, and revokes the grant if the open fails; `WorkspaceSession::close` ends the session, then revokes and proves removal, and reports a failure of either. `changes()` is an error in bind (edits are in place). `Registry::open_workspace_session` serves `Mode::Bind`. Not wired to `spawn session open` yet (W5 end). **UNVERIFIED live**: needs the spawn-runner redeployed (board 416); nothing here ran as the real account. Unmeasured: whether the account's `.git` read/`git status` works inside a real bind session (W0 measured the ACL, not a git run), cwd handling when the root is on another drive.
+
 ## 0.0.118
 
 - Tooling: adopt the changelog-fragment kit (`tools/stamp-version.py`, `tools/check-fragment.py`, `.github/workflows/changelog-fragment.yml`, `changelog.d/README.md`). From the next PR on, a PR carries one `changelog.d/` fragment and no version edit; the PM stamps at merge. Dry run with a throwaway fragment listed Cargo.toml, Cargo.lock and CHANGELOG.md. Provisional (PM allocates).
