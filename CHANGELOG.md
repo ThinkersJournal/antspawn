@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.122 — Account pool lease allocator (A3 P2)
+
+New `pool` module: `Pool` (ordered `AccountIdentity` list), `Lease`, `PoolError` and `AccountPool::open_session_in`, which leases a free account, opens the account launcher's session on it, and frees it when the session closes or drops. The lease is `<root>/leases/<account>.lease` opened with share mode 0 and delete-on-close, so the operating system releases it when the owner dies (no pid record, no pid reuse, no reclaim race). A third open on a two-account pool is refused with "pool exhausted". Windows-only; elsewhere every acquire is refused loudly. Not yet wired to the CLI or the registry, and a workspace `bind` cannot yet grant the leased account (`LeasedSession::principal` names it; P3 and later). Verified by unit tests: distinct leases, exhaustion then reuse of the freed account, a killed owner process releasing its lease.
+
 ## 0.0.121 — Account launcher takes a named account and task (A3 P1)
 
 `launchers::account::AccountIdentity { account, task }` plus `Account::with_identity` / `identity()`: the account name (bind-grant principal) and the scheduled task the launcher triggers are no longer fixed to `antspawn-run` / `AntSpawnRunner`. `Account::new` and `Default` use the old constants, so single-account behaviour is unchanged. First slice of the account pool (P2 lease allocator, P3 isolation probes, P4 elevated setup per account follow). Verified by `cargo clippy --all-targets` and a unit test that the default identity equals the constants and a named one reaches `bind_principal`.
