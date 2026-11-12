@@ -8,6 +8,7 @@
 //! * `fork <pidfile>`: start a detached 60 s sleeper, write its pid to `pidfile`, exit.
 //! * `connect <host:port>`: exit 0 if a TCP connection opens within 5 s.
 //! * `sleep <secs>`: sleep.
+//! * `cwd`: print the current directory on stdout, exit 0 (lets one session tell another where it is).
 //!
 //! Exit 0 = yes, 10 = no, anything else = the probe did not answer.
 
@@ -32,6 +33,10 @@ fn main() -> ExitCode {
                 })
             })
         }
+        ["cwd"] => std::env::current_dir().is_ok_and(|d| {
+            println!("{}", d.display());
+            true
+        }),
         ["sleep", s] => {
             std::thread::sleep(std::time::Duration::from_secs(s.parse().unwrap_or(0)));
             true
