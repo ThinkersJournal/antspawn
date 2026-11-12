@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.123 — Probes for `concurrent` and `no-read-other-session` (A3 P3)
+
+`Probes::violates_concurrent` and `Probes::violates_no_read_other_session` take an opener for one more session, and `spawn-probe cwd` reports a session's directory. The isolation probe has a positive control (the writing session reads its own file) and treats any answer but the probe's own yes/no as inconclusive. Proven able to fail: `naive` (one shared directory) fails `no-read-other-session`; a pool of one fails `concurrent`; a per-session-directory fake passes both (probe logic only). `tests/account_pool.rs` runs the same on real pool accounts with two known-bad controls (pool of one; two sessions forced onto one account) and prints UNVERIFIED until `ANTSPAWN_POOL` and `ANTSPAWN_POOL_PROBE` are set after P4. No matrix row changes: both stay `no` until the real run passes.
+
 ## 0.0.122 — Account pool lease allocator (A3 P2)
 
 New `pool` module: `Pool` (ordered `AccountIdentity` list), `Lease`, `PoolError` and `AccountPool::open_session_in`, which leases a free account, opens the account launcher's session on it, and frees it when the session closes or drops. The lease is `<root>/leases/<account>.lease` opened with share mode 0 and delete-on-close, so the operating system releases it when the owner dies (no pid record, no pid reuse, no reclaim race). A third open on a two-account pool is refused with "pool exhausted". Windows-only; elsewhere every acquire is refused loudly. Not yet wired to the CLI or the registry, and a workspace `bind` cannot yet grant the leased account (`LeasedSession::principal` names it; P3 and later). Verified by unit tests: distinct leases, exhaustion then reuse of the freed account, a killed owner process releasing its lease.
