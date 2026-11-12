@@ -441,3 +441,15 @@ What the one test asserts, all held: a session opened through Task Scheduler run
 What the old path did (from the code and the earlier HANDOFF, not re-timed here because the old exe is gone): the old `spawn-runner.exe` has no `session` verb, so the pipe never appeared, `open_session` waited out its wait and returned an error, and the test printed `UNVERIFIED: the deployed spawn-runner cannot host a session yet`. The run order was not repeated on the old exe today.
 
 Not measured: the real second user as launcher (the owner check is test-verified only), latency of `open_session` and of an `exec` on the account (the whole test was 3.83 s, two sessions and five execs), many sessions at once, what the account can reach from inside a session, logout or lock behaviour. One run on one day.
+
+## 2026-11-12: both workspace modes and `account_session` on the real account, with the `--root` runner (ref: main `4397631`, test file `tests/account_workspace.rs` of this branch; run as `cires`, interactive; one run each, `RUST_TEST_THREADS=1`)
+
+Deployed first (CireSnave, board 416; read back by the PM and by me): `C:\Program Files\antspawn\spawn-runner.exe` sha256 `5C04BC47...EA1` = the CI build of main `4a11c30` (carries `--root`). Before: `3A5102B3...4E3`.
+
+- `cargo test --test account_session`: **2 passed, 0 failed**, no `UNVERIFIED` line.
+- `cargo test --test account_workspace -- --nocapture`: **2 passed, 0 failed**. Throwaway trees under `%TEMP%`, a real `git init` in the bind tree.
+  - **copy-back, as `antspawn-run`:** the project went in; the account edited `a.txt` and added `n.txt`; before `apply` the real tree was unchanged (control); `stage_changes` listed exactly `a.txt` modified and `n.txt` added; a wrong `set_hash` wrote nothing; `apply_staged` with the right hash landed both; the next `stage_changes` was empty (the base moved).
+  - **bind, as `antspawn-run`:** the grant (denies first, then Modify) opened a session in the real folder; the account's edit reached the real file in place; a sibling folder that was NOT granted could not be read (control); `close` left no grant journal entry.
+  - **`git status` inside a bind session: FAILS.** Exit 128, `fatal: failed to stat '...\AppData\Local\Temp': Permission denied`, with a real repository (not an empty `.git`), and the same with `GIT_CEILING_DIRECTORIES` set to the project's parent. Printed, not asserted. Cause not measured (git stats the project's parent, which the account cannot read here). Whether it fails the same under `C:\Projects\<name>` is not measured either. So a model that runs `git status` in a bind session will see this error today.
+
+Not measured: the copy-mode `changes`/`apply` as JSON lines through `spawn session` (only through the library on the real account); bind with the leased pool accounts; grant cost on a large tree; a crash leaving the grant; rename or mkdir inside a denied path; many sessions at once. One run on one day. No matrix row is changed by this: the rows for the two workspace modes still need a capability id and a probe with a known-bad control.
