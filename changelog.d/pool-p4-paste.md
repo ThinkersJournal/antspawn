@@ -1,3 +1,0 @@
-kind: Account pool elevated paste and undo (A3 P4)
----
-`docs/proof/PASTE-pool-accounts.ps1` and `docs/ACCOUNT-POOL-SETUP.md`: creates N restricted accounts, each with its own directory tree, task (`spawn-runner.exe --root <tree> serve`), batch-logon right, outbound firewall block and a deny on `C:\Projects`, hash-checked against the deployed runner, with a read-back per step and a documented `-Undo`. Changes no existing ACL. Dry run only: parsed under PowerShell 5.1 and 7, dry-run and undo-dry-run output read, wrong hash refused; `-Apply` has not been run. Needs the `--root` runner flag (next slice).
