@@ -50,6 +50,14 @@ enum Command {
         /// Launcher id. Refused, naming what is missing, unless the matrix certifies it for sessions.
         #[arg(long, default_value = "account")]
         launcher: String,
+        /// How the session reaches a real project: `copy` (a working copy, edits come back as a
+        /// reviewed change set; the default when `--root` is given) or `bind` (the account edits the
+        /// real folder in place). Needs `--root`; refused for a launcher that cannot serve it.
+        #[arg(long, requires = "root")]
+        workspace: Option<String>,
+        /// The project folder for `--workspace`. Without it the session has an empty work dir only.
+        #[arg(long)]
+        root: Option<PathBuf>,
     },
     /// Run a job: provision, run, collect outputs, destroy.
     Run {
@@ -106,7 +114,11 @@ fn run(command: Command) -> Result<ExitCode, String> {
             once,
             pem_key,
         } => return adapter(&config, check, once, pem_key),
-        Command::Session { launcher } => return session(&launcher),
+        Command::Session {
+            launcher,
+            workspace,
+            root,
+        } => return session(&launcher, workspace.as_deref(), root.as_deref()),
         Command::Run {
             spec,
             launcher,
@@ -116,18 +128,47 @@ fn run(command: Command) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn session(launcher: &str) -> Result<ExitCode, String> {
-    let s = launchers::registry()
-        .open_session(
-            launcher,
-            &antspawn::spec::Needs {
-                capabilities: Vec::new(),
-                prefer: Vec::new(),
-            },
-        )
-        .map_err(|e| e.to_string())?;
+fn session(
+    launcher: &str,
+    workspace: Option<&str>,
+    root: Option<&Path>,
+) -> Result<ExitCode, String> {
+    let needs = antspawn::spec::Needs {
+        capabilities: Vec::new(),
+        prefer: Vec::new(),
+    };
     let stdin = std::io::stdin();
-    let stdout = std::io::stdout();
+    let mut stdout = std::io::stdout();
+    let s: Box<dyn antspawn::session::Session> = match root {
+        None => launchers::registry()
+            .open_session(launcher, &needs)
+            .map_err(|e| e.to_string())?,
+        Some(root) => {
+            use std::io::Write;
+            let mode = match workspace {
+                Some(w) => antspawn::workspace::Mode::parse(w)?,
+                None => antspawn::workspace::Mode::default(),
+            };
+            let ws = launchers::registry()
+                .open_workspace_session(
+                    launcher,
+                    &needs,
+                    root,
+                    mode,
+                    antspawn::workspace::Policy::default(),
+                )
+                .map_err(|e| e.to_string())?;
+            // The mode is part of the result: the caller must not have to guess which one it got.
+            let opened = serde_json::json!({
+                "op": "opened",
+                "workspace": mode.as_str(),
+                "root": root.display().to_string(),
+            });
+            writeln!(stdout, "{opened}").map_err(|e| e.to_string())?;
+            stdout.flush().map_err(|e| e.to_string())?;
+            Box::new(ws)
+        }
+    };
     antspawn::session_cli::serve(s, stdin.lock(), stdout.lock()).map_err(|e| e.to_string())?;
     Ok(ExitCode::SUCCESS)
 }

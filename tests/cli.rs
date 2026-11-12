@@ -124,3 +124,51 @@ fn an_output_named_like_a_result_file_is_refused_as_a_bad_spec() {
     assert_eq!(code, Some(126));
     assert!(stderr.contains("reserved"), "{stderr}");
 }
+
+#[test]
+fn session_workspace_needs_a_root_and_an_uncertified_launcher_is_refused_before_anything_opens() {
+    let spawn = env!("CARGO_BIN_EXE_spawn");
+    let no_root = Command::new(spawn)
+        .args(["session", "--workspace", "bind"])
+        .output()
+        .unwrap();
+    assert!(!no_root.status.success());
+    assert!(
+        String::from_utf8_lossy(&no_root.stderr).contains("--root"),
+        "stderr was: {}",
+        String::from_utf8_lossy(&no_root.stderr)
+    );
+    // naive has no certified `session` row, so even a bind on it is refused, with nothing opened.
+    let dir = std::env::temp_dir().join(format!("antspawn-cli-ws-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let refused = Command::new(spawn)
+        .args([
+            "session",
+            "--launcher",
+            "naive",
+            "--workspace",
+            "bind",
+            "--root",
+        ])
+        .arg(&dir)
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(refused.stdout.is_empty(), "no `opened` line on a refusal");
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("not certified"));
+    // a mode that does not exist is refused, never defaulted
+    let bad = Command::new(spawn)
+        .args([
+            "session",
+            "--launcher",
+            "naive",
+            "--workspace",
+            "auto",
+            "--root",
+        ])
+        .arg(&dir)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(!bad.status.success());
+}

@@ -821,6 +821,53 @@ mod bind_tests {
         assert_eq!(j.entries().len(), 1, "stays reclaimable");
     }
 
+    /// W5: the one edit-in-place probe, the same command in both modes. In `bind` the edit is in
+    /// the real tree at once; in `copy` it is there only after the reviewed `apply`. (`naive` stands
+    /// in for the account here; the account-backed run is recorded in MEASUREMENTS once the runner
+    /// is redeployed.)
+    #[cfg(windows)]
+    #[test]
+    fn the_same_edit_probe_passes_in_both_modes() {
+        use crate::launcher::Exit;
+        let edit = ExecRequest::new(["cmd", "/C", "echo edited> e.txt"]);
+
+        // bind
+        let f = Fake::default();
+        let root = dir("probe-bind");
+        let j = Journal::new(dir("probe-bind-j"));
+        let mut ws = open_bound(
+            &crate::launchers::naive::Naive,
+            &root,
+            Policy::default(),
+            &j,
+            Box::new(f.clone()),
+            &|_| true,
+        )
+        .unwrap();
+        assert_eq!(ws.exec(&edit).unwrap().exit, Exit::Code(0));
+        assert!(
+            root.join("e.txt").is_file(),
+            "bind: in the real tree at once"
+        );
+        Box::new(ws).close().unwrap();
+
+        // copy: the session's own folder is a separate one, as the account's work dir is
+        let real = dir("probe-copy");
+        let work = dir("probe-copy-w");
+        let inner = crate::launchers::naive::Naive
+            .open_session_in(Some(&work))
+            .unwrap();
+        let mut ws =
+            WorkspaceSession::open(inner, &real, Mode::CopyBack, Policy::default()).unwrap();
+        assert_eq!(ws.exec(&edit).unwrap().exit, Exit::Code(0));
+        assert!(!real.join("e.txt").exists(), "copy: not there before apply");
+        let st = ws.changes().unwrap();
+        assert_eq!(st.changes.added.keys().collect::<Vec<_>>(), ["e.txt"]);
+        let done = ws.apply(&st, &Approvals::default()).unwrap();
+        assert!(done.is_clean(), "{done:?}");
+        assert!(real.join("e.txt").is_file(), "copy: there after apply");
+    }
+
     /// The unisolated control: no grant, the session is just the folder, and an edit made through it
     /// is in the real tree at once (the same edit-in-place probe the account must pass).
     #[cfg(windows)]
