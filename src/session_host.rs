@@ -843,6 +843,8 @@ mod bind_root_tests {
     use crate::runner::Layout;
     use std::path::PathBuf;
 
+    // The runner is Windows-only and `bind_root` demands a drive path, so the accept case needs one.
+    #[cfg(windows)]
     #[test]
     fn a_bind_root_must_be_a_plain_existing_folder_outside_the_runners_own() {
         let base = std::env::temp_dir().join(format!("antspawn-bindroot-{}", std::process::id()));
@@ -863,6 +865,13 @@ mod bind_root_tests {
         ] {
             assert!(bind_root(&bad, &layout).is_err(), "{why}");
         }
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn off_windows_there_is_no_drive_path_so_every_root_is_refused() {
+        let layout = Layout::new(std::env::temp_dir().join("antspawn-bindroot-runner"));
+        assert!(bind_root(&std::env::temp_dir(), &layout).is_err());
     }
 
     #[test]
