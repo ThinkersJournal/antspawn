@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.121 — Account launcher takes a named account and task (A3 P1)
+
+`launchers::account::AccountIdentity { account, task }` plus `Account::with_identity` / `identity()`: the account name (bind-grant principal) and the scheduled task the launcher triggers are no longer fixed to `antspawn-run` / `AntSpawnRunner`. `Account::new` and `Default` use the old constants, so single-account behaviour is unchanged. First slice of the account pool (P2 lease allocator, P3 isolation probes, P4 elevated setup per account follow). Verified by `cargo clippy --all-targets` and a unit test that the default identity equals the constants and a named one reaches `bind_principal`.
+
 ## 0.0.120 — Workspace modes W5 end: `spawn session --workspace copy|bind --root DIR`
 
 `spawn session` takes `--workspace copy|bind` and `--root DIR` (`--workspace` needs `--root`; with `--root` alone the mode is `copy`, the reviewed default; an unknown mode is refused, never defaulted). It goes through `Registry::open_workspace_session`, so the same matrix check applies and a launcher that is not certified for `session` is refused before anything opens, with no output on stdout. On success the first stdout line is `{"op":"opened","workspace":"copy-back"|"bind","root":...}`, so the caller learns which mode it got; after that the line protocol is unchanged. Without `--root` nothing changes. A test runs the same edit command in both modes (windows, `naive` standing in for the account): in `bind` the file is in the real tree at once, in `copy` only after the reviewed `apply`. Not done: reaching `changes`/`apply` of a copy session through the CLI lines (the library has them; the line protocol does not yet), and the matrix rows for the two modes, which stay absent (off) until the account-backed run after the runner redeploy (board 416). Unmeasured: both modes as the real account.
