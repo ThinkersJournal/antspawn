@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.124 — Account pool elevated paste and undo (A3 P4)
+
+`docs/proof/PASTE-pool-accounts.ps1` and `docs/ACCOUNT-POOL-SETUP.md`: creates N restricted accounts, each with its own directory tree, task (`spawn-runner.exe --root <tree> serve`), batch-logon right, outbound firewall block and a deny on `C:\Projects`, hash-checked against the deployed runner, with a read-back per step and a documented `-Undo`. Changes no existing ACL. Dry run only: parsed under PowerShell 5.1 and 7, dry-run and undo-dry-run output read, wrong hash refused; `-Apply` has not been run. Needs the `--root` runner flag (next slice).
+
 ## 0.0.123 — Probes for `concurrent` and `no-read-other-session` (A3 P3)
 
 `Probes::violates_concurrent` and `Probes::violates_no_read_other_session` take an opener for one more session, and `spawn-probe cwd` reports a session's directory. The isolation probe has a positive control (the writing session reads its own file) and treats any answer but the probe's own yes/no as inconclusive. Proven able to fail: `naive` (one shared directory) fails `no-read-other-session`; a pool of one fails `concurrent`; a per-session-directory fake passes both (probe logic only). `tests/account_pool.rs` runs the same on real pool accounts with two known-bad controls (pool of one; two sessions forced onto one account) and prints UNVERIFIED until `ANTSPAWN_POOL` and `ANTSPAWN_POOL_PROBE` are set after P4. No matrix row changes: both stay `no` until the real run passes.
