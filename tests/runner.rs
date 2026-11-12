@@ -163,3 +163,44 @@ fn a_missing_setup_is_reported_as_not_provisioned() {
     );
     assert!(e.to_string().contains("account-setup.ps1"));
 }
+
+/// The pool's task runs `spawn-runner --root <tree> serve`: the flag decides the root (even against a
+/// conflicting `ANTSPAWN_ROOT`), and the `exec` child it starts inherits it, so the job really runs
+/// and answers in that tree and touches no other.
+#[test]
+fn the_root_flag_decides_the_tree_and_its_children_inherit_it() {
+    let root = Root::new("flag");
+    let decoy = Root::new("flag-decoy");
+    let s = spec(&["write", "made.txt"], "");
+    let launcher = Account::new(root.layout());
+    let env = launcher.provision(&s).unwrap();
+    let st = Command::new(RUNNER)
+        .args(["--root", root.0.to_str().unwrap(), "serve"])
+        .env("ANTSPAWN_ROOT", &decoy.0)
+        .status()
+        .unwrap();
+    assert!(st.success());
+    let id = std::fs::read_dir(root.0.join("results"))
+        .unwrap()
+        .next()
+        .expect("the answer is published under --root")
+        .unwrap()
+        .file_name();
+    let code = std::fs::read_to_string(root.0.join("results").join(&id).join("exit.code")).unwrap();
+    assert_eq!(
+        decode_exit(&code),
+        Some(Exit::Code(0)),
+        "the job ran to completion"
+    );
+    assert!(
+        std::fs::read_dir(decoy.0.join("results"))
+            .unwrap()
+            .next()
+            .is_none(),
+        "the decoy root was used"
+    );
+    // A malformed flag is a usage error, not a silent fall back to another root.
+    let bad = Command::new(RUNNER).args(["--root"]).status().unwrap();
+    assert_eq!(bad.code(), Some(2));
+    env.destroy().unwrap();
+}

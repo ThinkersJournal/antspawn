@@ -1,0 +1,3 @@
+kind: `spawn-runner --root` and a tree per pool account (A3 P2b)
+---
+`spawn-runner [--root <dir>] serve|exec|session`: the flag sets the layout root (over `ANTSPAWN_ROOT` and the ProgramData default), and the `exec`/`session` children `serve` starts inherit it. `AccountPool` now gives each leased account its own tree, `<pool root>/<account>`, instead of one shared layout, so no directory is shared between pool accounts. Needed by the pool paste (`docs/proof/PASTE-pool-accounts.ps1`, whose tasks run `spawn-runner --root <tree> serve`); the single-account setup and its task are unchanged. Verified by `tests/runner.rs` (the flag beats a decoy `ANTSPAWN_ROOT`, the job answers in that tree only, a bare `--root` exits 2) and a pool unit test; a real account is not exercised.
