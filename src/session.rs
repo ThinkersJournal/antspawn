@@ -16,6 +16,8 @@ use crate::launcher::{Exit, LaunchError};
 use crate::runner::safe_relative;
 use crate::session_proto::FileInfo;
 use crate::streams::Streams;
+use crate::workspace::{ApplyReport, Approvals};
+use crate::workspace_session::StagedSummary;
 
 /// One command to run inside a session.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -91,6 +93,22 @@ pub trait Session {
     /// Regular files in the workspace with size and SHA-256, sorted, after `after`; `true` when
     /// another page follows.
     fn list(&mut self, _after: Option<&str>) -> Result<(Vec<FileInfo>, bool), LaunchError> {
+        Err(no_files())
+    }
+
+    /// `copy-back` only: fetch what the session changed against its base and keep it staged for
+    /// [`Session::apply_staged`]. Replaces any earlier staging.
+    fn stage_changes(&mut self) -> Result<StagedSummary, LaunchError> {
+        Err(no_files())
+    }
+    /// `copy-back` only: write the staged change set into the real project, as the invoking user,
+    /// all or nothing. `set_hash` must equal the staged set's hash, so what a person reviewed is
+    /// what lands. `ok` is the harness's approval by exact path; this crate holds none.
+    fn apply_staged(
+        &mut self,
+        _set_hash: &str,
+        _ok: &Approvals,
+    ) -> Result<ApplyReport, LaunchError> {
         Err(no_files())
     }
 }
