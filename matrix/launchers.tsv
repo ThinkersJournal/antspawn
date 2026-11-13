@@ -1,34 +1,40 @@
 subject_kind	subject	backend	version	config	enabled	reason	metadata	note	probed_at
-capability	isolation.no-read-outside	naive	1		no	job read a host file outside its environment	probe=read		2026-10-24T04:39:55Z
-capability	isolation.no-write-outside	naive	1		no	job wrote a host file outside its environment	probe=write		2026-10-24T04:39:55Z
-capability	clean-slate-next-run	naive	1		no	a file written by one job existed for the next	probe=write+exists		2026-10-24T04:39:55Z
-capability	kills-runaway-process	naive	1		no	a forked process survived the environment	probe=fork		2026-10-24T04:39:55Z
+capability	isolation.no-read-outside	naive	1		no	job read a host file outside its environment	probe=read		2026-11-13T04:32:03Z
+capability	isolation.no-write-outside	naive	1		no	job wrote a host file outside its environment	probe=write		2026-11-13T04:32:03Z
+capability	clean-slate-next-run	naive	1		no	a file written by one job existed for the next	probe=write+exists		2026-11-13T04:32:03Z
+capability	kills-runaway-process	naive	1		no	a forked process survived the environment	probe=fork		2026-11-13T04:32:03Z
 capability	gpu.cuda	naive	1		no	no probe for this capability yet			
 capability	gpu.vulkan	naive	1		no	no probe for this capability yet			
-capability	network.off	naive	1		no	job opened a TCP connection with the network supposedly off	probe=connect		2026-10-24T04:39:55Z
+capability	network.off	naive	1		no	job opened a TCP connection with the network supposedly off	probe=connect		2026-11-13T04:32:03Z
 capability	concurrent	naive	1		no	no probe for this capability yet			
 capability	session	naive	1		no	no probe for this capability yet			
-capability	clean-slate-next-session	naive	1		no	a file written in one session existed in the next, after close	probe=session-write+exists		2026-11-06T21:06:49Z
+capability	clean-slate-next-session	naive	1		no	a file written in one session existed in the next, after close	probe=session-write+exists		2026-11-13T04:32:03Z
 capability	no-read-other-session	naive	1		no	no probe for this capability yet			
-capability	isolation.no-read-outside	account	1		yes		probe=read		2026-10-24T04:39:55Z
-capability	isolation.no-write-outside	account	1		yes		probe=write		2026-10-24T04:39:55Z
-capability	clean-slate-next-run	account	1		yes		probe=write+exists		2026-10-24T04:39:55Z
-capability	kills-runaway-process	account	1		yes		probe=fork		2026-10-24T04:39:55Z
+capability	workspace.copy-back	naive	1		no	a session wrote into the real project folder directly, bypassing apply	probe=workspace-copy-back		2026-11-13T04:32:03Z
+capability	workspace.bind	naive	1		no	a bound session read a folder it was not granted, or close left the grant	probe=workspace-bind		2026-11-13T04:32:03Z
+capability	isolation.no-read-outside	account	1		yes		probe=read		2026-11-13T04:32:03Z
+capability	isolation.no-write-outside	account	1		yes		probe=write		2026-11-13T04:32:03Z
+capability	clean-slate-next-run	account	1		yes		probe=write+exists		2026-11-13T04:32:03Z
+capability	kills-runaway-process	account	1		yes		probe=fork		2026-11-13T04:32:03Z
 capability	gpu.cuda	account	1		no	no probe for this capability yet			
 capability	gpu.vulkan	account	1		no	no probe for this capability yet			
-capability	network.off	account	1		yes		probe=connect		2026-10-24T04:39:55Z
+capability	network.off	account	1		yes		probe=connect		2026-11-13T04:32:03Z
 capability	concurrent	account	1		no	no probe for this capability yet			
-capability	session	account	1		yes		probe=session-state		2026-11-08T11:05:38Z
-capability	clean-slate-next-session	account	1		yes		probe=session-write+exists		2026-11-08T11:05:38Z
+capability	session	account	1		yes		probe=session-state		2026-11-13T04:32:03Z
+capability	clean-slate-next-session	account	1		yes		probe=session-write+exists		2026-11-13T04:32:03Z
 capability	no-read-other-session	account	1		no	no probe for this capability yet			
-capability	isolation.no-read-outside	windows-sandbox	1		yes		probe=read		2026-10-24T04:39:55Z
-capability	isolation.no-write-outside	windows-sandbox	1		yes		probe=write		2026-10-24T04:39:55Z
-capability	clean-slate-next-run	windows-sandbox	1		yes		probe=write+exists		2026-10-24T04:39:55Z
-capability	kills-runaway-process	windows-sandbox	1		yes		probe=fork		2026-10-24T04:39:55Z
+capability	workspace.copy-back	account	1		yes		probe=workspace-copy-back		2026-11-13T04:32:03Z
+capability	workspace.bind	account	1		yes		probe=workspace-bind		2026-11-13T04:32:03Z
+capability	isolation.no-read-outside	windows-sandbox	1		yes		probe=read		2026-11-13T04:32:03Z
+capability	isolation.no-write-outside	windows-sandbox	1		yes		probe=write		2026-11-13T04:32:03Z
+capability	clean-slate-next-run	windows-sandbox	1		yes		probe=write+exists		2026-11-13T04:32:03Z
+capability	kills-runaway-process	windows-sandbox	1		yes		probe=fork		2026-11-13T04:32:03Z
 capability	gpu.cuda	windows-sandbox	1		no	no probe for this capability yet			
 capability	gpu.vulkan	windows-sandbox	1		no	no probe for this capability yet			
-capability	network.off	windows-sandbox	1		yes		probe=connect		2026-10-24T04:39:55Z
+capability	network.off	windows-sandbox	1		yes		probe=connect		2026-11-13T04:32:03Z
 capability	concurrent	windows-sandbox	1		no	no probe for this capability yet			
 capability	session	windows-sandbox	1		no	no probe for this capability yet			
 capability	clean-slate-next-session	windows-sandbox	1		no	no probe for this capability yet			
 capability	no-read-other-session	windows-sandbox	1		no	no probe for this capability yet			
+capability	workspace.copy-back	windows-sandbox	1		no	no probe for this capability yet			
+capability	workspace.bind	windows-sandbox	1		no	no probe for this capability yet			

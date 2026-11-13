@@ -51,6 +51,8 @@ capabilities! {
     Session => "session",
     CleanSlateNextSession => "clean-slate-next-session",
     NoReadOtherSession => "no-read-other-session",
+    WorkspaceCopyBack => "workspace.copy-back",
+    WorkspaceBind => "workspace.bind",
 }
 
 /// A capability id nobody defined (a typo must not silently mean "no requirement").
