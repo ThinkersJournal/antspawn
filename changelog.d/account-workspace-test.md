@@ -1,0 +1,3 @@
+kind: both workspace modes measured on the real account
+---
+New runner-only test `tests/account_workspace.rs` (prints `UNVERIFIED` where the account or the session-capable runner is missing, never `#[ignore]`d): copy-back and bind as `antspawn-run`, each with a known-bad control (the real tree is unchanged before `apply`, a wrong `set_hash` writes nothing, an ungranted sibling is unreadable, `close` leaves no grant). Both pass on the deployed `--root` runner; `git status` inside a bind session fails with exit 128 (recorded in `docs/MEASUREMENTS.md`, cause not measured). No behaviour change and no matrix row.
