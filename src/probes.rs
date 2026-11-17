@@ -7,10 +7,52 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use crate::bind::{Acl, Journal, pid_alive};
+use crate::workspace::{Approvals, Mode, Policy};
+use crate::workspace_session::{WorkspaceSession, open_bound};
 use crate::{ExecRequest, Exit, JobSpec, LaunchError, Launcher, Session};
 
 /// Opens one more session of the launcher or pool under test (the session probes need two at once).
 pub type OpenSession<'a> = &'a dyn Fn() -> Result<Box<dyn Session>, LaunchError>;
+
+/// A throwaway project folder (`a.txt`) under the host's temp dir.
+fn ws_tree(tag: &str) -> PathBuf {
+    let d = std::env::temp_dir().join(format!("antspawn-wsp-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).expect("scratch tree");
+    std::fs::write(d.join("a.txt"), "one").expect("seed file");
+    d
+}
+
+/// A shell command that writes `x` to `path` / reads `path`. No quoting on Windows (Rust's argument
+/// escaping turns `"` into `\"`, which `cmd /c` misreads), so paths must not contain spaces.
+fn shell(cmd: String) -> ExecRequest {
+    if cfg!(windows) {
+        ExecRequest::new(["cmd".to_owned(), "/c".to_owned(), cmd])
+    } else {
+        ExecRequest::new(["sh".to_owned(), "-c".to_owned(), cmd])
+    }
+}
+
+fn shell_write(path: &str) -> ExecRequest {
+    shell(if cfg!(windows) {
+        format!("echo x> {path}")
+    } else {
+        format!("echo x > '{path}'")
+    })
+}
+
+fn shell_read(path: &str) -> ExecRequest {
+    shell(if cfg!(windows) {
+        format!("type {path}")
+    } else {
+        format!("cat '{path}'")
+    })
+}
+
+fn ws_ok(s: &mut dyn Session, req: &ExecRequest) -> bool {
+    s.exec(req).unwrap().exit == Exit::Code(0)
+}
 
 /// A probe binary and the launcher run it is used for.
 pub struct Probes {
@@ -160,6 +202,80 @@ impl Probes {
         let seen = self.exec_answer(b.as_mut(), &["read", target]);
         let _ = (a.close(), b.close());
         seen
+    }
+
+    /// Does `copy-back` fail to keep the real tree out of the session's reach? `true` = VIOLATED: a
+    /// command in the session wrote a file into the REAL project folder by its absolute path, so the
+    /// review-then-`apply` step could be bypassed. Controls (each panics when it fails, so an
+    /// inconclusive run never reads as isolated): the session's relative edit does NOT reach the
+    /// real tree before `apply`, a wrong set hash writes nothing, and the right one lands the file.
+    pub fn violates_workspace_copy_back(&self, l: &dyn Launcher) -> bool {
+        let real = ws_tree("copy");
+        let inner = l.open_session().expect("open_session");
+        let mut ws = WorkspaceSession::open(inner, &real, Mode::CopyBack, Policy::default())
+            .expect("copy the project into the session");
+        assert!(
+            ws_ok(&mut ws, &shell_write("n.txt")),
+            "the session must be able to edit its copy"
+        );
+        assert!(
+            !real.join("n.txt").exists(),
+            "an edit reached the real tree before apply: the copy-back mode is itself broken"
+        );
+        let sum = ws.stage_changes().expect("stage_changes");
+        assert!(
+            sum.changes.added.contains_key("n.txt"),
+            "the staged set must list the edit: {sum:?}"
+        );
+        assert!(
+            ws.apply_staged(&"0".repeat(64), &Approvals::default())
+                .is_err(),
+            "a wrong set hash must be refused"
+        );
+        assert!(!real.join("n.txt").exists(), "a refused apply wrote a file");
+        ws.apply_staged(&sum.set_hash, &Approvals::default())
+            .expect("apply the reviewed set");
+        assert!(
+            real.join("n.txt").is_file(),
+            "the reviewed set must land after apply"
+        );
+        let direct = real.join("direct.txt");
+        let _ = ws_ok(&mut ws, &shell_write(&direct.display().to_string()));
+        let violated = direct.exists();
+        let _ = Box::new(ws).close();
+        let _ = std::fs::remove_dir_all(&real);
+        violated
+    }
+
+    /// Does `bind` fail to confine the session to the folder it was granted? `true` = VIOLATED: the
+    /// session could read a sibling folder that was NOT granted, or `close` left a grant in the
+    /// journal. Controls (panic when they fail): the grant opens a session whose edit lands in the
+    /// real folder in place. `acl` is what grants the launcher's account access (unused when the
+    /// launcher has no account, as `naive`).
+    pub fn violates_workspace_bind(&self, l: &dyn Launcher, acl: Box<dyn Acl>) -> bool {
+        let real = ws_tree("bind");
+        let sibling = ws_tree("sibling");
+        let secret = sibling.join("secret.txt");
+        std::fs::write(&secret, "not yours").expect("write the sibling secret");
+        let jdir = std::env::temp_dir().join(format!("antspawn-wsj-{}", std::process::id()));
+        let journal = Journal::new(jdir.clone());
+        let mut ws = open_bound(l, &real, Policy::default(), &journal, acl, &pid_alive)
+            .expect("grant the project folder and open a session in it");
+        assert!(
+            ws_ok(&mut ws, &shell_write("a.txt")),
+            "the bound session must be able to edit"
+        );
+        assert!(
+            std::fs::read_to_string(real.join("a.txt")).is_ok_and(|t| t.contains('x')),
+            "an edit by the session did not reach the real folder"
+        );
+        let read_sibling = ws_ok(&mut ws, &shell_read(&secret.display().to_string()));
+        Box::new(ws).close().expect("close");
+        let grant_left = !journal.entries().is_empty();
+        let _ = std::fs::remove_dir_all(&real);
+        let _ = std::fs::remove_dir_all(&sibling);
+        let _ = std::fs::remove_dir_all(&jdir);
+        read_sibling || grant_left
     }
 
     /// Can a job open a TCP connection to `addr`? `None` when the host itself cannot (no network

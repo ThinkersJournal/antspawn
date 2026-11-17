@@ -453,3 +453,23 @@ Deployed first (CireSnave, board 416; read back by the PM and by me): `C:\Progra
   - **`git status` inside a bind session: FAILS.** Exit 128, `fatal: failed to stat '...\AppData\Local\Temp': Permission denied`, with a real repository (not an empty `.git`), and the same with `GIT_CEILING_DIRECTORIES` set to the project's parent. Printed, not asserted. Cause not measured (git stats the project's parent, which the account cannot read here). Whether it fails the same under `C:\Projects\<name>` is not measured either. So a model that runs `git status` in a bind session will see this error today.
 
 Not measured: the copy-mode `changes`/`apply` as JSON lines through `spawn session` (only through the library on the real account); bind with the leased pool accounts; grant cost on a large tree; a crash leaving the grant; rename or mkdir inside a denied path; many sessions at once. One run on one day. No matrix row is changed by this: the rows for the two workspace modes still need a capability id and a probe with a known-bad control.
+
+## 2026-11-13: matrix rows `workspace.copy-back` and `workspace.bind` for `account` (ref: main `3c9461b` plus this branch; run as `cires`, interactive; one `cargo run --example matrix`)
+
+Probes `Probes::violates_workspace_copy_back` and `violates_workspace_bind`, through the real restricted account (`antspawn-run`, runner 5C04BC47). Result: **both `yes`** for `account`; `naive` is `no` for both (the known-bad control, also asserted in `tests/workspace_probes.rs`); `windows-sandbox` has no probe (`no`). The same run re-probed every other row and none changed value (only `probed_at`).
+
+Not measured: bind with leased pool accounts; `git status` inside a bind session (still fails, cause unmeasured); the JSON-line `changes`/`apply` through `spawn session` on the real account.
+
+## 2026-11-16: copy-mode `changes`/`apply` as JSON lines through `spawn session`, on the real account (ref: main `3c9461b`, debug build of `spawn`; run as `cires`, interactive; one run)
+
+`spawn session --workspace copy --root <throwaway tree under %TEMP%>` with the default launcher `account`, driven line by line. It answered `opened` with `"workspace":"copy-back"`. All held:
+
+- `exec` (`cmd /c`) edited `a.txt` and added `n.txt` in the session's copy; before `apply` the real `a.txt` still read `one` and `n.txt` did not exist (control).
+- `changes` listed `n.txt` under `added` and `a.txt` under `modified`, `deleted`/`refused`/`later_step` empty, and a `set_hash`.
+- `apply` with `set_hash` `deadbeef` returned `error`: "is not the staged set ... nothing was written" (known-bad control; real tree unchanged).
+- `apply` with the right hash returned `applied` `["n.txt","a.txt"]`, no conflicts or refusals; the real tree then held the new content.
+- A second `changes` was empty (the base moved), with the empty-set hash `e3b0c442...b855`.
+
+A `close` line I sent with an `id` was refused (`unknown field id, there are no fields`): `close` takes no `id`. The session ended with the process.
+
+Not measured: `deletes`/`protected` approvals through the CLI, a conflict (the real file changed after staging), a large tree, the pool accounts, bind through the CLI. One run on one day.

@@ -51,6 +51,8 @@ capabilities! {
     Session => "session",
     CleanSlateNextSession => "clean-slate-next-session",
     NoReadOtherSession => "no-read-other-session",
+    WorkspaceCopyBack => "workspace.copy-back",
+    WorkspaceBind => "workspace.bind",
 }
 
 /// A capability id nobody defined (a typo must not silently mean "no requirement").
@@ -86,7 +88,10 @@ mod tests {
         for &c in Capability::ALL {
             assert_eq!(c.id().parse::<Capability>().unwrap(), c);
         }
-        assert_eq!(Capability::ALL.len(), 11);
+        assert_eq!(Capability::ALL.len(), 13); // 11 + workspace.copy-back + workspace.bind
+        for id in ["workspace.copy-back", "workspace.bind"] {
+            assert!(Capability::ALL.iter().any(|c| c.id() == id), "{id}");
+        }
     }
 
     #[test]

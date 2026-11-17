@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.131 — copy-mode changes/apply measured through `spawn session`
+
+Recorded a real-account run of the JSON-line `changes`/`apply` ops (wrong hash refused, right hash applied, next set empty) in `docs/MEASUREMENTS.md`. No code change.
+
+Two capabilities, each with a probe and a known-bad control. `Probes::violates_workspace_copy_back`: after the copy-back controls hold (a session edit does not reach the real tree before `apply`, a wrong set hash writes nothing, the right one lands the file), can a command in the session write the real project folder by its absolute path? `Probes::violates_workspace_bind`: after the control (an edit lands in the real folder in place), can the session read a sibling folder that was NOT granted, or did `close` leave a grant in the journal? Known-bad control: `naive` (invoking user, no isolation) fails both, in `tests/workspace_probes.rs`. Measured on the real account (`antspawn-run`, deployed runner 5C04BC47) by `cargo run --example matrix`: both rows `yes`; `windows-sandbox` rows are `no` (no probe); the run also re-stamped every other row's `probed_at`, none changed value. Not measured: bind with leased pool accounts, `git status` in a bind session (still fails, cause unknown). Windows probe commands are unquoted `cmd /c`, so their temp paths must contain no spaces.
+
+Also records a real-account run of the copy-mode `changes`/`apply` JSON lines through `spawn session` in `docs/MEASUREMENTS.md` (folded from #121).
+
 ## 0.0.130 — both workspace modes measured on the real account
 
 New runner-only test `tests/account_workspace.rs` (prints `UNVERIFIED` where the account or the session-capable runner is missing, never `#[ignore]`d): copy-back and bind as `antspawn-run`, each with a known-bad control (the real tree is unchanged before `apply`, a wrong `set_hash` writes nothing, an ungranted sibling is unreadable, `close` leaves no grant). Both pass on the deployed `--root` runner; `git status` inside a bind session fails with exit 128 (recorded in `docs/MEASUREMENTS.md`, cause not measured). No behaviour change and no matrix row.

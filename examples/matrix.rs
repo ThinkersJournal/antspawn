@@ -124,6 +124,16 @@ impl Matrixer {
                 "session-write+exists",
                 "a file written in one session existed in the next, after close",
             ),
+            Capability::WorkspaceCopyBack => verdict(
+                p.violates_workspace_copy_back(l),
+                "workspace-copy-back",
+                "a session wrote into the real project folder directly, bypassing apply",
+            ),
+            Capability::WorkspaceBind => verdict(
+                p.violates_workspace_bind(l, Box::new(antspawn::bind::Icacls)),
+                "workspace-bind",
+                "a bound session read a folder it was not granted, or close left the grant",
+            ),
             _ => untested(),
         }
     }
@@ -164,6 +174,20 @@ impl Matrixer {
                 a::violates_clean_slate_session(),
                 "session-write+exists",
                 "a file written in one session existed in the next, after close",
+            ),
+            Capability::WorkspaceCopyBack => verdict(
+                self.probes
+                    .violates_workspace_copy_back(&antspawn::launchers::Account::default()),
+                "workspace-copy-back",
+                "a session wrote into the real project folder directly, bypassing apply",
+            ),
+            Capability::WorkspaceBind => verdict(
+                self.probes.violates_workspace_bind(
+                    &antspawn::launchers::Account::default(),
+                    Box::new(antspawn::bind::Icacls),
+                ),
+                "workspace-bind",
+                "a bound session read a folder it was not granted, or close left the grant",
             ),
             _ => untested(),
         }
