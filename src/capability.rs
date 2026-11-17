@@ -88,7 +88,10 @@ mod tests {
         for &c in Capability::ALL {
             assert_eq!(c.id().parse::<Capability>().unwrap(), c);
         }
-        assert_eq!(Capability::ALL.len(), 11);
+        assert_eq!(Capability::ALL.len(), 13); // 11 + workspace.copy-back + workspace.bind
+        for id in ["workspace.copy-back", "workspace.bind"] {
+            assert!(Capability::ALL.iter().any(|c| c.id() == id), "{id}");
+        }
     }
 
     #[test]
