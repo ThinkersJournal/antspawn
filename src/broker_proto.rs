@@ -336,9 +336,7 @@ impl Ledger {
     /// reset it).
     pub fn disconnect(&mut self, conn: u64) -> Vec<String> {
         let gone = self.owned_by(conn);
-        for vm in &gone {
-            self.vms.remove(vm);
-        }
+        self.vms.retain(|_, e| e.conn != conn);
         gone
     }
 
@@ -350,9 +348,8 @@ impl Ledger {
             .filter(|(_, e)| now.saturating_sub(e.created) >= self.limits.max_lifetime)
             .map(|(k, _)| k.clone())
             .collect();
-        for vm in &gone {
-            self.vms.remove(vm);
-        }
+        let max = self.limits.max_lifetime;
+        self.vms.retain(|_, e| now.saturating_sub(e.created) < max);
         gone
     }
 

@@ -16,6 +16,13 @@ use std::process::ExitCode;
 fn main() -> ExitCode {
     use antspawn::wfp;
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if antspawn::cli_basics::handle(
+        "spawn-wfp",
+        "spawn-wfp plan|status|apply|undo [--account NAME | --sid SID]",
+        &args,
+    ) {
+        return ExitCode::SUCCESS;
+    }
     let Some(cmd) = args.first().map(String::as_str) else {
         eprintln!("usage: spawn-wfp plan|status|apply|undo [--account NAME | --sid SID]");
         return ExitCode::from(2);

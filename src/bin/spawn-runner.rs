@@ -32,6 +32,9 @@ use std::time::Duration;
 
 fn main() -> ExitCode {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
+    if antspawn::cli_basics::handle("spawn-runner", "spawn-runner [--root DIR] VERB", &args) {
+        return ExitCode::SUCCESS;
+    }
     let layout = if args.first().map(String::as_str) == Some("--root") {
         if args.len() < 3 || args[1].is_empty() {
             eprintln!("spawn-runner: --root needs a directory and a verb");

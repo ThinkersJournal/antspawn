@@ -229,6 +229,7 @@ pub struct Plan {
     // Boxed on purpose: each filter holds a raw pointer into its condition array, and a plain Vec would move
     // them when it grows.
     #[allow(clippy::vec_box)]
+    // reason: the Box keeps each condition array at a stable address; the filters point into it
     conditions: Vec<Box<[FWPM_FILTER_CONDITION0; 2]>>,
     pub provider: FWPM_PROVIDER0,
     pub sublayer: FWPM_SUBLAYER0,
