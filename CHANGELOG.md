@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.132 — portfolio-finding follow-ups: `--help`/`--version` on every binary
+
+Every helper binary (`spawn-broker`, `spawn-sandbox-broker`, `spawn-jit-shim`, `spawn-probe`, `spawn-runner`, `spawn-wfp`) answers a lone `--help`/`-h`/`--version`/`-V` with exit 0 (OPS-011; `cli_basics::handle`, unit-tested with known-bad controls). The broker table's `disconnect`/`expired` no longer discard `remove`'s result: they `retain` (ERR-012). A reason on `allow(clippy::vec_box)` in `wfp.rs` (GOV-010); three stale `[reachability]` allowlist entries dropped.
+
 ## 0.0.131 — copy-mode changes/apply measured through `spawn session`
 
 Recorded a real-account run of the JSON-line `changes`/`apply` ops (wrong hash refused, right hash applied, next set empty) in `docs/MEASUREMENTS.md`. No code change.
