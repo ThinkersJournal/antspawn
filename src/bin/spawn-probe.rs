@@ -20,6 +20,13 @@ const NO: u8 = 10;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if antspawn::cli_basics::handle(
+        "spawn-probe",
+        "spawn-probe read|write|exists|connect ARG",
+        &args,
+    ) {
+        return ExitCode::SUCCESS;
+    }
     let ok = match args.iter().map(String::as_str).collect::<Vec<_>>()[..] {
         ["read", p] => std::fs::read(p).is_ok(),
         ["write", p] => std::fs::write(p, b"x").is_ok(),

@@ -460,6 +460,10 @@ fn read_config(mut source: impl Read) -> Result<String, &'static str> {
 }
 
 fn main() -> ExitCode {
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    if antspawn::cli_basics::handle("spawn-jit-shim", "spawn-jit-shim [--listen ADDR]", &argv) {
+        return ExitCode::SUCCESS;
+    }
     let mut args = std::env::args_os().skip(1).peekable();
     let listen = if args.peek().is_some_and(|a| a == "--listen") {
         args.next();

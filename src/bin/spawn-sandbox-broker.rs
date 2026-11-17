@@ -103,6 +103,14 @@ fn usage() -> ExitCode {
 }
 
 fn main() -> ExitCode {
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    if antspawn::cli_basics::handle(
+        "spawn-sandbox-broker",
+        "spawn-sandbox-broker --config FILE [--check]",
+        &argv,
+    ) {
+        return ExitCode::SUCCESS;
+    }
     let mut config = None;
     let mut check = false;
     let mut it = std::env::args().skip(1);

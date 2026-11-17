@@ -11,6 +11,7 @@ pub mod broker_pipe;
 pub mod broker_proto;
 pub mod broker_serve;
 pub mod capability;
+pub mod cli_basics;
 pub mod hyperv;
 pub mod launcher;
 pub mod launchers;
