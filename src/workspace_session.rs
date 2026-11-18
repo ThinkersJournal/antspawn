@@ -272,7 +272,28 @@ impl WorkspaceSession {
 
 impl Session for WorkspaceSession {
     fn exec(&mut self, req: &ExecRequest) -> Result<ExecOutcome, LaunchError> {
-        self.inner.exec(req)
+        if self.mode != Mode::Bind {
+            return self.inner.exec(req);
+        }
+        // The bound folder is owned by the launcher's user, so git (run by the account) refuses it as
+        // "dubious ownership". `safe.directory` through git's env config is honoured where repo config
+        // is not, and leaves nothing behind in the account's profile (ROADMAP row 29, measured
+        // 2026-11-17). Appended after any `GIT_CONFIG_COUNT` entries the caller already set.
+        let mut req = req.clone();
+        let n: usize = req
+            .env
+            .get("GIT_CONFIG_COUNT")
+            .and_then(|c| c.parse().ok())
+            .unwrap_or(0);
+        req.env
+            .insert(format!("GIT_CONFIG_KEY_{n}"), "safe.directory".into());
+        req.env.insert(
+            format!("GIT_CONFIG_VALUE_{n}"),
+            self.root.to_string_lossy().replace('\\', "/"),
+        );
+        req.env
+            .insert("GIT_CONFIG_COUNT".into(), (n + 1).to_string());
+        self.inner.exec(&req)
     }
     fn close(self: Box<Self>) -> Result<(), LaunchError> {
         let WorkspaceSession { inner, grant, .. } = *self;
