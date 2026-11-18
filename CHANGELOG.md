@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.133 — README brought up to date; a stale "Not measured" line corrected
+
+The README no longer says the first launchers are next: it names the two certified launchers, every `spawn` subcommand and the two session workspace modes, points at the matrix as the authority, and says what is not done. `docs/MEASUREMENTS.md` no longer lists the JSON-line `changes`/`apply` as unmeasured in the 2026-11-13 section (measured 2026-11-16, next section). Docs only; no code change.
+
 ## 0.0.132 — portfolio-finding follow-ups: `--help`/`--version` on every binary
 
 Every helper binary (`spawn-broker`, `spawn-sandbox-broker`, `spawn-jit-shim`, `spawn-probe`, `spawn-runner`, `spawn-wfp`) answers a lone `--help`/`-h`/`--version`/`-V` with exit 0 (OPS-011; `cli_basics::handle`, unit-tested with known-bad controls). The broker table's `disconnect`/`expired` no longer discard `remove`'s result: they `retain` (ERR-012). A reason on `allow(clippy::vec_box)` in `wfp.rs` (GOV-010); three stale `[reachability]` allowlist entries dropped.
