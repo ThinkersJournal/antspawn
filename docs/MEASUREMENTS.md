@@ -458,7 +458,7 @@ Not measured: the copy-mode `changes`/`apply` as JSON lines through `spawn sessi
 
 Probes `Probes::violates_workspace_copy_back` and `violates_workspace_bind`, through the real restricted account (`antspawn-run`, runner 5C04BC47). Result: **both `yes`** for `account`; `naive` is `no` for both (the known-bad control, also asserted in `tests/workspace_probes.rs`); `windows-sandbox` has no probe (`no`). The same run re-probed every other row and none changed value (only `probed_at`).
 
-Not measured: bind with leased pool accounts; `git status` inside a bind session (still fails, cause unmeasured); the JSON-line `changes`/`apply` through `spawn session` on the real account.
+Not measured: bind with leased pool accounts; `git status` inside a bind session (still fails, cause unmeasured: ROADMAP row 29). The JSON-line `changes`/`apply` through `spawn session` on the real account was measured on 2026-11-16 (next section), so it is no longer in this list.
 
 ## 2026-11-16: copy-mode `changes`/`apply` as JSON lines through `spawn session`, on the real account (ref: main `3c9461b`, debug build of `spawn`; run as `cires`, interactive; one run)
 
