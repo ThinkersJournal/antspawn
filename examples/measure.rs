@@ -20,6 +20,10 @@ use antspawn::{Exit, JobSpec, LaunchError, Launcher};
 const SLEEP_S: u64 = 2;
 
 fn probe() -> PathBuf {
+    // An explicit path wins; the walk up from this example's own path is only the default layout.
+    if let Some(p) = std::env::var_os("ANTSPAWN_PROBE_EXE") {
+        return PathBuf::from(p);
+    }
     let mut p = std::env::current_exe().expect("own path");
     p.pop(); // examples/
     p.pop(); // target/<profile>

@@ -27,5 +27,4 @@ spawn adapter --config FILE   # turn queued GitHub Actions jobs into runners (ne
 set that is applied by hash) or `bind` (the account edits the folder in place, and the grant is removed at close).
 
 Not yet: the account pool is not wired to the CLI, `spawn adapter`'s run path is unmeasured end to end, and no
-launcher other than the two above exists. The claim that `spawn check` rejects what it should, and that the
-launchers never elevate, has no dedicated test yet.
+launcher other than the two above exists.

@@ -261,6 +261,10 @@ impl Prober for Matrixer {
 }
 
 fn probe_exe() -> PathBuf {
+    // An explicit path wins; the walk up from this example's own path is only the default layout.
+    if let Some(p) = std::env::var_os("ANTSPAWN_PROBE_EXE") {
+        return PathBuf::from(p);
+    }
     let exe = std::env::current_exe().expect("own path");
     // target/<profile>/examples/matrix -> target/<profile>/spawn-probe
     let dir = exe.parent().and_then(|p| p.parent()).expect("target dir");
