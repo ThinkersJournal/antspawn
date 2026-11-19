@@ -172,3 +172,74 @@ fn session_workspace_needs_a_root_and_an_uncertified_launcher_is_refused_before_
     let _ = std::fs::remove_dir_all(&dir);
     assert!(!bad.status.success());
 }
+
+fn check(tag: &str, body: &str) -> (Option<i32>, String, String) {
+    let path =
+        std::env::temp_dir().join(format!("antspawn-check-{tag}-{}.toml", std::process::id()));
+    std::fs::write(&path, body).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_spawn"))
+        .args(["check", path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(path);
+    (
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+#[test]
+fn check_control_a_valid_spec_is_accepted_and_lists_needs() {
+    let (code, stdout, stderr) = check("ok", "[job]\nname = \"t\"\ncmd = [\"x\"]\n");
+    assert_eq!(code, Some(0), "stderr was: {stderr}");
+    assert!(stdout.contains("job `t` is valid"), "{stdout}");
+}
+
+#[test]
+fn check_rejects_what_a_spec_must_not_say() {
+    let cases: &[(&str, &str, &str)] = &[
+        ("notoml", "this is not a job", "not valid TOML"),
+        (
+            "emptycmd",
+            "[job]\nname = \"t\"\ncmd = []\n",
+            "job.cmd is empty",
+        ),
+        (
+            "emptyname",
+            "[job]\nname = \" \"\ncmd = [\"x\"]\n",
+            "job.name is empty",
+        ),
+        (
+            "secrets",
+            "[job]\nname = \"t\"\ncmd = [\"x\"]\nsecrets = [\"TOKEN\"]\n",
+            "secrets",
+        ),
+        (
+            "scratchhost",
+            "[job]\nname = \"t\"\ncmd = [\"x\"]\n[[mount]]\nguest = \"g\"\nmode = \"scratch\"\nhost = \"C:/h\"\n",
+            "scratch mount has no host path",
+        ),
+        (
+            "rwnohost",
+            "[job]\nname = \"t\"\ncmd = [\"x\"]\n[[mount]]\nguest = \"g\"\nmode = \"rw\"\n",
+            "need a host path",
+        ),
+        (
+            "badoutput",
+            "[job]\nname = \"t\"\ncmd = [\"x\"]\n[[output]]\nguest = \"o\"\nname = \"a/b\"\n",
+            "single path segment",
+        ),
+        (
+            "reserved",
+            "[job]\nname = \"t\"\ncmd = [\"x\"]\n[[output]]\nguest = \"o\"\nname = \"stdout.tail\"\n",
+            "reserved",
+        ),
+    ];
+    for (tag, body, expect) in cases {
+        let (code, stdout, stderr) = check(tag, body);
+        assert_ne!(code, Some(0), "{tag} was accepted: {stdout}");
+        assert!(stderr.contains(expect), "{tag}: stderr was: {stderr}");
+        assert!(!stdout.contains("is valid"), "{tag}: {stdout}");
+    }
+}
