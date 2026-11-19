@@ -458,7 +458,7 @@ Not measured: the copy-mode `changes`/`apply` as JSON lines through `spawn sessi
 
 Probes `Probes::violates_workspace_copy_back` and `violates_workspace_bind`, through the real restricted account (`antspawn-run`, runner 5C04BC47). Result: **both `yes`** for `account`; `naive` is `no` for both (the known-bad control, also asserted in `tests/workspace_probes.rs`); `windows-sandbox` has no probe (`no`). The same run re-probed every other row and none changed value (only `probed_at`).
 
-Not measured: bind with leased pool accounts; `git status` inside a bind session (still fails, cause unmeasured: ROADMAP row 29). The JSON-line `changes`/`apply` through `spawn session` on the real account was measured on 2026-11-16 (next section), so it is no longer in this list.
+Not measured: bind with leased pool accounts; `git status` inside a bind session (fixed 2026-11-17, ROADMAP row 29). The JSON-line `changes`/`apply` through `spawn session` on the real account was measured on 2026-11-16 (next section), so it is no longer in this list.
 
 ## 2026-11-16: copy-mode `changes`/`apply` as JSON lines through `spawn session`, on the real account (ref: main `3c9461b`, debug build of `spawn`; run as `cires`, interactive; one run)
 
@@ -473,3 +473,12 @@ Not measured: bind with leased pool accounts; `git status` inside a bind session
 A `close` line I sent with an `id` was refused (`unknown field id, there are no fields`): `close` takes no `id`. The session ended with the process.
 
 Not measured: `deletes`/`protected` approvals through the CLI, a conflict (the real file changed after staging), a large tree, the pool accounts, bind through the CLI. One run on one day.
+
+## 2026-11-17: `git status` in a bind session, ROADMAP row 29 (ref: main `0fe7ad2` plus this branch; real account `antspawn-run`, run as `cires`, interactive; `RUST_TEST_THREADS=1`)
+
+Before: reproduced twice, exit 128 `failed to stat '...\AppData\Local\Temp'`, also for `git rev-parse` and `git config --list --show-origin` (but `git config --list` run from the account's own TEMP worked, and `git --version` worked), with `safe.directory=*`, and with TEMP/TMP pointed into the project. A parent with read-attributes for the account moved nothing (the error still named Temp, the parent's parent): git walks the ancestors because it cannot find `.git`.
+- **Cause 1:** `dir /a .git` as the account listed nothing. `Get-Acl` on `.git` showed `Deny DeleteSubdirectoriesAndFiles, Write, Delete, Synchronize`: `icacls /deny ...(WD,AD,WEA,WA,D,DC)` stored SYNCHRONIZE. `icacls` prints `W` either way, so the old unit test (which looked for the word SYNCHRONIZE in icacls output) could not see it. Now `deny_writes` uses `Set-Acl`; the read-back shows `Deny DeleteSubdirectoriesAndFiles, Write, Delete` and the unit test reads rights through `Get-Acl`.
+- **Cause 2:** with `.git` readable, git said `detected dubious ownership` (owner `cires`, user `antspawn-run`). `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0=<root>` in the exec env fixed it. The bind session now adds it to every exec.
+- **After:** `cargo test --test account_workspace`: 3 passed; the bind test asserts `git status --porcelain` exits 0 and lists `a.txt`. One run on one day.
+
+Not measured: a bind under `C:\Projects\<name>` (the account has an explicit deny there, so this was done under `%TEMP%` and `C:\Users\Public`); git commands that write (`add`, `commit`: the deny blocks writes under `.git` by design); the cost of one `Set-Acl` per protected path on a tree with many.

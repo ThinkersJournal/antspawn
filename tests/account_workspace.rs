@@ -11,7 +11,7 @@
 //!   read), and `close` removes the grant (read back from the journal).
 //!
 //! The throwaway trees live under the launcher's temp dir. `git status` inside a bind session is
-//! only printed, never asserted: whether the account can run git there is not yet known.
+//! asserted to work (ROADMAP row 29).
 #![cfg(windows)]
 
 use std::fs;
@@ -146,27 +146,12 @@ fn bind_on_the_real_account_edits_in_place_keeps_siblings_out_and_removes_the_gr
         "the account read an ungranted sibling: {}",
         out(&read)
     );
-    // Not asserted: can the account run git here? (never measured before). The tree is a real
-    // repository (`git init` by the owner before the grant), not the empty `.git` folder `tree` makes.
+    // ROADMAP row 29 (fixed 2026-11-17): the deny on `.git` must not carry SYNCHRONIZE (else the
+    // account cannot list it and git searches upward), and the bind session supplies `safe.directory`
+    // (else "dubious ownership"). The tree is a real repository made by the owner before the grant.
     let git = run(&mut ws, "git status --porcelain 2>&1");
-    println!(
-        "git status in a bind session: exit {:?}, output {:?}",
-        git.exit,
-        out(&git).trim()
-    );
-    // Also only printed: does a ceiling at the project's parent (the folder the account cannot read) help?
-    let mut ceil = ExecRequest::new(["git", "status", "--porcelain"]);
-    ceil.env.insert(
-        "GIT_CEILING_DIRECTORIES".into(),
-        real.parent().unwrap().display().to_string(),
-    );
-    let c = ws.exec(&ceil).unwrap();
-    println!(
-        "git status with GIT_CEILING_DIRECTORIES=<parent>: exit {:?}, output {:?}, stderr {:?}",
-        c.exit,
-        out(&c).trim(),
-        String::from_utf8_lossy(c.streams.stderr.as_deref().unwrap_or_default()).trim()
-    );
+    assert_eq!(git.exit, Exit::Code(0), "git status failed: {}", out(&git));
+    assert!(out(&git).contains("a.txt"), "{}", out(&git));
     Box::new(ws).close().unwrap();
     assert!(
         journal.entries().is_empty(),

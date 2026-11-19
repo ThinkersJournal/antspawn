@@ -74,10 +74,42 @@ impl Acl for Icacls {
 
     fn deny_writes(&self, path: &Path, who: &str, is_dir: bool) -> Result<(), String> {
         // WriteData, AppendData, WriteExtendedAttributes, WriteAttributes, Delete,
-        // DeleteSubdirectoriesAndFiles: what W0 measured. Not `W`, which adds SYNCHRONIZE.
-        let inherit = if is_dir { "(OI)(CI)" } else { "" };
-        let rule = format!("{who}:{inherit}(WD,AD,WEA,WA,D,DC)");
-        icacls(&[path.as_os_str(), "/deny".as_ref(), rule.as_ref()]).map(drop)
+        // DeleteSubdirectoriesAndFiles: what W0 measured. `icacls /deny` with those names still
+        // stored SYNCHRONIZE in the ACE (measured 2026-11-17, ROADMAP row 29: the account could not
+        // list `.git`, so `git status` failed), so the rule goes in through `Set-Acl`, which stores
+        // exactly the rights named.
+        let flags = if is_dir {
+            "ContainerInherit,ObjectInherit"
+        } else {
+            "None"
+        };
+        let q = |s: &str| s.replace('\'', "''");
+        // .NET calls, not the `Get-Acl`/`Set-Acl` cmdlets: on the GitHub Windows runner the inherited
+        // PSModulePath made Windows PowerShell fail to load Microsoft.PowerShell.Security (CI run
+        // 44429020557), and the variable is cleared below as well.
+        let kind = if is_dir { "Directory" } else { "File" };
+        let script = format!(
+            "$ErrorActionPreference='Stop'; $p='{}'; $acl=[System.IO.{kind}]::GetAccessControl($p); \
+             $r=New-Object System.Security.AccessControl.FileSystemAccessRule('{}',\
+             'WriteData,AppendData,WriteExtendedAttributes,WriteAttributes,Delete,DeleteSubdirectoriesAndFiles',\
+             '{flags}','None','Deny'); $acl.AddAccessRule($r); [System.IO.{kind}]::SetAccessControl($p,$acl)",
+            q(&path.to_string_lossy()),
+            q(who)
+        );
+        let out = Command::new("powershell.exe")
+            .env_remove("PSModulePath")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .output()
+            .map_err(|e| format!("cannot run powershell.exe: {e}"))?;
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "exact-rights deny failed ({}): {}",
+                out.status,
+                String::from_utf8_lossy(&out.stderr).trim()
+            ))
+        }
     }
 
     fn remove(&self, path: &Path, who: &str) -> Result<(), String> {
@@ -697,9 +729,25 @@ pub(crate) mod tests {
             .lines()
             .find(|l| l.contains("Guests:(DENY)") || l.contains("Guests:(OI)(CI)(DENY)"))
             .unwrap_or_else(|| panic!("no deny on .git: {on_git}"));
+        assert!(git_line.contains("DENY"), "{git_line}");
+        // icacls prints `W` whether or not SYNCHRONIZE is stored, so read the exact rights back.
+        let ps = Command::new("powershell.exe")
+            .env_remove("PSModulePath")
+            .args(["-NoProfile", "-Command"])
+            .arg(format!(
+                "([System.IO.Directory]::GetAccessControl('{}')).Access | Where-Object {{ $_.IdentityReference -like '*Guests*' -and $_.AccessControlType -eq 'Deny' }} | ForEach-Object {{ $_.FileSystemRights }}",
+                root.join(".git").display()
+            ))
+            .output()
+            .unwrap();
+        let rights = String::from_utf8_lossy(&ps.stdout).into_owned();
         assert!(
-            git_line.contains("DENY") && !git_line.contains("SYNCHRONIZE"),
-            "{git_line}"
+            rights.contains("Write") && rights.contains("Delete"),
+            "{rights}"
+        );
+        assert!(
+            !rights.contains("Synchronize"),
+            "deny kept SYNCHRONIZE: {rights}"
         );
         let on_file = icacls(&[root.join("CLAUDE.md").as_os_str()]).unwrap();
         assert!(on_file.contains("DENY"), "{on_file}");
