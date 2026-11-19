@@ -1,3 +1,0 @@
-kind: **CHANGED**: `examples/matrix` and `examples/measure` take the probe exe from `ANTSPAWN_PROBE_EXE`
----
-Both examples found `spawn-probe` by walking up from their own path, which breaks outside the default `target/<profile>/examples` layout (cargo sets `CARGO_BIN_EXE_*` only for tests and benches, not examples). `ANTSPAWN_PROBE_EXE` now wins when set; the walk remains the default. Verified: `cargo clippy --all-targets`; a bad `ANTSPAWN_PROBE_EXE` is reported by path. A full `matrix --check` was not completed here (the account probe timed out: runner task did not answer in 90s), so the default path is unexercised beyond compiling.

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.135 — **ADDED**: tests for `spawn check` rejections and for the launchers never elevating
+
+README said neither claim had a test. `tests/cli.rs` now runs `spawn check` on a valid spec (accepted, needs listed) and on eight bad ones (not TOML, empty cmd, empty name, secrets, scratch mount with host, ro/rw mount without host, bad output name, reserved output name), each non-zero with its reason on stderr. `tests/never_elevates.rs` scans `git ls-files` sources for elevation and account-creation primitives, with a planted-line control; it is a source scan, not a runtime proof. README sentence removed. Verified: `cargo test --test cli --test never_elevates`.
+
+— lane: antspawn
+
+Both examples found `spawn-probe` by walking up from their own path, which breaks outside the default `target/<profile>/examples` layout (cargo sets `CARGO_BIN_EXE_*` only for tests and benches, not examples). `ANTSPAWN_PROBE_EXE` now wins when set; the walk remains the default. Verified: `cargo clippy --all-targets`; a bad `ANTSPAWN_PROBE_EXE` is reported by path. A full `matrix --check` was not completed here (the account probe timed out: runner task did not answer in 90s), so the default path is unexercised beyond compiling.
+
 ## 0.0.134 — **FIXED**: `git status` works inside a `bind` session (ROADMAP row 29)
 
 The protected-path deny was stored with SYNCHRONIZE (`icacls /deny` adds it even for exact right names), so the account could not list `.git` and git failed with a stat error on an ancestor. `deny_writes` now uses `Set-Acl` with exact rights, and a bind session adds `safe.directory=<root>` to every exec through `GIT_CONFIG_COUNT/KEY/VALUE` (the folder is owned by the launcher's user). Verified on the real account: `tests/account_workspace.rs` now asserts `git status --porcelain` exits 0; the `real_icacls` unit test reads rights back through `Get-Acl`.
