@@ -126,14 +126,22 @@ impl Acl for Icacls {
     }
 
     fn mentions(&self, path: &Path, who: &str) -> Result<bool, String> {
-        let text = icacls(&[path.as_os_str()])?;
-        let who = who.to_ascii_lowercase();
-        Ok(text.lines().any(|l| {
-            let l = l.to_ascii_lowercase();
-            // `<path> DOMAIN\who:(M)` on the first line, `    DOMAIN\who:(M)` after it.
-            l.contains(&format!("\\{who}:")) || l.trim_start().starts_with(&format!("{who}:"))
-        }))
+        Ok(names_explicitly(&icacls(&[path.as_os_str()])?, who))
     }
+}
+
+/// Whether `icacls` output has an EXPLICIT entry for `who`. An inherited one (`(I)`) belongs to a
+/// parent and is not ours to remove: under `C:\Projects` the account has an inherited deny, and
+/// counting it made every close of a bind there fail its read-back (measured 2026-11-19).
+fn names_explicitly(text: &str, who: &str) -> bool {
+    let who = who.to_ascii_lowercase();
+    text.lines().any(|l| {
+        let l = l.to_ascii_lowercase();
+        // `<path> DOMAIN\who:(M)` on the first line, `    DOMAIN\who:(M)` after it.
+        let named =
+            l.contains(&format!("\\{who}:")) || l.trim_start().starts_with(&format!("{who}:"));
+        named && !l.contains(":(i)")
+    })
 }
 
 /// A principal name that is safe to put in an `icacls` rule.
@@ -567,6 +575,21 @@ pub(crate) mod tests {
         assert_eq!(j.entries().len(), 1, "the journal is written");
         g.revoke().unwrap();
         assert!(j.entries().is_empty(), "revoke clears the journal");
+    }
+
+    #[test]
+    fn read_back_counts_explicit_entries_and_ignores_inherited_ones() {
+        let explicit = "C:\\p H\\antspawn-run:(OI)(CI)(M)\n   BUILTIN\\Administrators:(I)(F)\n";
+        assert!(names_explicitly(explicit, "antspawn-run"));
+        let first_line = "C:\\p\\a TUF\\antspawn-run:(N)\n   X\\cires:(I)(F)\n";
+        assert!(
+            names_explicitly(first_line, "antspawn-run"),
+            "explicit deny on line 1"
+        );
+        // Control: a parent's deny, inherited, is not something a removal could take away.
+        let inherited = "C:\\p\\a TUF\\antspawn-run:(I)(OI)(CI)(N)\n   X\\cires:(I)(F)\n";
+        assert!(!names_explicitly(inherited, "antspawn-run"));
+        assert!(!names_explicitly("C:\\p X\\cires:(F)\n", "antspawn-run"));
     }
 
     #[test]

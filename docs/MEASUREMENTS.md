@@ -482,3 +482,11 @@ Before: reproduced twice, exit 128 `failed to stat '...\AppData\Local\Temp'`, al
 - **After:** `cargo test --test account_workspace`: 3 passed; the bind test asserts `git status --porcelain` exits 0 and lists `a.txt`. One run on one day.
 
 Not measured: a bind under `C:\Projects\<name>` (the account has an explicit deny there, so this was done under `%TEMP%` and `C:\Users\Public`); git commands that write (`add`, `commit`: the deny blocks writes under `.git` by design); the cost of one `Set-Acl` per protected path on a tree with many.
+
+## 2026-11-19: bind under `C:\Projects`, ROADMAP row 29 follow-up (ref: main `5f2a8d1` plus this branch; real account `antspawn-run`, run as `cires`, interactive; `RUST_TEST_THREADS=1`)
+
+- **Test:** `cargo test --test account_workspace bind_under -- --nocapture` on a throwaway tree `C:\Projects\antspawn-bindprobe-<pid>` (a root `.git` plus 20 packages each with `.github` and `CLAUDE.md`: 41 protected paths), made and removed by the test. No real project was bound.
+- **Cost:** open 32.2 s (first run) and 27.7 s (second): about 0.67-0.79 s per protected path, one powershell each. Close 3.8 s (one `icacls /remove /T` pair per path).
+- **Grant beats the inherited deny:** yes. The account's edit of `a.txt` reached the real folder; the control (a write to a protected `pkg0\CLAUDE.md`) failed and the file was unchanged.
+- **Defect found:** the first run's `close` failed on every path with `still names antspawn-run after removal`. `icacls` showed only `antspawn-run:(I)(OI)(CI)(N)` left, the deny inherited from `C:\Projects`; the explicit entries were gone. The read-back counted inherited entries. Fixed (`names_explicitly`); second run: close clean, journal empty. The failed run left the tree and journal, which were removed by hand.
+- Not measured: a bind on a real project under `C:\Projects`; hundreds of protected paths; two runs on one day.
