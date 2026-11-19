@@ -84,15 +84,20 @@ impl Acl for Icacls {
             "None"
         };
         let q = |s: &str| s.replace('\'', "''");
+        // .NET calls, not the `Get-Acl`/`Set-Acl` cmdlets: on the GitHub Windows runner the inherited
+        // PSModulePath made Windows PowerShell fail to load Microsoft.PowerShell.Security (CI run
+        // 44429020557), and the variable is cleared below as well.
+        let kind = if is_dir { "Directory" } else { "File" };
         let script = format!(
-            "$ErrorActionPreference='Stop'; $p='{}'; $acl=Get-Acl -LiteralPath $p; \
+            "$ErrorActionPreference='Stop'; $p='{}'; $acl=[System.IO.{kind}]::GetAccessControl($p); \
              $r=New-Object System.Security.AccessControl.FileSystemAccessRule('{}',\
              'WriteData,AppendData,WriteExtendedAttributes,WriteAttributes,Delete,DeleteSubdirectoriesAndFiles',\
-             '{flags}','None','Deny'); $acl.AddAccessRule($r); Set-Acl -LiteralPath $p -AclObject $acl",
+             '{flags}','None','Deny'); $acl.AddAccessRule($r); [System.IO.{kind}]::SetAccessControl($p,$acl)",
             q(&path.to_string_lossy()),
             q(who)
         );
         let out = Command::new("powershell.exe")
+            .env_remove("PSModulePath")
             .args(["-NoProfile", "-NonInteractive", "-Command", &script])
             .output()
             .map_err(|e| format!("cannot run powershell.exe: {e}"))?;
@@ -100,7 +105,7 @@ impl Acl for Icacls {
             Ok(())
         } else {
             Err(format!(
-                "Set-Acl deny failed ({}): {}",
+                "exact-rights deny failed ({}): {}",
                 out.status,
                 String::from_utf8_lossy(&out.stderr).trim()
             ))
@@ -727,9 +732,10 @@ pub(crate) mod tests {
         assert!(git_line.contains("DENY"), "{git_line}");
         // icacls prints `W` whether or not SYNCHRONIZE is stored, so read the exact rights back.
         let ps = Command::new("powershell.exe")
+            .env_remove("PSModulePath")
             .args(["-NoProfile", "-Command"])
             .arg(format!(
-                "(Get-Acl -LiteralPath '{}').Access | Where-Object {{ $_.IdentityReference -like '*Guests*' -and $_.AccessControlType -eq 'Deny' }} | ForEach-Object {{ $_.FileSystemRights }}",
+                "([System.IO.Directory]::GetAccessControl('{}')).Access | Where-Object {{ $_.IdentityReference -like '*Guests*' -and $_.AccessControlType -eq 'Deny' }} | ForEach-Object {{ $_.FileSystemRights }}",
                 root.join(".git").display()
             ))
             .output()
