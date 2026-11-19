@@ -1,3 +1,0 @@
-kind: **FIXED**: `git status` works inside a `bind` session (ROADMAP row 29)
----
-The protected-path deny was stored with SYNCHRONIZE (`icacls /deny` adds it even for exact right names), so the account could not list `.git` and git failed with a stat error on an ancestor. `deny_writes` now uses `Set-Acl` with exact rights, and a bind session adds `safe.directory=<root>` to every exec through `GIT_CONFIG_COUNT/KEY/VALUE` (the folder is owned by the launcher's user). Verified on the real account: `tests/account_workspace.rs` now asserts `git status --porcelain` exits 0; the `real_icacls` unit test reads rights back through `Get-Acl`.

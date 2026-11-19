@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.134 — **FIXED**: `git status` works inside a `bind` session (ROADMAP row 29)
+
+The protected-path deny was stored with SYNCHRONIZE (`icacls /deny` adds it even for exact right names), so the account could not list `.git` and git failed with a stat error on an ancestor. `deny_writes` now uses `Set-Acl` with exact rights, and a bind session adds `safe.directory=<root>` to every exec through `GIT_CONFIG_COUNT/KEY/VALUE` (the folder is owned by the launcher's user). Verified on the real account: `tests/account_workspace.rs` now asserts `git status --porcelain` exits 0; the `real_icacls` unit test reads rights back through `Get-Acl`.
+
 ## 0.0.133 — README brought up to date; a stale "Not measured" line corrected
 
 The README no longer says the first launchers are next: it names the two certified launchers, every `spawn` subcommand and the two session workspace modes, points at the matrix as the authority, and says what is not done. `docs/MEASUREMENTS.md` no longer lists the JSON-line `changes`/`apply` as unmeasured in the 2026-11-13 section (measured 2026-11-16, next section). Docs only; no code change.
