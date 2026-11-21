@@ -41,7 +41,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $VmName = 'antspawn-pilot-core'
 $SwitchName = 'antspawn-pilot-sw'
-$Child = Join-Path $Work 'child.avhd'
+$Child = Join-Path $Work 'child.vhdx'
 $Mode = if ($Apply) { 'APPLY' } else { 'DRY RUN (nothing is changed)' }
 "vm-pilot: step=$Step mode=$Mode"
 
