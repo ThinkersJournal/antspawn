@@ -4,8 +4,9 @@
 //! only parses arguments.
 //!
 //! Only launchers that can really take a JIT config are registered. `account` is (the pipe path, not run
-//! live: ROADMAP row 21). `windows-sandbox` has no transport yet (board 322), so a group naming it makes
-//! `--check` fail and the adapter refuse to start, rather than mint a runner that cannot be delivered.
+//! live: ROADMAP row 21). `windows-sandbox` is refused: a runner needs network, and CireSnave ruled
+//! 2026-11-21 that network-needing runners run in a VM behind a filtering proxy, not in Sandbox (ROADMAP rows 38 to 44,
+//! `docs/RUNNER-NETWORK.md`), so a group naming it makes `--check` fail and the adapter refuse to start.
 
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -68,7 +69,7 @@ fn runnable(launcher: &str) -> Result<(), String> {
                 .into(),
         ),
         "windows-sandbox" => {
-            Err("the windows-sandbox launcher has no JIT-config transport yet (board 322)".into())
+            Err("the windows-sandbox launcher is not used for runners: network-needing runners run in a VM behind a filtering proxy (CireSnave 2026-11-21; ROADMAP rows 38 to 44)".into())
         }
         other => Err(format!("unknown launcher `{other}`")),
     }
@@ -388,16 +389,16 @@ QUJD
     }
 
     #[test]
-    fn a_sandbox_group_stops_check_and_start_naming_the_group_and_the_board() {
+    fn a_sandbox_group_stops_check_and_start_naming_the_group_and_the_ruling() {
         let c = cfg("windows-sandbox", "C:/k.pem");
         let r = check(&c, true);
         assert!(
             r.problems
                 .iter()
-                .any(|p| p.contains("`g`") && p.contains("322"))
+                .any(|p| p.contains("`g`") && p.contains("VM"))
         );
         let e = router(&c).err().expect("refused");
-        assert!(e.contains("`g`") && e.contains("322"), "{e}");
+        assert!(e.contains("`g`") && e.contains("VM"), "{e}");
     }
 
     #[test]
