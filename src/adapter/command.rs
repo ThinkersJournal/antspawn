@@ -263,6 +263,24 @@ fn unix_now() -> u64 {
         .map_or(0, |d| d.as_secs())
 }
 
+/// Best effort: a status file that cannot be written is reported once per tick and never stops the adapter.
+fn write_status<A: super::github::GithubApi, S: super::watcher::JobSource, D: Dispatch>(
+    path: Option<&Path>,
+    groups: &[String],
+    watcher: &Watcher<A, S, D>,
+) {
+    let Some(p) = path else { return };
+    let s = super::status::Status {
+        tick_unix: unix_now(),
+        pid: std::process::id(),
+        groups: groups.iter().map(String::as_str).collect(),
+        jobs_in_flight: u32::from(watcher.busy()),
+    };
+    if let Err(e) = super::status::write(p, &s) {
+        eprintln!("spawn adapter: cannot write the status file: {e}");
+    }
+}
+
 fn print_tick(t: &TickReport) {
     for (id, task_status) in &t.ended_ok {
         eprintln!("spawn adapter: job {id}: runner ended: {task_status}");
@@ -299,8 +317,16 @@ fn print_tick(t: &TickReport) {
 
 /// Run the adapter. `once`: one poll, then wait for the runner it started (if any) and return.
 /// `Ok(true)`: clean. `Ok(false)`: `--once` ended badly (reasons printed to stderr; exit code 3).
-pub fn run(config: &Path, pem_key: bool, once: bool) -> Result<bool, String> {
+pub fn run(
+    config: &Path,
+    pem_key: bool,
+    once: bool,
+    status: Option<&Path>,
+) -> Result<bool, String> {
     let cfg = load_config(config)?;
+    // one adapter at a time: the lock sits beside the status file and is held until this process ends
+    let _lock = status.map(super::status::Lock::acquire).transpose()?;
+    let groups: Vec<String> = cfg.groups.iter().map(|g| g.name.clone()).collect();
     let dispatch = router(&cfg)?;
     let keys = key_provider(&cfg.key_path, pem_key).map_err(|e| e.to_string())?;
     let github = HttpGithub::new(cfg.app_id, cfg.installation_id, keys);
@@ -317,6 +343,7 @@ pub fn run(config: &Path, pem_key: bool, once: bool) -> Result<bool, String> {
     loop {
         let tick = watcher.tick(unix_now());
         print_tick(&tick);
+        write_status(status, &groups, &watcher);
         if once {
             let end = std::time::Instant::now() + ceiling + Duration::from_secs(120);
             while watcher.busy() && std::time::Instant::now() < end {

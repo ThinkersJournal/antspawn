@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Starting the adapter unattended (design proposal, ROADMAP row 36)
 
-Written 2026-11-21 at `work-3`. **A proposal for the PM to rule on: no code, no task, no service exists.** Nothing here was run except the reads marked "read".
+Written 2026-11-21 at `work-3`. **RULED by the PM the same day: option A**, behaviour 1 to 6 as written, no sweep mail, the status file only (below). Built: `scripts/adapter-run.ps1`, `scripts/adapter-task.ps1`, `src/adapter/status.rs`, `spawn adapter --status-file`. **The task is NOT registered**: that makes the adapter poll GitHub at the next logon, and live running is held (first live job only on `antspawn-proof`).
 
 **The gap:** `spawn adapter` is a foreground process (`src/main.rs` `adapter`, `command::run`). Nothing starts it after a reboot or a logon, restarts it when it dies, or tells anyone it is down.
 Exit codes (read, `docs/ADAPTER-GITHUB.md`): 0 clean, 2 could not start (config or key), 3 `--once` ended badly.
@@ -36,3 +36,9 @@ Exit codes (read, `docs/ADAPTER-GITHUB.md`): 0 clean, 2 could not start (config 
 ## Not decided here
 
 How the PM wants the down-notice delivered (a PM message from the sweep, a file); whether B's DPAPI measurement is worth CireSnave's time; whether the status file belongs in the broker's results folder. Each is a question for the PM, not CireSnave, until it needs a privileged step.
+
+## Built (PM ruling 2026-11-21: A; "a status file only ... the PM sweep reads its age and reports a stale tick")
+
+* `spawn adapter --config C --status-file S` writes `S` (atomically) after every tick: `tick_unix`, `pid`, `groups`, `jobs_in_flight` (0 or 1: the dispatcher runs one job at a time), and holds `S.lock` open with sharing denied, so a second start fails at once and a dead process frees it (a Windows test covers both). No secret is in the file.
+* `scripts/adapter-run.ps1`: runs `--check`; on failure it logs, records the exit code in `status.json` and exits 0 so Task Scheduler does **not** restart a config or key error; otherwise it runs the adapter and, when it ends, adds `last_exit_code` and `exited_unix` to `status.json` (no BOM) and exits with the adapter's code (0 and 2 stay stopped; a crash or 3 restarts). Default status folder `%LOCALAPPDATA%ntspawndapter` (private to the user). **The broker's results folder named in the ruling does not exist on this box** (`%ProgramData%ntspawn-broker` absent, read 2026-11-21): pass `-StatusDir` to point the file there once it does.
+* `scripts/adapter-task.ps1`: registers task `AntSpawnAdapter` for the current user only (at logon, interactive, limited, no stored password, restart 3 x 1 minute, no time limit, one instance), dry run by default, `-Apply` reads each property back, `-Undo -Apply` removes it. Measured 2026-11-21: parses clean under `powershell.exe`; the dry run printed the plan and changed nothing; the wrapper, run against a missing config with a real `spawn.exe`, logged the check failure, wrote `last_exit_code` 2 into an existing status file without losing its other fields, and exited 0. **Not measured:** `-Apply` (it would start live polling), that registration needs no elevation, a restart after a crash.

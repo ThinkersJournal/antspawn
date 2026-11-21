@@ -42,6 +42,10 @@ enum Command {
         /// The App key is a plain PEM file, not a DPAPI-protected one.
         #[arg(long)]
         pem_key: bool,
+        /// Write a status file here after every tick (time, pid, groups, jobs in flight) and hold `<file>.lock` so only one
+        /// adapter runs. `scripts/adapter-run.ps1` passes it.
+        #[arg(long, conflicts_with = "check")]
+        status_file: Option<PathBuf>,
     },
     /// Open one session and drive it from stdin: a JSON request per line in, a JSON reply per line
     /// out (the `session_proto` messages: `exec`, `close`). The session ends on `close` or at end of
@@ -113,7 +117,8 @@ fn run(command: Command) -> Result<ExitCode, String> {
             check,
             once,
             pem_key,
-        } => return adapter(&config, check, once, pem_key),
+            status_file,
+        } => return adapter(&config, check, once, pem_key, status_file.as_deref()),
         Command::Session {
             launcher,
             workspace,
@@ -173,11 +178,17 @@ fn session(
     Ok(ExitCode::SUCCESS)
 }
 
-fn adapter(config: &Path, check: bool, once: bool, pem_key: bool) -> Result<ExitCode, String> {
+fn adapter(
+    config: &Path,
+    check: bool,
+    once: bool,
+    pem_key: bool,
+    status: Option<&Path>,
+) -> Result<ExitCode, String> {
     use antspawn::adapter::command;
     if !check {
         // 0 clean; 2 could not start (Err); 3 `--once` ended badly. See docs/ADAPTER-GITHUB.md "Exit codes".
-        return Ok(if command::run(config, pem_key, once)? {
+        return Ok(if command::run(config, pem_key, once, status)? {
             ExitCode::SUCCESS
         } else {
             ExitCode::from(3)
