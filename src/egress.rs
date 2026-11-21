@@ -430,6 +430,39 @@ pub fn serve(listener: TcpListener, cfg: Listener) {
     }
 }
 
+/// May a listener bind to `ip`? Only a private IPv4 address (a pool switch's host address, `10.77.x.1`) or loopback:
+/// never `0.0.0.0`, `::`, a public or a link-local address, so the proxy cannot be reached from the LAN by accident.
+pub fn bindable(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(a) => !a.is_unspecified() && (a.is_private() || a.is_loopback()),
+        IpAddr::V6(_) => false,
+    }
+}
+
+/// A [`Log`] that appends lines to `path`; when the file passes `cap` bytes it is renamed to `path.1` (replacing the
+/// previous one) and a new file starts. Write failures are swallowed: the proxy must not stop because its log did.
+pub fn file_log(path: std::path::PathBuf, cap: u64) -> Log {
+    let lock = Mutex::new(());
+    Arc::new(move |line: String| {
+        let _g = lock.lock();
+        if std::fs::metadata(&path)
+            .map(|m| m.len() >= cap)
+            .unwrap_or(false)
+        {
+            let mut old = path.clone().into_os_string();
+            old.push(".1");
+            let _ = std::fs::rename(&path, old);
+        }
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
+            let _ = writeln!(f, "{line}");
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -746,5 +779,36 @@ mod tests {
             lines.lock().unwrap()[0],
             "1 close group=g1 host=github.com up=5 down=5 peer=10.0.0.2"
         );
+    }
+
+    #[test]
+    fn bindable_addresses_are_the_switch_side_only() {
+        for ok in ["10.77.0.1", "192.168.50.1", "127.0.0.1"] {
+            assert!(bindable(ok.parse().unwrap()), "{ok}");
+        }
+        for bad in ["0.0.0.0", "8.8.8.8", "169.254.1.1", "::", "::1", "fe80::1"] {
+            assert!(!bindable(bad.parse().unwrap()), "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_file_log_appends_and_rotates_at_the_cap() {
+        let dir = std::env::temp_dir().join(format!("antspawn-egress-log-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("deny.log");
+        let log = file_log(path.clone(), 40);
+        log("first line, long enough to pass the cap".into());
+        log("second".into());
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "second
+"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("deny.log.1")).unwrap(),
+            "first line, long enough to pass the cap
+"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

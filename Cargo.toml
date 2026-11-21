@@ -23,6 +23,10 @@ name = "spawn-sandbox-broker"
 path = "src/bin/spawn-sandbox-broker.rs"
 
 [[bin]]
+name = "spawn-egress"
+path = "src/bin/spawn-egress.rs"
+
+[[bin]]
 name = "spawn-runner"
 path = "src/bin/spawn-runner.rs"
 
