@@ -9,12 +9,13 @@
 .PARAMETER Step  Copy | BuildTools | Install | Test | Bake   (BuildTools first: it imports the layout's Microsoft root certificates the offline installer needs, then installs; Install does vc_redist, Git, Rust)
 #>
 param(
-    [ValidateSet('Copy', 'BuildTools', 'Install', 'Test', 'Bake')][string]$Step = 'Copy',
+    [ValidateSet('Copy', 'BuildTools', 'Install', 'Test', 'Runner', 'Bake')][string]$Step = 'Copy',
     [string]$VmName = 'antspawn-pilot-core',
     [string]$Inst = 'C:\vmimages\installers',
     [string]$Stage = 'C:\vmimages\pilot\stage',
     [string]$Src = '',
-    [string]$Work = 'C:\vmimages\pilot'
+    [string]$Work = 'C:\vmimages\pilot',
+    [string]$Out = 'core-tools-base.vhdx'
 )
 $ErrorActionPreference = 'Stop'
 $Tar = Join-Path (Join-Path $env:windir 'System32') 'tar.exe'
@@ -119,13 +120,31 @@ switch ($Step) {
             }
         } finally { Remove-PSSession $s }
     }
+    'Runner' {
+        # the pinned Actions runner (src/adapter/runner_pin.rs: 2.338.1): verify the zip against the pin BEFORE it goes in; no config, no credentials
+        $zip = Join-Path $Inst 'actions-runner-win-x64-2.338.1.zip'
+        $h = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLower()
+        if ($h -ne '478f533ac2c349040fbaea7e158f7f7d0235085cf35bc81f661af0c715207ff9' -or (Get-Item $zip).Length -ne 104210469) { throw "runner zip does not match the pin: $h" }
+        $s = New-PSSession -VMName $VmName -Credential (Cred)
+        try {
+            Invoke-Command -Session $s -ScriptBlock { New-Item -ItemType Directory -Force C:\stage, C:\runner | Out-Null }
+            Copy-Item -ToSession $s -Path $zip -Destination 'C:\stage\runner.zip' -Force
+            Invoke-Command -Session $s -ScriptBlock {
+                & (Join-Path $env:windir 'System32\tar.exe') -xf C:\stage\runner.zip -C C:\runner
+                Remove-Item C:\stage -Recurse -Force
+                'runner dir: ' + ((Get-ChildItem C:\runner -Force | ForEach-Object Name) -join ', ')
+                "Runner.Listener --version: $(& C:\runner\bin\Runner.Listener.exe --version 2>&1) (exit $LASTEXITCODE)"
+                $v = Get-Volume -DriveLetter C; 'C: used {0:N2} GB' -f (($v.Size - $v.SizeRemaining) / 1GB)
+            }
+        } finally { Remove-PSSession $s }
+    }
     'Bake' {
-        $child = Join-Path $Work 'child.vhdx'; $out = Join-Path $Work 'core-tools-base.vhdx'
+        $child = Join-Path $Work 'child.vhdx'; $out = Join-Path $Work $Out
         if (Test-Path -LiteralPath $out) { throw "$out exists: refuse to overwrite" }
         $s = New-PSSession -VMName $VmName -Credential (Cred)
         try {
             # tidy what must not be baked: build output, cargo home, stage, installers, the vendor AOCL/Intel copies (their licences are unread), the guest-only WinTrust tweak
-            Invoke-Command -Session $s -ScriptBlock { $v = Get-Volume -DriveLetter C; 'C: used before tidy {0:N2} GB' -f (($v.Size - $v.SizeRemaining) / 1GB); Remove-Item C:\target, C:\cargo-home, C:\stage, C:\inst, C:\aocl-src, C:\AOCL-Windows, C:\oneapi -Recurse -Force -ErrorAction SilentlyContinue; Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\WinTrust\Trust Providers\Software Publishing' -Name State -ErrorAction SilentlyContinue; $v = Get-Volume -DriveLetter C; 'C: used after tidy {0:N2} GB' -f (($v.Size - $v.SizeRemaining) / 1GB); Optimize-Volume -DriveLetter C -ReTrim | Out-Null }
+            Invoke-Command -Session $s -ScriptBlock { $v = Get-Volume -DriveLetter C; 'C: used before tidy {0:N2} GB' -f (($v.Size - $v.SizeRemaining) / 1GB); Remove-Item C:\target, C:\cargo-home, C:\stage, C:\inst, C:\aocl-src, C:\AOCL-Windows, C:\oneapi -Recurse -Force -ErrorAction SilentlyContinue; Get-ChildItem Cert:\LocalMachine\CA | Where-Object Thumbprint -eq 'D30F05F637E605239C0070D1EA9860D434AC2A94' | Remove-Item; Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\WinTrust\Trust Providers\Software Publishing' -Name State -ErrorAction SilentlyContinue; $v = Get-Volume -DriveLetter C; 'C: used after tidy {0:N2} GB' -f (($v.Size - $v.SizeRemaining) / 1GB); Optimize-Volume -DriveLetter C -ReTrim | Out-Null }
         } finally { Remove-PSSession $s }
         Stop-VM -Name $VmName -Force
         Remove-VM -Name $VmName -Force
