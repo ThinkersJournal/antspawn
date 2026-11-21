@@ -1,8 +1,8 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Runner network policy and the egress proxy (design note)
 
-Written 2026-11-21 at main 0f9b60c plus `work-3`, for the PM's `[TASK] egress-proxy-design`. **Design only: no proxy, filter or switch rule exists; nothing here
-ran except the measurements marked "measured".** The VM that carries it is `docs/RUNNER-VM-PATH.md`.
+Written 2026-11-21 at main 0f9b60c plus `work-3`, for the PM's `[TASK] egress-proxy-design`. **Design, plus the proxy's decision core (`src/egress.rs`) and the per-group list loader (`src/adapter/egress_policy.rs`), unit-tested on loopback sockets only: no
+listener is bound to a pool switch, no filter or switch rule exists, and nothing here ran except the measurements marked "measured".** The VM that carries it is `docs/RUNNER-VM-PATH.md`.
 
 Rulings, CireSnave 2026-11-21, verbatim (relayed by the PM): *"C"* (a filtering proxy that allows named hosts; board 483 closed: broker runs the sandbox as `cires`,
 key stays where it is); and *"In that case, runners that need network access run in VM, not in Sandbox. That way we can cleanly limit their network access."*

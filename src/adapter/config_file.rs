@@ -44,6 +44,14 @@ fn field_list(row: &Row, key: &str) -> Result<Vec<String>, ConfigError> {
     }
 }
 
+fn field_list_opt(row: &Row, key: &str) -> Result<Vec<String>, ConfigError> {
+    match row.get(key) {
+        None => Ok(Vec::new()),
+        Some(Value::List(l)) => Ok(l.clone()),
+        _ => Err(bad(format!("group row has a non-list `{key}`"))),
+    }
+}
+
 fn positive(config: &Config, key: &str) -> Result<u64, ConfigError> {
     let n: i64 = config.get(key).map_err(bad)?;
     u64::try_from(n).map_err(|_| bad(format!("{key} must not be negative")))
@@ -68,6 +76,7 @@ pub fn load(text: &str, origin: &str) -> Result<AdapterConfig, ConfigError> {
                 launcher: field_string(row, "launcher")?,
                 task: field_opt(row, "task")?,
                 pipe: field_opt(row, "pipe")?,
+                egress: field_list_opt(row, "egress")?,
             })
         })
         .collect::<Result<Vec<_>, ConfigError>>()?;

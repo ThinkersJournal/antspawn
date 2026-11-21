@@ -6,6 +6,7 @@ pub mod account_backend;
 pub mod command;
 pub mod config_file;
 pub mod dispatch;
+pub mod egress_policy;
 pub mod github;
 pub mod github_client;
 pub mod handoff;

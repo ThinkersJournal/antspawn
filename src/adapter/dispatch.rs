@@ -181,6 +181,7 @@ mod tests {
             launcher: "windows-sandbox".into(),
             task: None,
             pipe: None,
+            egress: Vec::new(),
         }
     }
 

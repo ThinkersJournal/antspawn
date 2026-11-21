@@ -95,6 +95,7 @@ mod tests {
             launcher: launcher.into(),
             task: None,
             pipe: None,
+            egress: Vec::new(),
         }
     }
 

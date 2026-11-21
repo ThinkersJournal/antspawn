@@ -78,6 +78,12 @@ required = false
 description = "Account launcher only: the scheduled task that runs spawn-jit-shim as the runner account."
 
 [[table.field]]
+key = "egress"
+type = "list"
+required = false
+description = "Extra hosts this group's runners may reach through the egress proxy, each host:443 or *.domain:443; every entry needs an approval in egress-approved.toml."
+
+[[table.field]]
 key = "pipe"
 type = "string"
 required = false

@@ -30,6 +30,7 @@ fn group() -> RunnerGroup {
         launcher: "account".into(),
         task: None,
         pipe: None,
+        egress: Vec::new(),
     }
 }
 

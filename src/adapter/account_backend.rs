@@ -269,6 +269,7 @@ mod tests {
             launcher: "account".into(),
             task: Some("t".into()),
             pipe: Some("p".into()),
+            egress: Vec::new(),
         }
     }
 
