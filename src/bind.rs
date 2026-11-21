@@ -38,6 +38,14 @@ pub trait Acl {
     fn grant_modify(&self, path: &Path, who: &str) -> Result<(), String>;
     /// Explicit deny of every write (exact rights, never SYNCHRONIZE) for `who` on `path`.
     fn deny_writes(&self, path: &Path, who: &str, is_dir: bool) -> Result<(), String>;
+    /// [`Acl::deny_writes`] for many paths, stopping at the first failure. The default loops; the real
+    /// one batches, because each call costs a process start.
+    fn deny_writes_many(&self, paths: &[(&Path, bool)], who: &str) -> Result<(), String> {
+        for (p, is_dir) in paths {
+            self.deny_writes(p, who, *is_dir)?;
+        }
+        Ok(())
+    }
     /// Remove every explicit entry for `who` on `path` and beneath it.
     fn remove(&self, path: &Path, who: &str) -> Result<(), String>;
     /// Whether `who` is still named in `path`'s access list (read back, not assumed).
@@ -73,43 +81,16 @@ impl Acl for Icacls {
     }
 
     fn deny_writes(&self, path: &Path, who: &str, is_dir: bool) -> Result<(), String> {
-        // WriteData, AppendData, WriteExtendedAttributes, WriteAttributes, Delete,
-        // DeleteSubdirectoriesAndFiles: what W0 measured. `icacls /deny` with those names still
-        // stored SYNCHRONIZE in the ACE (measured 2026-11-17, ROADMAP row 29: the account could not
-        // list `.git`, so `git status` failed), so the rule goes in through `Set-Acl`, which stores
-        // exactly the rights named.
-        let flags = if is_dir {
-            "ContainerInherit,ObjectInherit"
-        } else {
-            "None"
-        };
-        let q = |s: &str| s.replace('\'', "''");
-        // .NET calls, not the `Get-Acl`/`Set-Acl` cmdlets: on the GitHub Windows runner the inherited
-        // PSModulePath made Windows PowerShell fail to load Microsoft.PowerShell.Security (CI run
-        // 44429020557), and the variable is cleared below as well.
-        let kind = if is_dir { "Directory" } else { "File" };
-        let script = format!(
-            "$ErrorActionPreference='Stop'; $p='{}'; $acl=[System.IO.{kind}]::GetAccessControl($p); \
-             $r=New-Object System.Security.AccessControl.FileSystemAccessRule('{}',\
-             'WriteData,AppendData,WriteExtendedAttributes,WriteAttributes,Delete,DeleteSubdirectoriesAndFiles',\
-             '{flags}','None','Deny'); $acl.AddAccessRule($r); [System.IO.{kind}]::SetAccessControl($p,$acl)",
-            q(&path.to_string_lossy()),
-            q(who)
-        );
-        let out = Command::new("powershell.exe")
-            .env_remove("PSModulePath")
-            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-            .output()
-            .map_err(|e| format!("cannot run powershell.exe: {e}"))?;
-        if out.status.success() {
-            Ok(())
-        } else {
-            Err(format!(
-                "exact-rights deny failed ({}): {}",
-                out.status,
-                String::from_utf8_lossy(&out.stderr).trim()
-            ))
+        deny_script_run(&[(path, is_dir)], who)
+    }
+
+    /// One powershell per chunk of paths, not per path (measured 2026-11-19: ~0.7 s each).
+    fn deny_writes_many(&self, paths: &[(&Path, bool)], who: &str) -> Result<(), String> {
+        // A command line tops out near 32k characters; 50 paths stays far below it.
+        for chunk in paths.chunks(50) {
+            deny_script_run(chunk, who)?;
         }
+        Ok(())
     }
 
     fn remove(&self, path: &Path, who: &str) -> Result<(), String> {
@@ -126,14 +107,69 @@ impl Acl for Icacls {
     }
 
     fn mentions(&self, path: &Path, who: &str) -> Result<bool, String> {
-        let text = icacls(&[path.as_os_str()])?;
-        let who = who.to_ascii_lowercase();
-        Ok(text.lines().any(|l| {
-            let l = l.to_ascii_lowercase();
-            // `<path> DOMAIN\who:(M)` on the first line, `    DOMAIN\who:(M)` after it.
-            l.contains(&format!("\\{who}:")) || l.trim_start().starts_with(&format!("{who}:"))
-        }))
+        Ok(names_explicitly(&icacls(&[path.as_os_str()])?, who))
     }
+}
+
+/// Add the exact-rights deny for every `(path, is_dir)` in ONE powershell, stopping at the first failure.
+fn deny_script_run(paths: &[(&Path, bool)], who: &str) -> Result<(), String> {
+    {
+        // WriteData, AppendData, WriteExtendedAttributes, WriteAttributes, Delete,
+        // DeleteSubdirectoriesAndFiles: what W0 measured. `icacls /deny` with those names still
+        // stored SYNCHRONIZE in the ACE (measured 2026-11-17, ROADMAP row 29: the account could not
+        // list `.git`, so `git status` failed), so the rule goes in through `Set-Acl`, which stores
+        // exactly the rights named.
+        let q = |s: &str| s.replace('\'', "''");
+        // .NET calls, not the `Get-Acl`/`Set-Acl` cmdlets: on the GitHub Windows runner the inherited
+        // PSModulePath made Windows PowerShell fail to load Microsoft.PowerShell.Security (CI run
+        // 44429020557), and the variable is cleared below as well.
+        let mut script = format!(
+            "$ErrorActionPreference='Stop'; $w='{}'; \
+             $rights='WriteData,AppendData,WriteExtendedAttributes,WriteAttributes,Delete,DeleteSubdirectoriesAndFiles'; ",
+            q(who)
+        );
+        for (path, is_dir) in paths {
+            let (kind, flags) = if *is_dir {
+                ("Directory", "ContainerInherit,ObjectInherit")
+            } else {
+                ("File", "None")
+            };
+            script.push_str(&format!(
+                "$p='{}'; $acl=[System.IO.{kind}]::GetAccessControl($p); \
+                 $r=New-Object System.Security.AccessControl.FileSystemAccessRule($w,$rights,'{flags}','None','Deny'); \
+                 $acl.AddAccessRule($r); [System.IO.{kind}]::SetAccessControl($p,$acl); ",
+                q(&path.to_string_lossy())
+            ));
+        }
+        let out = Command::new("powershell.exe")
+            .env_remove("PSModulePath")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .output()
+            .map_err(|e| format!("cannot run powershell.exe: {e}"))?;
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "exact-rights deny failed ({}): {}",
+                out.status,
+                String::from_utf8_lossy(&out.stderr).trim()
+            ))
+        }
+    }
+}
+
+/// Whether `icacls` output has an EXPLICIT entry for `who`. An inherited one (`(I)`) belongs to a
+/// parent and is not ours to remove: under `C:\Projects` the account has an inherited deny, and
+/// counting it made every close of a bind there fail its read-back (measured 2026-11-19).
+fn names_explicitly(text: &str, who: &str) -> bool {
+    let who = who.to_ascii_lowercase();
+    text.lines().any(|l| {
+        let l = l.to_ascii_lowercase();
+        // `<path> DOMAIN\who:(M)` on the first line, `    DOMAIN\who:(M)` after it.
+        let named =
+            l.contains(&format!("\\{who}:")) || l.trim_start().starts_with(&format!("{who}:"));
+        named && !l.contains(":(i)")
+    })
 }
 
 /// A principal name that is safe to put in an `icacls` rule.
@@ -389,9 +425,13 @@ impl BindGrant {
     }
 
     fn apply(&mut self) -> Result<(), String> {
-        for p in &self.entry.denied {
-            self.acl.deny_writes(p, &self.entry.who, p.is_dir())?;
-        }
+        let denied: Vec<(&Path, bool)> = self
+            .entry
+            .denied
+            .iter()
+            .map(|p| (p.as_path(), p.is_dir()))
+            .collect();
+        self.acl.deny_writes_many(&denied, &self.entry.who)?;
         self.acl.grant_modify(&self.entry.root, &self.entry.who)
     }
 
@@ -567,6 +607,21 @@ pub(crate) mod tests {
         assert_eq!(j.entries().len(), 1, "the journal is written");
         g.revoke().unwrap();
         assert!(j.entries().is_empty(), "revoke clears the journal");
+    }
+
+    #[test]
+    fn read_back_counts_explicit_entries_and_ignores_inherited_ones() {
+        let explicit = "C:\\p H\\antspawn-run:(OI)(CI)(M)\n   BUILTIN\\Administrators:(I)(F)\n";
+        assert!(names_explicitly(explicit, "antspawn-run"));
+        let first_line = "C:\\p\\a TUF\\antspawn-run:(N)\n   X\\cires:(I)(F)\n";
+        assert!(
+            names_explicitly(first_line, "antspawn-run"),
+            "explicit deny on line 1"
+        );
+        // Control: a parent's deny, inherited, is not something a removal could take away.
+        let inherited = "C:\\p\\a TUF\\antspawn-run:(I)(OI)(CI)(N)\n   X\\cires:(I)(F)\n";
+        assert!(!names_explicitly(inherited, "antspawn-run"));
+        assert!(!names_explicitly("C:\\p X\\cires:(F)\n", "antspawn-run"));
     }
 
     #[test]

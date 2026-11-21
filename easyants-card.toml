@@ -1,0 +1,5 @@
+name = "AntSpawn"
+sentence = "A sandboxed job runner: one clean environment per job, only what the job declares, outputs collected, then destroyed."
+status = "not-ready"
+status_label = "Early release, not ready: crates.io holds only a 0.0.0 placeholder"
+docs = "https://github.com/ThinkersJournal/antspawn"
