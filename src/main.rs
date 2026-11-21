@@ -183,7 +183,7 @@ fn adapter(config: &Path, check: bool, once: bool, pem_key: bool) -> Result<Exit
             ExitCode::from(3)
         });
     }
-    let report = command::check(&command::load_config(config)?, pem_key);
+    let report = command::check_with_key(&command::load_config(config)?, pem_key);
     for l in &report.lines {
         println!("{l}");
     }

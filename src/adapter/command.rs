@@ -81,7 +81,7 @@ pub struct CheckReport {
     pub problems: Vec<String>,
 }
 
-/// Offline checks: nothing here touches the network or reads the key.
+/// Offline checks: nothing here touches the network or reads the key (see [`check_with_key`] for the load).
 pub fn check(cfg: &AdapterConfig, pem_key: bool) -> CheckReport {
     let mut r = CheckReport::default();
     r.lines.push(format!(
@@ -109,7 +109,7 @@ pub fn check(cfg: &AdapterConfig, pem_key: bool) -> CheckReport {
             cfg.key_path.display()
         )),
         Ok(()) => r.lines.push(format!(
-            "key: {} ({}); contents not read by --check",
+            "key: {} ({}); path only; the load check follows",
             cfg.key_path.display(),
             if pem_key || !cfg!(windows) {
                 "plain PEM"
@@ -117,6 +117,40 @@ pub fn check(cfg: &AdapterConfig, pem_key: bool) -> CheckReport {
                 "DPAPI"
             }
         )),
+    }
+    r
+}
+
+/// Does the key LOAD, and does it look like a PEM private key? Reports the length only: the key is never
+/// printed, logged or compared by content, and the error text never carries key material.
+pub fn key_loads<K: KeyProvider>(keys: &K) -> Result<String, String> {
+    let secret = keys.load().map_err(|e| e.to_string())?;
+    let pem = secret.expose();
+    let t = pem.trim();
+    if t.starts_with("-----BEGIN ") && t.contains("PRIVATE KEY-----") {
+        Ok(format!(
+            "loads, {} bytes, PEM private-key header present",
+            t.len()
+        ))
+    } else {
+        Err("loads but is not a PEM private key".into())
+    }
+}
+
+/// [`check`] plus the one step that reads the key: it must load through the configured provider (DPAPI as
+/// the current user by default, so a run as another account fails here, as it would at start). Skipped when
+/// `check` already found the key path unusable. Offline: no network.
+pub fn check_with_key(cfg: &AdapterConfig, pem_key: bool) -> CheckReport {
+    let mut r = check(cfg, pem_key);
+    if r.problems.iter().any(|p| p.starts_with("key_path:")) {
+        return r;
+    }
+    match key_provider(&cfg.key_path, pem_key)
+        .map_err(|e| e.to_string())
+        .and_then(|k| key_loads(&k))
+    {
+        Ok(what) => r.lines.push(format!("key: {what}")),
+        Err(why) => r.problems.push(format!("key: {why}")),
     }
     r
 }
@@ -303,6 +337,38 @@ pub fn run(config: &Path, pem_key: bool, once: bool) -> Result<bool, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `None` stands for a provider that cannot decrypt.
+    struct FakeKey(Option<&'static str>);
+    impl KeyProvider for FakeKey {
+        fn load(&self) -> Result<Secret, KeyError> {
+            self.0
+                .map(|v| Secret::new(v.into()))
+                .ok_or(KeyError::Malformed)
+        }
+    }
+
+    #[test]
+    fn key_loads_accepts_a_pem_and_refuses_anything_else_without_echoing_it() {
+        let ok = key_loads(&FakeKey(Some(
+            "-----BEGIN RSA PRIVATE KEY-----
+QUJD
+-----END RSA PRIVATE KEY-----
+",
+        )));
+        assert!(
+            ok.as_ref()
+                .is_ok_and(|s| s.contains("PEM private-key header")),
+            "{ok:?}"
+        );
+        // Known-bad controls: a non-PEM secret, and a provider that cannot decrypt.
+        let bad = key_loads(&FakeKey(Some("hunter2-not-a-key")));
+        assert!(
+            bad.as_ref().is_err_and(|e| !e.contains("hunter2")),
+            "{bad:?}"
+        );
+        assert!(key_loads(&FakeKey(None)).is_err());
+    }
     #[cfg(windows)]
     use crate::adapter::watcher::Dispatch;
 
