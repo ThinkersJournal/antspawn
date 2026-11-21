@@ -194,7 +194,16 @@ fn adapter(
             ExitCode::from(3)
         });
     }
-    let report = command::check_with_key(&command::load_config(config)?, pem_key);
+    let cfg = command::load_config(config)?;
+    let mut report = command::check_with_key(&cfg, pem_key);
+    match command::load_egress(config, &cfg) {
+        Ok(groups) => report.lines.extend(
+            groups
+                .iter()
+                .map(antspawn::adapter::egress_policy::describe),
+        ),
+        Err(e) => report.problems.push(format!("egress: {e}")),
+    }
     for l in &report.lines {
         println!("{l}");
     }

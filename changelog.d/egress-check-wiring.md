@@ -1,0 +1,3 @@
+kind: **ADDED**: `spawn adapter` checks each group's egress list against `egress-approved.toml`
+---
+`spawn adapter --check` now reads `egress-approved.toml` beside the config file and prints each group's effective egress list; `spawn adapter` refuses to start when a group's `egress` entry is not approved for every repo of that group (`command::load_egress`). A missing file counts as empty, so a config with no extras needs none. 1 test with a known-bad control (the same entry refused with no file, accepted once approved, a malformed file named in the error). Listener probes wait for the pool switches (ROADMAP row 39).

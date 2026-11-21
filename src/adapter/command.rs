@@ -60,6 +60,30 @@ pub fn load_config(path: &Path) -> Result<AdapterConfig, String> {
     super::config_file::load(&text, &path.display().to_string()).map_err(|e| e.to_string())
 }
 
+/// Where a config's egress approvals live: `egress-approved.toml` beside the config file.
+pub fn approvals_path(config: &Path) -> std::path::PathBuf {
+    config
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("egress-approved.toml")
+}
+
+/// Each group's effective egress list. A missing approvals file is an empty one: a group with no extras needs none,
+/// and a group with an extra is refused for want of its approval. An unreadable or malformed file is an error.
+pub fn load_egress(
+    config: &Path,
+    cfg: &AdapterConfig,
+) -> Result<Vec<super::egress_policy::GroupEgress>, String> {
+    let path = approvals_path(config);
+    let approvals = match std::fs::read_to_string(&path) {
+        Ok(t) => super::egress_policy::Approvals::from_toml(&t)
+            .map_err(|e| format!("{}: {e}", path.display()))?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Default::default(),
+        Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
+    };
+    super::egress_policy::effective(cfg, &approvals)
+}
+
 /// Can this adapter hand a JIT config to `launcher` today?
 fn runnable(launcher: &str) -> Result<(), String> {
     match launcher {
@@ -324,6 +348,7 @@ pub fn run(
     status: Option<&Path>,
 ) -> Result<bool, String> {
     let cfg = load_config(config)?;
+    load_egress(config, &cfg)?; // an unapproved egress entry stops the start, as `--check` reports it
     // one adapter at a time: the lock sits beside the status file and is held until this process ends
     let _lock = status.map(super::status::Lock::acquire).transpose()?;
     let groups: Vec<String> = cfg.groups.iter().map(|g| g.name.clone()).collect();
@@ -567,5 +592,73 @@ QUJD
     fn a_relative_key_path_is_refused_by_check() {
         let r = check(&cfg("account", "rel/k.pem"), true);
         assert!(r.problems.iter().any(|p| p.starts_with("key_path")));
+    }
+
+    fn egress_cfg(extra: &str) -> AdapterConfig {
+        super::super::config_file::load(
+            &format!(
+                "org = \"O\"
+app_id = 1
+installation_id = 2
+key_path = 'k'
+job_timeout_s = 600
+
+[[group]]
+name = \"g\"
+repos = [\"O/a\"]
+labels = [\"antspawn\"]
+launcher = \"windows-sandbox\"
+{extra}"
+            ),
+            "t.toml",
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn egress_extras_need_the_approvals_file_beside_the_config() {
+        let dir = std::env::temp_dir().join(format!("antspawn-egress-cfg-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let conf = dir.join("adapter.toml");
+        let approvals = dir.join("egress-approved.toml");
+        let _ = std::fs::remove_file(&approvals);
+        assert_eq!(approvals_path(&conf), approvals);
+        // no extras: no file needed
+        assert_eq!(load_egress(&conf, &egress_cfg("")).unwrap().len(), 1);
+        // an extra with no file is refused (the known-bad control) ...
+        let c = egress_cfg(
+            "egress = [\"files.example.org:443\"]
+",
+        );
+        let e = load_egress(&conf, &c).unwrap_err();
+        assert!(e.contains("not approved"), "{e}");
+        // ... and passes once the file approves it for the group's repo
+        std::fs::write(
+            &approvals,
+            "[[approved]]
+host = \"files.example.org\"
+repo = \"O/a\"
+approved = \"board 1 / 2026-11-21\"
+reason = \"test\"
+",
+        )
+        .unwrap();
+        let g = load_egress(&conf, &c).unwrap();
+        assert!(g[0].policy.allows("files.example.org"));
+        assert!(crate::adapter::egress_policy::describe(&g[0]).contains("files.example.org:443"));
+        // a malformed file is an error naming it
+        std::fs::write(
+            &approvals,
+            "[[approved]]
+host = 1
+",
+        )
+        .unwrap();
+        assert!(
+            load_egress(&conf, &c)
+                .unwrap_err()
+                .contains("egress-approved.toml")
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
