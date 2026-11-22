@@ -240,11 +240,14 @@ $seen = $false
     pub fn script_destroy(&self, vm: &str) -> Result<String, String> {
         let n = named(vm)?;
         let disk = quote(&self.disk(vm))?;
+        // `New-VM -Path` leaves an empty folder named for the VM; remove it only when it holds no file
+        let folder = quote(&join(&self.cfg.vm_dir, vm))?;
         Ok(format!(
             "$ErrorActionPreference='Stop'\n\
              $v = Get-VM -Name {n} -ErrorAction SilentlyContinue\n\
              if ($v) {{ if ($v.State -ne 'Off') {{ Stop-VM -Name {n} -TurnOff -Force }}; Remove-VM -Name {n} -Force }}\n\
-             if (Test-Path -LiteralPath {disk}) {{ Remove-Item -LiteralPath {disk} -Force }}\n"
+             if (Test-Path -LiteralPath {disk}) {{ Remove-Item -LiteralPath {disk} -Force }}\n\
+             if ((Test-Path -LiteralPath {folder}) -and -not (Get-ChildItem -LiteralPath {folder} -Force -Recurse -File)) {{ Remove-Item -LiteralPath {folder} -Recurse -Force }}\n"
         ))
     }
 }
