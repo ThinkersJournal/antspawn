@@ -4,8 +4,9 @@
 //! only parses arguments.
 //!
 //! Only launchers that can really take a JIT config are registered. `account` is (the pipe path, not run
-//! live: ROADMAP row 21). `windows-sandbox` has no transport yet (board 322), so a group naming it makes
-//! `--check` fail and the adapter refuse to start, rather than mint a runner that cannot be delivered.
+//! live: ROADMAP row 21). `windows-sandbox` is refused: a runner needs network, and CireSnave ruled
+//! 2026-11-21 that network-needing runners run in a VM behind a filtering proxy, not in Sandbox (ROADMAP rows 38 to 44,
+//! `docs/RUNNER-NETWORK.md`), so a group naming it makes `--check` fail and the adapter refuse to start.
 
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -68,7 +69,7 @@ fn runnable(launcher: &str) -> Result<(), String> {
                 .into(),
         ),
         "windows-sandbox" => {
-            Err("the windows-sandbox launcher has no JIT-config transport yet (board 322)".into())
+            Err("the windows-sandbox launcher is not used for runners: network-needing runners run in a VM behind a filtering proxy (CireSnave 2026-11-21; ROADMAP rows 38 to 44)".into())
         }
         other => Err(format!("unknown launcher `{other}`")),
     }
@@ -81,7 +82,7 @@ pub struct CheckReport {
     pub problems: Vec<String>,
 }
 
-/// Offline checks: nothing here touches the network or reads the key.
+/// Offline checks: nothing here touches the network or reads the key (see [`check_with_key`] for the load).
 pub fn check(cfg: &AdapterConfig, pem_key: bool) -> CheckReport {
     let mut r = CheckReport::default();
     r.lines.push(format!(
@@ -109,7 +110,7 @@ pub fn check(cfg: &AdapterConfig, pem_key: bool) -> CheckReport {
             cfg.key_path.display()
         )),
         Ok(()) => r.lines.push(format!(
-            "key: {} ({}); contents not read by --check",
+            "key: {} ({}); path only; the load check follows",
             cfg.key_path.display(),
             if pem_key || !cfg!(windows) {
                 "plain PEM"
@@ -117,6 +118,40 @@ pub fn check(cfg: &AdapterConfig, pem_key: bool) -> CheckReport {
                 "DPAPI"
             }
         )),
+    }
+    r
+}
+
+/// Does the key LOAD, and does it look like a PEM private key? Reports the length only: the key is never
+/// printed, logged or compared by content, and the error text never carries key material.
+pub fn key_loads<K: KeyProvider>(keys: &K) -> Result<String, String> {
+    let secret = keys.load().map_err(|e| e.to_string())?;
+    let pem = secret.expose();
+    let t = pem.trim();
+    if t.starts_with("-----BEGIN ") && t.contains("PRIVATE KEY-----") {
+        Ok(format!(
+            "loads, {} bytes, PEM private-key header present",
+            t.len()
+        ))
+    } else {
+        Err("loads but is not a PEM private key".into())
+    }
+}
+
+/// [`check`] plus the one step that reads the key: it must load through the configured provider (DPAPI as
+/// the current user by default, so a run as another account fails here, as it would at start). Skipped when
+/// `check` already found the key path unusable. Offline: no network.
+pub fn check_with_key(cfg: &AdapterConfig, pem_key: bool) -> CheckReport {
+    let mut r = check(cfg, pem_key);
+    if r.problems.iter().any(|p| p.starts_with("key_path:")) {
+        return r;
+    }
+    match key_provider(&cfg.key_path, pem_key)
+        .map_err(|e| e.to_string())
+        .and_then(|k| key_loads(&k))
+    {
+        Ok(what) => r.lines.push(format!("key: {what}")),
+        Err(why) => r.problems.push(format!("key: {why}")),
     }
     r
 }
@@ -228,6 +263,24 @@ fn unix_now() -> u64 {
         .map_or(0, |d| d.as_secs())
 }
 
+/// Best effort: a status file that cannot be written is reported once per tick and never stops the adapter.
+fn write_status<A: super::github::GithubApi, S: super::watcher::JobSource, D: Dispatch>(
+    path: Option<&Path>,
+    groups: &[String],
+    watcher: &Watcher<A, S, D>,
+) {
+    let Some(p) = path else { return };
+    let s = super::status::Status {
+        tick_unix: unix_now(),
+        pid: std::process::id(),
+        groups: groups.iter().map(String::as_str).collect(),
+        jobs_in_flight: u32::from(watcher.busy()),
+    };
+    if let Err(e) = super::status::write(p, &s) {
+        eprintln!("spawn adapter: cannot write the status file: {e}");
+    }
+}
+
 fn print_tick(t: &TickReport) {
     for (id, task_status) in &t.ended_ok {
         eprintln!("spawn adapter: job {id}: runner ended: {task_status}");
@@ -264,8 +317,16 @@ fn print_tick(t: &TickReport) {
 
 /// Run the adapter. `once`: one poll, then wait for the runner it started (if any) and return.
 /// `Ok(true)`: clean. `Ok(false)`: `--once` ended badly (reasons printed to stderr; exit code 3).
-pub fn run(config: &Path, pem_key: bool, once: bool) -> Result<bool, String> {
+pub fn run(
+    config: &Path,
+    pem_key: bool,
+    once: bool,
+    status: Option<&Path>,
+) -> Result<bool, String> {
     let cfg = load_config(config)?;
+    // one adapter at a time: the lock sits beside the status file and is held until this process ends
+    let _lock = status.map(super::status::Lock::acquire).transpose()?;
+    let groups: Vec<String> = cfg.groups.iter().map(|g| g.name.clone()).collect();
     let dispatch = router(&cfg)?;
     let keys = key_provider(&cfg.key_path, pem_key).map_err(|e| e.to_string())?;
     let github = HttpGithub::new(cfg.app_id, cfg.installation_id, keys);
@@ -282,6 +343,7 @@ pub fn run(config: &Path, pem_key: bool, once: bool) -> Result<bool, String> {
     loop {
         let tick = watcher.tick(unix_now());
         print_tick(&tick);
+        write_status(status, &groups, &watcher);
         if once {
             let end = std::time::Instant::now() + ceiling + Duration::from_secs(120);
             while watcher.busy() && std::time::Instant::now() < end {
@@ -303,6 +365,38 @@ pub fn run(config: &Path, pem_key: bool, once: bool) -> Result<bool, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `None` stands for a provider that cannot decrypt.
+    struct FakeKey(Option<&'static str>);
+    impl KeyProvider for FakeKey {
+        fn load(&self) -> Result<Secret, KeyError> {
+            self.0
+                .map(|v| Secret::new(v.into()))
+                .ok_or(KeyError::Malformed)
+        }
+    }
+
+    #[test]
+    fn key_loads_accepts_a_pem_and_refuses_anything_else_without_echoing_it() {
+        let ok = key_loads(&FakeKey(Some(
+            "-----BEGIN RSA PRIVATE KEY-----
+QUJD
+-----END RSA PRIVATE KEY-----
+",
+        )));
+        assert!(
+            ok.as_ref()
+                .is_ok_and(|s| s.contains("PEM private-key header")),
+            "{ok:?}"
+        );
+        // Known-bad controls: a non-PEM secret, and a provider that cannot decrypt.
+        let bad = key_loads(&FakeKey(Some("hunter2-not-a-key")));
+        assert!(
+            bad.as_ref().is_err_and(|e| !e.contains("hunter2")),
+            "{bad:?}"
+        );
+        assert!(key_loads(&FakeKey(None)).is_err());
+    }
     #[cfg(windows)]
     use crate::adapter::watcher::Dispatch;
 
@@ -322,16 +416,16 @@ mod tests {
     }
 
     #[test]
-    fn a_sandbox_group_stops_check_and_start_naming_the_group_and_the_board() {
+    fn a_sandbox_group_stops_check_and_start_naming_the_group_and_the_ruling() {
         let c = cfg("windows-sandbox", "C:/k.pem");
         let r = check(&c, true);
         assert!(
             r.problems
                 .iter()
-                .any(|p| p.contains("`g`") && p.contains("322"))
+                .any(|p| p.contains("`g`") && p.contains("VM"))
         );
         let e = router(&c).err().expect("refused");
-        assert!(e.contains("`g`") && e.contains("322"), "{e}");
+        assert!(e.contains("`g`") && e.contains("VM"), "{e}");
     }
 
     #[test]

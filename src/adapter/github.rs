@@ -140,6 +140,10 @@ pub struct RunnerGroup {
     /// `account` launcher only: the pipe name that task's shim creates (a fixed argument of the task).
     #[serde(default)]
     pub pipe: Option<String>,
+    /// Extra hosts this group's runners may reach through the egress proxy, each `host:443` (or `*.domain:443`), on top
+    /// of the default list. Each needs a named approval in `egress-approved.toml` (`docs/RUNNER-NETWORK.md`).
+    #[serde(default)]
+    pub egress: Vec<String>,
 }
 
 /// The adapter's configuration (TOML, strict). Holds a key *path*, never a key.
@@ -232,6 +236,11 @@ impl AdapterConfig {
             }
             if g.repos.is_empty() {
                 return invalid(format!("group `{}` names no repos", g.name));
+            }
+            for e in &g.egress {
+                if let Err(why) = super::egress_policy::entry_host(e) {
+                    return invalid(format!("group `{}` egress: {why}", g.name));
+                }
             }
             for r in &g.repos {
                 let ok = r.split_once('/').is_some_and(|(o, n)| {

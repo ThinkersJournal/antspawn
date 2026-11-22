@@ -491,3 +491,9 @@ Not measured: a bind under `C:\Projects\<name>` (the account has an explicit den
 - **Defect found:** the first run's `close` failed on every path with `still names antspawn-run after removal`. `icacls` showed only `antspawn-run:(I)(OI)(CI)(N)` left, the deny inherited from `C:\Projects`; the explicit entries were gone. The read-back counted inherited entries. Fixed (`names_explicitly`); second run: close clean, journal empty. The failed run left the tree and journal, which were removed by hand.
 - Not measured: a bind on a real project under `C:\Projects`; hundreds of protected paths; two runs on one day.
 - **After batching the denies** (`Acl::deny_writes_many`: one powershell per 50 paths, not one per path; same ref plus the next commit): same test, same 41 paths, open **1.15 s** (was 27.7 s), close 3.4 s. `cargo test --test account_workspace`: 3 passed, and the protected-file write control still failed as required. One run on one day. Not measured: more than 50 protected paths (the chunk boundary) on the real account.
+
+## 2026-11-21: egress proxy on loopback, ROADMAP row 38 (ref: `work-3`, `spawn-egress` debug build; run as `cires`, host network, no VM, no switch)
+
+- **Run:** `spawn-egress --listen 127.0.0.1:38443 --group t --log <file>` (default list only), three requests from a script on the same host.
+- **Results:** `CONNECT example.com:443` got `403` and the deny line `reason=not-listed`; `GET http://api.github.com/` got `403`, `reason=bad-method`; `CONNECT api.github.com:443` got `200 Connection Established` (the real api.github.com was reached) and a `close` line with `up=0 down=0` (the script sent nothing through the tunnel). `--listen 0.0.0.0:38443` was refused, exit 2.
+- **Not measured:** a guest reaching the proxy over a pool switch (rows 39 and 40), the host-port scan, a tool such as `git` or `cargo` through it, byte counts on a real transfer, the log rotation under load, any run of the Actions runner. One run on one day.
