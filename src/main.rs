@@ -204,6 +204,14 @@ fn adapter(
         ),
         Err(e) => report.problems.push(format!("egress: {e}")),
     }
+    match command::load_vm_host(config, &cfg) {
+        Ok(Some(v)) => report.lines.push(format!(
+            "vm host: base {} (sha256 pinned), vm_dir {}, switch {}, {} MB, {} vCPU",
+            v.base, v.vm_dir, v.switch, v.memory_mb, v.vcpus
+        )),
+        Ok(None) => {}
+        Err(e) => report.problems.push(format!("vm host: {e}")),
+    }
     for l in &report.lines {
         println!("{l}");
     }

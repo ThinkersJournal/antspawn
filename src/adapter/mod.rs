@@ -17,4 +17,5 @@ pub mod runner_cache;
 pub mod runner_pin;
 pub mod status;
 pub mod vm_backend;
+pub mod vm_host_config;
 pub mod watcher;
