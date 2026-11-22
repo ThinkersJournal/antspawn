@@ -15,4 +15,5 @@ pub mod routing;
 pub mod runner_cache;
 pub mod runner_pin;
 pub mod status;
+pub mod vm_backend;
 pub mod watcher;
