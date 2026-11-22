@@ -127,6 +127,15 @@ pub fn check(cfg: &AdapterConfig, pem_key: bool) -> CheckReport {
             Err(why) => r.problems.push(format!("group `{}`: {why}", g.name)),
         }
     }
+    if cfg.groups.iter().any(|g| g.launcher == "hyperv-vm") {
+        match super::guest_credential::default_path()
+            .ok_or_else(|| "guest credential: LOCALAPPDATA is not set".to_string())
+            .and_then(|p| super::guest_credential::check(&p))
+        {
+            Ok(line) => r.lines.push(line),
+            Err(why) => r.problems.push(why),
+        }
+    }
     match check_key_path(&cfg.key_path, &[]) {
         Err(e) => r.problems.push(format!("key_path: {e}")),
         Ok(()) if !cfg.key_path.is_file() => r.problems.push(format!(

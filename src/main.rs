@@ -212,6 +212,12 @@ fn adapter(
     }
     Ok(if report.problems.is_empty() {
         ExitCode::SUCCESS
+    } else if report
+        .problems
+        .iter()
+        .any(|p| p.starts_with("guest credential:"))
+    {
+        ExitCode::from(2)
     } else {
         ExitCode::from(1)
     })

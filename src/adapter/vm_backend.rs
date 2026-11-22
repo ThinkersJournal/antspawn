@@ -9,9 +9,10 @@
 //! * [`VmHost`] is what acts on Hyper-V. [`ScriptHost`] builds each PowerShell script as text (quoted, prefix-checked, tested as text) and
 //!   hands it to a [`Runner`]; nothing here has touched Hyper-V.
 //!
-//! **Not here, deliberately:** the JIT delivery over PowerShell Direct. It needs a guest credential, and where an unattended adapter keeps
-//! one is a ruling (the pilot's `with-secret` needs a Windows Hello approval per window). Until that is ruled, no transport exists and the
-//! backend cannot be wired to a group.
+//! **The guest channel** is PowerShell Direct with the one baked Administrator password, kept as a DPAPI file for the adapter's
+//! account (CireSnave, board 488 "A"; `adapter::guest_credential`). Each guest script builds its `PSCredential` from that file inside
+//! the PowerShell process: the password is never in the script text, an argument, a log or a result. **Not here yet:** the JIT
+//! delivery itself (the transport that writes the config to the runner shim); only the runner-end wait uses the channel.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -126,6 +127,8 @@ pub struct VmHostConfig {
     pub switch: String,
     pub memory_mb: u32,
     pub vcpus: u8,
+    /// The DPAPI file holding the guest Administrator password (`guest_credential::default_path`).
+    pub guest_credential: std::path::PathBuf,
 }
 
 /// The real [`VmHost`]: scripts for a [`Runner`] (PowerShell on stdin). Nothing here has touched Hyper-V.
@@ -204,6 +207,28 @@ impl<R: Runner + Send + Sync + 'static> ScriptHost<R> {
         ))
     }
 
+    /// Over PowerShell Direct: wait for `Runner.Listener` to appear in the guest, then for it to be gone (or the VM to be off), at
+    /// most `secs` from now. The credential comes from the DPAPI file inside this script; nothing here carries the password.
+    pub fn script_wait_end(&self, vm: &str, secs: u64) -> Result<String, String> {
+        let n = named(vm)?;
+        let pre =
+            crate::adapter::guest_credential::credential_preamble(&self.cfg.guest_credential)?;
+        Ok(format!(
+            "$ErrorActionPreference='Stop'
+{pre}$end = (Get-Date).AddSeconds({secs})
+$seen = $false
+             while ($true) {{
+               if ((Get-VM -Name {n}).State -ne 'Running') {{ break }}
+               $up = $false
+               try {{ $up = [bool](Invoke-Command -VMName {n} -Credential $cred -ScriptBlock {{ Get-Process -Name 'Runner.Listener' -ErrorAction SilentlyContinue }}) }} catch {{ if ($seen) {{ break }} }}
+               if ($up) {{ $seen = $true }} elseif ($seen) {{ break }}
+               if ((Get-Date) -gt $end) {{ throw 'the runner did not end in time' }}
+               Start-Sleep -Seconds 2
+}}
+"
+        ))
+    }
+
     /// Idempotent, and removes only what carries our prefix: the VM (power cut), its differencing disk.
     pub fn script_destroy(&self, vm: &str) -> Result<String, String> {
         let n = named(vm)?;
@@ -232,10 +257,10 @@ impl<R: Runner + Send + Sync + 'static> VmHost for ScriptHost<R> {
             .run(&self.script_ready(vm, limit.as_secs().max(1))?)
             .map(|_| ())
     }
-    fn wait_end(&self, _vm: &str, _limit: Duration) -> Result<String, String> {
-        // How the host learns the runner ended (a guest process poll over PowerShell Direct, or the VM powering itself off after the
-        // runner exits) is part of the same open guest-credential ruling; no guess is made here.
-        Err("waiting for the runner to end needs the guest channel, which is not built (guest-credential ruling pending)".into())
+    fn wait_end(&self, vm: &str, limit: Duration) -> Result<String, String> {
+        self.runner
+            .run(&self.script_wait_end(vm, limit.as_secs().max(1))?)
+            .map(|_| "runner ended".to_string())
     }
     fn destroy(&self, vm: &str) -> Result<(), String> {
         self.runner.run(&self.script_destroy(vm)?).map(|_| ())
@@ -440,6 +465,9 @@ mod tests {
                 switch: "antspawn-pool-1".into(),
                 memory_mb: 4096,
                 vcpus: 2,
+                guest_credential: std::path::PathBuf::from(
+                    r"C:\Users\x\AppData\Local\antspawn\guest-credential.dpapi",
+                ),
             },
         }
     }
@@ -523,13 +551,22 @@ mod tests {
     }
 
     #[test]
-    fn the_real_host_cannot_wait_for_a_runner_yet_and_says_why() {
-        let e = host()
-            .wait_end("antspawn-run-g-0", Duration::from_secs(1))
-            .unwrap_err();
+    fn the_wait_script_uses_the_dpapi_file_and_never_a_password() {
+        let h = host();
+        let s = h.script_wait_end("antspawn-run-g-0", 600).unwrap();
         assert!(
-            e.contains("guest channel") && e.contains("not built"),
-            "{e}"
+            s.contains("guest-credential.dpapi")
+                && s.contains("Invoke-Command -VMName 'antspawn-run-g-0'"),
+            "{s}"
         );
+        assert!(
+            s.contains("AddSeconds(600)") && s.contains("Runner.Listener"),
+            "{s}"
+        );
+        assert!(!s.contains("-AsPlainText") && !s.contains("PW"), "{s}");
+        assert!(h.script_wait_end("other-vm", 5).is_err());
+        h.wait_end("antspawn-run-g-0", Duration::from_secs(5))
+            .unwrap();
+        assert_eq!(h.runner.0.lock().unwrap().len(), 1);
     }
 }

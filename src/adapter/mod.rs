@@ -9,6 +9,7 @@ pub mod dispatch;
 pub mod egress_policy;
 pub mod github;
 pub mod github_client;
+pub mod guest_credential;
 pub mod handoff;
 pub mod jit_host;
 pub mod routing;

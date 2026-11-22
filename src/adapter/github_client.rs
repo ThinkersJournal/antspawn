@@ -529,7 +529,7 @@ impl DpapiKeyProvider {
 }
 
 #[cfg(windows)]
-fn unhex(s: &str) -> Option<Vec<u8>> {
+pub(crate) fn unhex(s: &str) -> Option<Vec<u8>> {
     if !s.len().is_multiple_of(2) || !s.is_ascii() {
         return None;
     }
@@ -540,7 +540,7 @@ fn unhex(s: &str) -> Option<Vec<u8>> {
 }
 
 #[cfg(windows)]
-mod dpapi {
+pub(crate) mod dpapi {
     use windows_sys::Win32::Foundation::LocalFree;
     #[cfg(test)]
     use windows_sys::Win32::Security::Cryptography::CryptProtectData;
@@ -567,7 +567,7 @@ mod dpapi {
         }
     }
 
-    pub fn unprotect(data: &[u8]) -> Option<Vec<u8>> {
+    pub(crate) fn unprotect(data: &[u8]) -> Option<Vec<u8>> {
         let input = blob(data);
         let mut out = CRYPT_INTEGER_BLOB {
             cbData: 0,
@@ -591,7 +591,7 @@ mod dpapi {
 
     /// Test support: protect `data` for the current user, as PowerShell does.
     #[cfg(test)]
-    pub fn protect(data: &[u8]) -> Option<Vec<u8>> {
+    pub(crate) fn protect(data: &[u8]) -> Option<Vec<u8>> {
         let input = blob(data);
         let mut out = CRYPT_INTEGER_BLOB {
             cbData: 0,
