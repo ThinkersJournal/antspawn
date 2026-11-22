@@ -497,3 +497,9 @@ Not measured: a bind under `C:\Projects\<name>` (the account has an explicit den
 - **Run:** `spawn-egress --listen 127.0.0.1:38443 --group t --log <file>` (default list only), three requests from a script on the same host.
 - **Results:** `CONNECT example.com:443` got `403` and the deny line `reason=not-listed`; `GET http://api.github.com/` got `403`, `reason=bad-method`; `CONNECT api.github.com:443` got `200 Connection Established` (the real api.github.com was reached) and a `close` line with `up=0 down=0` (the script sent nothing through the tunnel). `--listen 0.0.0.0:38443` was refused, exit 2.
 - **Not measured:** a guest reaching the proxy over a pool switch (rows 39 and 40), the host-port scan, a tool such as `git` or `cargo` through it, byte counts on a real transfer, the log rotation under load, any run of the Actions runner. One run on one day.
+
+## 2026-11-22: egress proxy SNI check on loopback, ROADMAP row 38 (ref: `work-4`, `spawn-egress --check-sni`; run as `cires`, host network, no VM)
+
+- **Run:** `spawn-egress --listen 127.0.0.1:38444 --group t --check-sni`, a Python TLS client through `CONNECT api.github.com:443`.
+- **Results:** SNI `api.github.com` (matches): the TLS handshake completed and the real api.github.com answered `HTTP/1.1 200 OK`; the close line showed up=160 down=6903 bytes. SNI `github.com` through the same tunnel (a mismatch): the proxy closed the tunnel before a byte went upstream, the client saw `SSLEOFError`, and the deny line read `reason=sni-mismatch`.
+- **Not measured:** a client using Encrypted Client Hello (it sends no usable SNI, so it would be refused: why the check is a flag, off by default), a ClientHello split over several TCP segments beyond what `read_exact` reads, git/cargo/the runner through it. One run on one day.

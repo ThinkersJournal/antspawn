@@ -19,6 +19,8 @@ use std::time::Duration;
 pub const ALLOWED_PORT: u16 = 443;
 /// A request head longer than this is refused (a `CONNECT` line is far shorter).
 pub const MAX_HEAD: usize = 8 * 1024;
+/// A ClientHello record longer than this is refused when the SNI check is on.
+pub const MAX_HELLO: usize = 16 * 1024;
 
 /// One allowlist entry: an exact host name, or `*.suffix` (any host under `suffix`, not `suffix` itself).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,6 +98,8 @@ pub enum Reason {
     Unreachable,
     /// Too many tunnels open.
     Busy,
+    /// The TLS ClientHello names a different host than the `CONNECT` (or none): domain fronting through an allowed name.
+    SniMismatch,
 }
 
 impl Reason {
@@ -108,6 +112,7 @@ impl Reason {
             Reason::BadAddress => "bad-address",
             Reason::Unreachable => "unreachable",
             Reason::Busy => "busy",
+            Reason::SniMismatch => "sni-mismatch",
         }
     }
 }
@@ -286,6 +291,9 @@ pub struct Listener {
     pub max_tunnels: usize,
     /// A connection that sends nothing for this long is dropped.
     pub idle: Duration,
+    /// Read the first TLS record and refuse the tunnel unless its SNI is the `CONNECT` host. Off by default: a client using
+    /// Encrypted Client Hello sends no usable SNI and would be refused.
+    pub check_sni: bool,
 }
 
 impl fmt::Debug for Listener {
@@ -319,6 +327,90 @@ fn read_head(s: &mut TcpStream) -> Option<String> {
         }
     }
     None
+}
+
+/// The server name in a TLS ClientHello record (`record` starts at the record header), or `None` if it is not a ClientHello,
+/// is cut short, or carries no `server_name`. Reads only what the protocol defines; never indexes past the buffer.
+pub fn parse_sni(record: &[u8]) -> Option<String> {
+    struct Cur<'a>(&'a [u8]);
+    impl<'a> Cur<'a> {
+        fn take(&mut self, n: usize) -> Option<&'a [u8]> {
+            if self.0.len() < n {
+                return None;
+            }
+            let (a, b) = self.0.split_at(n);
+            self.0 = b;
+            Some(a)
+        }
+        fn u8(&mut self) -> Option<usize> {
+            self.take(1).map(|b| usize::from(b[0]))
+        }
+        fn u16(&mut self) -> Option<usize> {
+            self.take(2)
+                .map(|b| usize::from(u16::from_be_bytes([b[0], b[1]])))
+        }
+        fn u24(&mut self) -> Option<usize> {
+            self.take(3)
+                .map(|b| (usize::from(b[0]) << 16) | (usize::from(b[1]) << 8) | usize::from(b[2]))
+        }
+    }
+    let mut c = Cur(record);
+    if c.u8()? != 0x16 {
+        return None; // not a handshake record
+    }
+    c.take(2)?; // record version
+    let rec_len = c.u16()?;
+    let mut h = Cur(c.take(rec_len)?);
+    if h.u8()? != 1 {
+        return None; // not a ClientHello
+    }
+    let hs_len = h.u24()?;
+    let mut b = Cur(h.take(hs_len)?);
+    b.take(2 + 32)?; // client version, random
+    let sid = b.u8()?;
+    b.take(sid)?;
+    let cs = b.u16()?;
+    b.take(cs)?;
+    let comp = b.u8()?;
+    b.take(comp)?;
+    let ext_len = b.u16()?;
+    let mut e = Cur(b.take(ext_len)?);
+    while let (Some(kind), Some(len)) = (e.u16(), e.u16()) {
+        let body = e.take(len)?;
+        if kind == 0 {
+            let mut n = Cur(body);
+            let list = n.u16()?;
+            let mut l = Cur(n.take(list)?);
+            while let (Some(t), Some(nl)) = (l.u8(), l.u16()) {
+                let name = l.take(nl)?;
+                if t == 0 {
+                    return String::from_utf8(name.to_vec())
+                        .ok()
+                        .map(|s| s.to_ascii_lowercase());
+                }
+            }
+            return None;
+        }
+    }
+    None
+}
+
+/// Does the first TLS record name `host`? With the check on, a missing or different name is a mismatch.
+pub fn sni_matches(host: &str, record: &[u8]) -> bool {
+    parse_sni(record).is_some_and(|n| n == host)
+}
+
+/// Read one whole TLS record (header plus body) from the guest, at most `MAX_HELLO` bytes.
+fn read_record(s: &mut TcpStream) -> Option<Vec<u8>> {
+    let mut buf = vec![0u8; 5];
+    s.read_exact(&mut buf).ok()?;
+    let len = usize::from(u16::from_be_bytes([buf[3], buf[4]]));
+    if buf[0] != 0x16 || len == 0 || len > MAX_HELLO {
+        return Some(buf); // not a handshake record we can judge: the caller refuses it
+    }
+    buf.resize(5 + len, 0);
+    s.read_exact(&mut buf[5..]).ok()?;
+    Some(buf)
 }
 
 fn relay(mut from: TcpStream, mut to: TcpStream, counter: Arc<Mutex<u64>>) {
@@ -400,11 +492,42 @@ fn handle(mut guest: TcpStream, cfg: &Listener, open: &AtomicUsize) {
         );
         return;
     };
+    let mut up = up;
+    let first = if cfg.check_sni {
+        // the client speaks only after the 200: answer, read its first record, and judge it before one byte goes upstream
+        if guest
+            .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+            .is_err()
+        {
+            open.fetch_sub(1, Ordering::SeqCst);
+            return;
+        }
+        match read_record(&mut guest) {
+            Some(rec) if sni_matches(&host, &rec) => Some(rec),
+            _ => {
+                (cfg.log)(deny_line(
+                    now(),
+                    &cfg.group,
+                    &host,
+                    ALLOWED_PORT,
+                    Reason::SniMismatch,
+                    &peer,
+                ));
+                open.fetch_sub(1, Ordering::SeqCst);
+                return;
+            }
+        }
+    } else {
+        None
+    };
     let _ = guest.set_read_timeout(None);
-    if guest
-        .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
-        .is_ok()
-    {
+    let said = match &first {
+        Some(rec) => up.write_all(rec).is_ok(),
+        None => guest
+            .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+            .is_ok(),
+    };
+    if said {
         let (up_bytes, down_bytes) = (Arc::new(Mutex::new(0u64)), Arc::new(Mutex::new(0u64)));
         if let (Ok(g2), Ok(u2)) = (guest.try_clone(), up.try_clone()) {
             let c = up_bytes.clone();
@@ -675,6 +798,7 @@ mod tests {
             log,
             max_tunnels: 8,
             idle: Duration::from_secs(5),
+            check_sni: false,
         };
         std::thread::spawn(move || serve(l, cfg));
         (addr, lines)
@@ -810,5 +934,69 @@ mod tests {
 "
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A minimal TLS 1.2 ClientHello record naming `sni` (or no server_name extension when `None`).
+    fn hello(sni: Option<&str>) -> Vec<u8> {
+        let mut ext = Vec::new();
+        if let Some(n) = sni {
+            let mut entry = vec![0u8];
+            entry.extend((n.len() as u16).to_be_bytes());
+            entry.extend(n.as_bytes());
+            let mut list = (entry.len() as u16).to_be_bytes().to_vec();
+            list.extend(entry);
+            ext.extend([0u8, 0]);
+            ext.extend((list.len() as u16).to_be_bytes());
+            ext.extend(list);
+        }
+        ext.extend([0u8, 0x0b, 0, 2, 1, 0]); // an unrelated extension after it
+        let mut body = vec![3u8, 3];
+        body.extend([7u8; 32]);
+        body.push(0); // session id
+        body.extend([0u8, 2, 0x13, 0x01]); // one cipher suite
+        body.extend([1u8, 0]); // compression
+        body.extend((ext.len() as u16).to_be_bytes());
+        body.extend(ext);
+        let mut hs = vec![1u8];
+        hs.extend(&(body.len() as u32).to_be_bytes()[1..]);
+        hs.extend(body);
+        let mut rec = vec![0x16u8, 3, 1];
+        rec.extend((hs.len() as u16).to_be_bytes());
+        rec.extend(hs);
+        rec
+    }
+
+    #[test]
+    fn the_sni_is_read_from_a_client_hello_and_compared_with_the_connect_host() {
+        let h = hello(Some("API.GitHub.com"));
+        assert_eq!(parse_sni(&h).as_deref(), Some("api.github.com"));
+        assert!(sni_matches("api.github.com", &h));
+        // known-bad controls: a different name (fronting), no name, not a hello, a cut-short record
+        assert!(!sni_matches("github.com", &h));
+        assert!(!sni_matches("api.github.com", &hello(None)));
+        assert!(!sni_matches("api.github.com", b"GET / HTTP/1.1\r\n\r\n"));
+        for cut in [0, 1, 4, 5, 9, 20, 60, h.len() - 1] {
+            assert_eq!(parse_sni(&h[..cut]), None, "cut at {cut}");
+        }
+    }
+
+    #[test]
+    fn a_hostile_hello_never_panics() {
+        let h = hello(Some("a.example.org"));
+        for i in 0..h.len() {
+            let mut x = h.clone();
+            x[i] = 0xff;
+            let _ = parse_sni(&x);
+            let mut y = h.clone();
+            y.truncate(i);
+            let _ = parse_sni(&y);
+        }
+    }
+
+    #[test]
+    fn a_hello_whose_name_is_not_the_connect_host_is_the_sni_mismatch_reason() {
+        assert_eq!(Reason::SniMismatch.as_str(), "sni-mismatch");
+        let line = deny_line(1, "g", "github.com", 443, Reason::SniMismatch, "10.0.0.2");
+        assert!(line.contains("reason=sni-mismatch"), "{line}");
     }
 }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! `spawn-egress`: the egress filtering proxy (`docs/RUNNER-NETWORK.md`, ROADMAP row 38), one listener per runner group.
 //!
-//! `spawn-egress --listen 10.77.0.1:3128 --group NAME [--allow host:443]... [--approved egress-approved.toml --repos O/a,O/b] --log deny.log`
+//! `spawn-egress --listen 10.77.0.1:3128 --group NAME [--allow host:443]... [--approved egress-approved.toml --repos O/a,O/b] [--check-sni] --log deny.log`
 //!
 //! It binds only a private IPv4 or loopback address (never `0.0.0.0`), allows the default hosts plus approved extras,
 //! answers `CONNECT host:443` and nothing else, and logs every refusal as one line. It does not elevate and creates nothing
@@ -25,6 +25,7 @@ fn main() -> ExitCode {
     let (mut listen, mut group, mut log, mut approved, mut repos) =
         (None, None, None, None, Vec::new());
     let mut allow: Vec<String> = Vec::new();
+    let mut check_sni = false;
     let mut i = 0;
     while i < args.len() {
         let v = args.get(i + 1).cloned();
@@ -35,6 +36,11 @@ fn main() -> ExitCode {
             ("--approved", Some(v)) => approved = Some(v),
             ("--repos", Some(v)) => repos = v.split(',').map(str::to_string).collect(),
             ("--allow", Some(v)) => allow.push(v),
+            ("--check-sni", _) => {
+                check_sni = true;
+                i += 1;
+                continue;
+            }
             _ => return usage(),
         }
         i += 2;
@@ -114,6 +120,7 @@ fn main() -> ExitCode {
         log: file_log(log.into(), 4 * 1024 * 1024),
         max_tunnels: 64,
         idle: Duration::from_secs(30),
+        check_sni,
     };
     serve(listener, cfg);
     ExitCode::SUCCESS
