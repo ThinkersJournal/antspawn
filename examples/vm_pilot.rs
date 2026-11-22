@@ -10,8 +10,13 @@
 
 use std::time::{Duration, Instant};
 
+use antspawn::adapter::dispatch::JitTransport;
+use antspawn::adapter::github::Secret;
 use antspawn::adapter::guest_credential;
-use antspawn::adapter::vm_backend::{ScriptHost, VmHost, VmHostConfig};
+use antspawn::adapter::vm_backend::{ScriptHost, VmHost, VmHostConfig, VmTransport};
+
+/// A made-up value shaped like a JIT config. Never a real one.
+const FAKE: &str = "RkFLRS1KSVQtQ09ORklHLU5PVC1SRUFMLTQyNDI0Mg==";
 use antspawn::hyperv::{PowerShell, Runner};
 
 fn main() {
@@ -63,11 +68,24 @@ fn main() {
                 "$ErrorActionPreference='Stop'\n{pre}Invoke-Command -VMName '{vm}' -Credential $cred -ScriptBlock {{ hostname }}\n"
             ))
         })
-        && step("wait_end(no runner, 20 s)", {
-            match host.wait_end(vm, Duration::from_secs(20)) {
-                Err(e) if e.contains("did not end in time") => Ok("timed out as expected".into()),
-                other => Err(format!("unexpected: {other:?}")),
-            }
+        && step("deliver a FAKE config, runner starts", {
+            let t = VmTransport {
+                runner: PowerShell,
+                guest_credential: cred.clone(),
+                runner_dir: r"C:\runner".into(),
+            };
+            t.deliver(vm, &Secret::new(FAKE.into()))
+                .map(|()| "started".into())
+        })
+        && step(
+            "wait_end with the real runner (fake config: it fails and exits)",
+            { host.wait_end(vm, Duration::from_secs(240)) },
+        )
+        && step("guest holds no trace of the fake config", {
+            let pre = guest_credential::credential_preamble(&cred).unwrap();
+            PowerShell.run(&format!(
+                "$ErrorActionPreference='Stop'\n{pre}Invoke-Command -VMName '{vm}' -Credential $cred -ArgumentList '{FAKE}' -ScriptBlock {{ param($f) $ErrorActionPreference='SilentlyContinue'; $hits = Get-ChildItem C:/runner, C:/Users, C:/ProgramData, C:/Windows/Temp -Recurse -File -Force -ErrorAction SilentlyContinue | Where-Object {{ $_.Length -lt 5MB }} | Select-String -SimpleMatch -Pattern $f -List -ErrorAction SilentlyContinue; 'files holding it: ' + @($hits).Count; $c = 'C:/Windows/Temp/antspawn-control.txt'; Set-Content -LiteralPath $c -Value $f; $ctl = Get-ChildItem C:/Windows/Temp -File -Force | Select-String -SimpleMatch -Pattern $f -List; Remove-Item -LiteralPath $c -Force; 'positive control (planted file) found: ' + @($ctl).Count; 'diag logs: ' + @(Get-ChildItem C:/runner/_diag -ErrorAction SilentlyContinue).Count }}\n"
+            ))
         });
     let d = step("destroy", host.destroy(vm).map(|()| String::new()));
     std::process::exit(i32::from(!(ok && d)));

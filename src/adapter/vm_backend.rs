@@ -18,8 +18,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
-use super::dispatch::RunnerBackend;
-use super::github::RunnerGroup;
+use super::dispatch::{JitTransport, RunnerBackend};
+use super::github::{RunnerGroup, Secret};
 use crate::broker_proto::{VM_PREFIX, valid_vm_id};
 use crate::hyperv::{Runner, quote};
 
@@ -274,6 +274,71 @@ impl<R: Runner + Send + Sync + 'static> VmHost for ScriptHost<R> {
     }
     fn destroy(&self, vm: &str) -> Result<(), String> {
         self.runner.run(&self.script_destroy(vm)?).map(|_| ())
+    }
+}
+
+/// The one-time runner registration into the guest, over PowerShell Direct (ROADMAP row 40; PM task 2026-11-22). The JIT config
+/// reaches the host PowerShell on its **stdin** and the guest as an `Invoke-Command` argument over the VM bus; there it becomes
+/// `ACTIONS_RUNNER_INPUT_JITCONFIG` in the one child that starts the runner, and the guest variable holding it is cleared at once.
+/// It is never in a script, a command line, a file, a log, a status file or the disk image, and an error never carries it.
+pub struct VmTransport<R: Runner + Send + Sync + 'static> {
+    pub runner: R,
+    /// The DPAPI file holding the guest Administrator password.
+    pub guest_credential: std::path::PathBuf,
+    /// The runner folder in the guest (the image's `C:\runner`, holding `run.cmd`).
+    pub runner_dir: String,
+}
+
+/// A JIT config is about 4 KiB; the same limits as `spawn-jit-shim`: non-empty, at most 64 KiB, base64 characters only.
+fn plausible_jit(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 64 * 1024
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'=' | b'-' | b'_'))
+}
+
+impl<R: Runner + Send + Sync + 'static> VmTransport<R> {
+    /// The script that takes the config from stdin. It holds no secret: only names and paths.
+    pub fn script_deliver(&self, vm: &str) -> Result<String, String> {
+        let n = named(vm)?;
+        let pre = crate::adapter::guest_credential::credential_preamble(&self.guest_credential)?;
+        let dir = quote(&self.runner_dir)?;
+        Ok(format!(
+            "$ErrorActionPreference='Stop'\n{pre}$j = [Console]::In.ReadToEnd().Trim()\n\
+             if (-not $j) {{ throw 'no JIT config on stdin' }}\n\
+             try {{\n\
+             \x20 Invoke-Command -VMName {n} -Credential $cred -ArgumentList $j,{dir} -ScriptBlock {{\n\
+             \x20   param($j, $dir)\n\
+             \x20   $psi = New-Object System.Diagnostics.ProcessStartInfo 'cmd.exe'\n\
+             \x20   $psi.Arguments = '/c run.cmd'\n\
+             \x20   $psi.WorkingDirectory = $dir\n\
+             \x20   $psi.UseShellExecute = $false\n\
+             \x20   $psi.EnvironmentVariables['ACTIONS_RUNNER_INPUT_JITCONFIG'] = $j\n\
+             \x20   $j = $null\n\
+             \x20   $p = [System.Diagnostics.Process]::Start($psi)\n\
+             \x20   $psi = $null\n\
+             \x20   'started'\n\
+             \x20 }}\n\
+             }} finally {{ $j = $null }}\n"
+        ))
+    }
+}
+
+impl<R: Runner + Send + Sync + 'static> JitTransport for VmTransport<R> {
+    fn deliver(&self, vm: &str, jit: &Secret) -> Result<(), String> {
+        if !plausible_jit(jit.expose()) {
+            return Err(
+                "the JIT config is empty, oversized or not base64; refused before it left the host"
+                    .into(),
+            );
+        }
+        let script = self.script_deliver(vm)?;
+        match self.runner.run_with_input(&script, jit.expose()) {
+            Ok(out) if out.trim() == "started" => Ok(()),
+            Ok(_) => Err("the guest did not confirm the runner started".into()),
+            // whatever the failure text says, it never carries the config
+            Err(e) => Err(e.replace(jit.expose(), "<redacted>")),
+        }
     }
 }
 
@@ -578,5 +643,97 @@ mod tests {
         h.wait_end("antspawn-run-g-0", Duration::from_secs(5))
             .unwrap();
         assert_eq!(h.runner.0.lock().unwrap().len(), 1);
+    }
+
+    // ---- the JIT transport ----
+
+    const JIT: &str = "eyJkb19ub3RfbG9nIjoiVEhJUy1JUy1BLUpJVC1TRUNSRVQifQ==";
+
+    /// Records the script and the stdin it was given; fails when told to, with the secret in its failure text (the worst case).
+    struct Spy {
+        seen: Mutex<Vec<(String, String)>>,
+        reply: Result<String, String>,
+    }
+    impl Runner for Spy {
+        fn run(&self, _: &str) -> Result<String, String> {
+            Err("no".into())
+        }
+        fn run_with_input(&self, script: &str, input: &str) -> Result<String, String> {
+            self.seen
+                .lock()
+                .unwrap()
+                .push((script.to_string(), input.to_string()));
+            self.reply.clone()
+        }
+    }
+    fn transport(reply: Result<String, String>) -> VmTransport<Spy> {
+        VmTransport {
+            runner: Spy {
+                seen: Mutex::new(Vec::new()),
+                reply,
+            },
+            guest_credential: std::path::PathBuf::from(
+                r"C:\Users\x\AppData\Local\antspawn\guest-credential.dpapi",
+            ),
+            runner_dir: r"C:\runner".into(),
+        }
+    }
+
+    #[test]
+    fn the_config_goes_on_stdin_and_in_no_script() {
+        let t = transport(Ok("started\r\n".into()));
+        t.deliver("antspawn-run-g-0", &Secret::new(JIT.into()))
+            .unwrap();
+        let seen = t.runner.seen.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        let (script, input) = &seen[0];
+        assert_eq!(input, JIT, "the config is the stdin");
+        assert!(!script.contains(JIT), "config in the script text");
+        assert!(!script.contains("-AsPlainText"), "{script}");
+        // control: the same check does see the config when it is present
+        assert!(format!("{script}{input}").contains(JIT));
+        assert!(
+            script.contains("[Console]::In.ReadToEnd()")
+                && script.contains("EnvironmentVariables['ACTIONS_RUNNER_INPUT_JITCONFIG']")
+                && script.contains("$j = $null"),
+            "{script}"
+        );
+    }
+
+    #[test]
+    fn a_failure_never_carries_the_config() {
+        let t = transport(Err(format!("powershell exited 1: bad value {JIT} here")));
+        let e = t
+            .deliver("antspawn-run-g-0", &Secret::new(JIT.into()))
+            .unwrap_err();
+        assert!(!e.contains(JIT) && e.contains("<redacted>"), "{e}");
+        // control: the unredacted failure did carry it
+        assert!(t.runner.reply.clone().unwrap_err().contains(JIT));
+    }
+
+    #[test]
+    fn an_unconfirmed_start_and_a_bad_config_are_refused() {
+        let t = transport(Ok(String::new()));
+        assert!(
+            t.deliver("antspawn-run-g-0", &Secret::new(JIT.into()))
+                .unwrap_err()
+                .contains("did not confirm")
+        );
+        for bad in ["", "has space", "line\nbreak", "q'uote"] {
+            let t = transport(Ok("started".into()));
+            let e = t
+                .deliver("antspawn-run-g-0", &Secret::new(bad.into()))
+                .unwrap_err();
+            assert!(e.contains("refused"), "{bad:?}: {e}");
+            assert!(
+                t.runner.seen.lock().unwrap().is_empty(),
+                "{bad:?} left the host"
+            );
+        }
+        assert!(
+            transport(Ok("started".into()))
+                .deliver("not-ours", &Secret::new(JIT.into()))
+                .is_err()
+        );
     }
 }
