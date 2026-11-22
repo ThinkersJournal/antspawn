@@ -279,29 +279,34 @@ impl<R: Runner> Driver for HyperV<R> {
     }
 }
 
-/// Runs scripts with `powershell.exe -NoProfile -NonInteractive -Command -`, script on stdin.
+/// Runs scripts with `powershell.exe -NoProfile -NonInteractive -EncodedCommand <base64 UTF-16LE>`. Not `-Command -` with the script
+/// on stdin: sent whole, a multi-line script there ends at once with exit 0 and no output (measured 2026-11-22: a readiness wait
+/// with a `while` returned in 0.6 s having done nothing; the same text piped line by line ran). The encoded script is on the command
+/// line, so a script must never carry a secret (none does: credentials are read from a DPAPI file inside the script).
 pub struct PowerShell;
+
+/// Longest encoded script: the Windows command line is 32767 characters.
+const MAX_ENCODED: usize = 30_000;
 
 impl Runner for PowerShell {
     fn run(&self, script: &str) -> Result<String, String> {
-        use std::io::Write;
+        use base64::Engine;
         use std::process::{Command, Stdio};
-        let mut child = Command::new("powershell.exe")
-            .args(["-NoProfile", "-NonInteractive", "-Command", "-"])
-            .stdin(Stdio::piped())
+        let utf16: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        let encoded = base64::engine::general_purpose::STANDARD.encode(utf16);
+        if encoded.len() > MAX_ENCODED {
+            return Err(format!(
+                "script too long for a command line ({} encoded characters)",
+                encoded.len()
+            ));
+        }
+        let out = Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-EncodedCommand", &encoded])
+            .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()
+            .output()
             .map_err(|e| format!("cannot start powershell.exe: {e}"))?;
-        child
-            .stdin
-            .take()
-            .ok_or("no stdin")?
-            .write_all(script.as_bytes())
-            .map_err(|e| format!("writing the script: {e}"))?;
-        let out = child
-            .wait_with_output()
-            .map_err(|e| format!("waiting: {e}"))?;
         if out.status.success() {
             Ok(String::from_utf8_lossy(&out.stdout).into_owned())
         } else {

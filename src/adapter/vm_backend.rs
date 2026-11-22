@@ -197,13 +197,20 @@ impl<R: Runner + Send + Sync + 'static> ScriptHost<R> {
         ))
     }
 
-    /// Poll the heartbeat until OK or `secs` pass (exit non-zero on timeout).
+    /// Poll the heartbeat until OK, then PowerShell Direct (with the DPAPI credential) until the guest answers a command: the heartbeat
+    /// comes up before the guest accepts a session (measured 2026-11-22), so only the second answer means `started` may deliver.
+    /// Exit non-zero if either does not arrive within `secs` in all.
     pub fn script_ready(&self, vm: &str, secs: u64) -> Result<String, String> {
         let n = named(vm)?;
+        let pre =
+            crate::adapter::guest_credential::credential_preamble(&self.cfg.guest_credential)?;
         Ok(format!(
-            "$ErrorActionPreference='Stop'\n$end = (Get-Date).AddSeconds({secs})\n\
+            "$ErrorActionPreference='Stop'\n{pre}$end = (Get-Date).AddSeconds({secs})\n\
              while ((Get-VMIntegrationService -VMName {n} -Name Heartbeat).PrimaryStatusDescription -ne 'OK') {{\n\
-             \x20 if ((Get-Date) -gt $end) {{ throw 'no heartbeat in time' }}\n  Start-Sleep -Seconds 1\n}}\n"
+             \x20 if ((Get-Date) -gt $end) {{ throw 'no heartbeat in time' }}\n  Start-Sleep -Seconds 1\n}}\n\
+             while ($true) {{\n\
+             \x20 try {{ if (Invoke-Command -VMName {n} -Credential $cred -ScriptBlock {{ 'up' }} -ErrorAction Stop) {{ break }} }} catch {{ }}\n\
+             \x20 if ((Get-Date) -gt $end) {{ throw 'the guest did not answer PowerShell Direct in time' }}\n  Start-Sleep -Seconds 2\n}}\n"
         ))
     }
 
