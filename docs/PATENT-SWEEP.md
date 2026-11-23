@@ -94,7 +94,7 @@ The PM read the claims on Google Patents (HTTP 200; the earlier 503 was transien
 
 | Patent | What its independent claims need | Idea | Read as |
 |---|---|---|---|
-| US11930045B1 | claims 1/11/21: an RPC from a sandboxed UDF, an overlay network with a secure egress path, a tunneling protocol, a network call over it | 10 | **needs more** (see below) |
+| US11930045B1 | claims 1/11/21: (a) an RPC related to a UDF executing in a sandbox process, (b) an overlay network giving a secure egress path, (c) a tunneling protocol with the UDF starting a network call over it | 10 | **outside as read** (PM reading below; no overlay, no UDF/RPC limb) |
 | US9386021B1 | a host with no network access, plus an auth token the host cannot read | 10 | outside as read **only if** the proxy is host-run and the host holds the policy (ours is both) |
 | US9930029B2 | a reversed RPC socket plus a CA certificate for the guest's request | 12 | outside as read **unless** per-guest CA certificates are issued (we issue none; no TLS interception) |
 | US20130036402A1 | hosted-build update and distribution | 11 | outside as read |
@@ -110,7 +110,15 @@ Source: `docs/RUNNER-NETWORK.md` ("The proxy"), design with a decision core unit
 - **Network shape:** the guest sits on a Hyper-V `Internal` switch (one /30 per guest) with IPv4 forwarding disabled and no NAT, so it has no route to anything but the host's own address. Windows Firewall on that interface admits only the proxy port. The guest has no DNS server; the host resolves.
 - **Where the policy lives:** the proxy is one host process (the broker's account) listening on the host side of each switch; one listener per group, the listener reached identifies the group, the allowlist is a host-side file the guest cannot read or name. The guest holds no token for the policy.
 - **Decision:** an exact host-name match of the `CONNECT` target against the group's list (default list plus approved per-project entries), port 443 only; otherwise a 403 and a log line.
-- **Plain statement for a reader:** the guest does not run an RPC, a UDF or a tunnel; it makes an ordinary proxy `CONNECT`. Against US11930045B1 claims 1/11/21, the elements to compare are (a) an RPC from a sandboxed UDF (ours: none, the guest runs a CI job), (b) an overlay network (ours: a plain internal switch, no overlay), (c) a tunneling protocol (ours: `CONNECT`, which is a proxy handshake that then relays bytes; whether that counts as a "tunneling protocol" in the claim's sense is the question for a person). **Verdict: NOT CLEARED; the open question is (c).**
-- **Residue on hostname validation:** the proxy compares the `CONNECT` name only; it does not check the TLS SNI (a later optional ClientHello check is described, not built). If that check is added, or the proxy resolves a name and compares addresses, re-read US10965716B2 and US10505985B1 first.
+- **Plain statement for a reader:** the guest does not run an RPC, a UDF or a tunnel; it makes an ordinary proxy `CONNECT`. Against US11930045B1 claims 1/11/21, the elements to compare are (a) an RPC from a sandboxed UDF (ours: none, the guest runs a CI job), (b) an overlay network (ours: a plain internal switch, no overlay), (c) a tunneling protocol (ours: `CONNECT`, which is a proxy handshake that then relays bytes; whether that counts as a "tunneling protocol" in the claim's sense is the question for a person). Whether `CONNECT` is a "tunneling protocol" does not settle it (see the PM reading below).
+- **Residue on hostname validation:** the proxy compares the `CONNECT` name only; by default it does not check the TLS SNI; an optional `--check-sni` (refuses a tunnel whose ClientHello names another host; measured on loopback 2026-11-22) exists in `spawn-egress` but is off in the stated design. If that check is added, or the proxy resolves a name and compares addresses, re-read US10965716B2 and US10505985B1 first.
 
 Re-sweep before: adding a virtual interface, encapsulation or overlay for guest traffic; issuing per-guest CA certificates or intercepting TLS; adding an SNI or resolved-address comparison.
+
+### PM reading of US11930045B1 against idea 10 (2026-11-23, relayed by pm-ants; closes the "needs a person" item)
+
+Claims 1/11/21 need all of: (a) an RPC related to a UDF executing in a sandbox process, (b) an **overlay network** giving a secure egress path, (c) a tunneling protocol with the UDF starting a network call over it. The stated idea 10 (CONNECT `host:443` only; no interface, encapsulation, overlay or CA; host-run proxy; exact-name match; no SNI check) has no overlay and no UDF/RPC limb: **outside as read**. Whether `CONNECT` is a "tunneling protocol" does not settle it.
+
+Limits: claim text only (Google Patents HTTP 200, 2026-11-23); no prosecution history or continuations; read against the stated design, not our code; research, not counsel. **Verdict stays NOT CLEARED.**
+
+**Reopen if** the design gains an overlay network, an encapsulating interface, or an RPC naming a user function. ROADMAP row 37 is otherwise closed on idea 10; USPTO ODP, WIPO and non-US searches remain unrun (row 20).
