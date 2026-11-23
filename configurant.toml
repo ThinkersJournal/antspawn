@@ -69,7 +69,7 @@ description = "Labels a workflow's runs-on must carry, all of them."
 key = "launcher"
 type = "string"
 required = true
-description = "The AntSpawn launcher that runs this group's jobs (account or windows-sandbox)."
+description = "The AntSpawn launcher that runs this group's jobs (account or hyperv-vm)."
 
 [[table.field]]
 key = "task"

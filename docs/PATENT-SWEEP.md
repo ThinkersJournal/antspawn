@@ -64,3 +64,12 @@ Everything in the Q1 to Q10 result lists that is not in the hits table was **not
 - **Re-sweep before** adding a one-time-token handshake or a request/validate step to the JIT listener (hit 1), writing the JIT value to a file (hit 2), or pre-creating VMs / a warm pool / a golden-image pre-start (hit 3).
 - Re-sweep when a capability family is added (for example GPU, Sandboxie, or any resolved secret), and at least yearly once released.
 - The Espacenet, USPTO and WIPO gaps above stay open; a stronger search should precede the first publish.
+
+## Addendum 2026-11-23: host-to-guest push over the VM bus (partial)
+
+New idea 9: the host hands a single-use runner config to a fresh VM over the Hyper-V VM bus (PowerShell Direct), on stdin, set only in the environment of the one runner child, never a file or argument. Read by the alarmant lane through Google Patents with no key (not legal advice; a person should confirm):
+
+- US20110197065A1 and US20140380441A1 (Accenture): both need a credential request from the VM over a network and a server-side one-time-string check; outside as read for a push with no request step.
+- US11537421B1 (Amazon): signing, not delivery; outside as read, needs more.
+- EP2783284B1 (Solano): registration/config analysis; outside as read.
+- **NOT done:** USPTO ODP claim 1 (no with-secret window used) and WIPO. Row 20 stays partial; the first-publish search is still owed.

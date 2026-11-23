@@ -194,7 +194,24 @@ fn adapter(
             ExitCode::from(3)
         });
     }
-    let report = command::check_with_key(&command::load_config(config)?, pem_key);
+    let cfg = command::load_config(config)?;
+    let mut report = command::check_with_key(&cfg, pem_key);
+    match command::load_egress(config, &cfg) {
+        Ok(groups) => report.lines.extend(
+            groups
+                .iter()
+                .map(antspawn::adapter::egress_policy::describe),
+        ),
+        Err(e) => report.problems.push(format!("egress: {e}")),
+    }
+    match command::load_vm_host(config, &cfg) {
+        Ok(Some(v)) => report.lines.push(format!(
+            "vm host: base {} (sha256 pinned), vm_dir {}, switch {}, {} MB, {} vCPU",
+            v.base, v.vm_dir, v.switch, v.memory_mb, v.vcpus
+        )),
+        Ok(None) => {}
+        Err(e) => report.problems.push(format!("vm host: {e}")),
+    }
     for l in &report.lines {
         println!("{l}");
     }
@@ -203,6 +220,12 @@ fn adapter(
     }
     Ok(if report.problems.is_empty() {
         ExitCode::SUCCESS
+    } else if report
+        .problems
+        .iter()
+        .any(|p| p.starts_with("guest credential:"))
+    {
+        ExitCode::from(2)
     } else {
         ExitCode::from(1)
     })

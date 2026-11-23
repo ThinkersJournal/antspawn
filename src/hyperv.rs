@@ -41,6 +41,15 @@ pub trait Runner {
     /// # Errors
     /// The process could not start, or exited non-zero (the text carries its stderr).
     fn run(&self, script: &str) -> Result<String, String>;
+
+    /// Like [`Runner::run`], and `input` reaches the script's standard input (a secret goes this way: never in the script text, an
+    /// argument or a file). A runner that cannot do this refuses.
+    ///
+    /// # Errors
+    /// As `run`, or the runner cannot pass input.
+    fn run_with_input(&self, _script: &str, _input: &str) -> Result<String, String> {
+        Err("this runner cannot pass input to a script".into())
+    }
 }
 
 /// Where the driver keeps things. Set by whoever starts the broker, never by a client.
@@ -279,26 +288,47 @@ impl<R: Runner> Driver for HyperV<R> {
     }
 }
 
-/// Runs scripts with `powershell.exe -NoProfile -NonInteractive -Command -`, script on stdin.
+/// Runs scripts with `powershell.exe -NoProfile -NonInteractive -EncodedCommand <base64 UTF-16LE>`. Not `-Command -` with the script
+/// on stdin: sent whole, a multi-line script there ends at once with exit 0 and no output (measured 2026-11-22: a readiness wait
+/// with a `while` returned in 0.6 s having done nothing; the same text piped line by line ran). The encoded script is on the command
+/// line, so a script must never carry a secret (none does: credentials are read from a DPAPI file inside the script).
 pub struct PowerShell;
 
-impl Runner for PowerShell {
-    fn run(&self, script: &str) -> Result<String, String> {
+/// Longest encoded script: the Windows command line is 32767 characters.
+const MAX_ENCODED: usize = 30_000;
+
+impl PowerShell {
+    fn exec(script: &str, input: Option<&str>) -> Result<String, String> {
+        use base64::Engine;
         use std::io::Write;
         use std::process::{Command, Stdio};
+        let utf16: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        let encoded = base64::engine::general_purpose::STANDARD.encode(utf16);
+        if encoded.len() > MAX_ENCODED {
+            return Err(format!(
+                "script too long for a command line ({} encoded characters)",
+                encoded.len()
+            ));
+        }
         let mut child = Command::new("powershell.exe")
-            .args(["-NoProfile", "-NonInteractive", "-Command", "-"])
-            .stdin(Stdio::piped())
+            .args(["-NoProfile", "-NonInteractive", "-EncodedCommand", &encoded])
+            .stdin(if input.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| format!("cannot start powershell.exe: {e}"))?;
-        child
-            .stdin
-            .take()
-            .ok_or("no stdin")?
-            .write_all(script.as_bytes())
-            .map_err(|e| format!("writing the script: {e}"))?;
+        if let Some(text) = input {
+            let mut stdin = child.stdin.take().ok_or("no stdin")?;
+            if let Err(e) = stdin.write_all(text.as_bytes()) {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("writing the input: {}", e.kind()));
+            }
+        }
         let out = child
             .wait_with_output()
             .map_err(|e| format!("waiting: {e}"))?;
@@ -311,6 +341,15 @@ impl Runner for PowerShell {
                 String::from_utf8_lossy(&out.stderr).trim()
             ))
         }
+    }
+}
+
+impl Runner for PowerShell {
+    fn run(&self, script: &str) -> Result<String, String> {
+        Self::exec(script, None)
+    }
+    fn run_with_input(&self, script: &str, input: &str) -> Result<String, String> {
+        Self::exec(script, Some(input))
     }
 }
 

@@ -60,6 +60,30 @@ pub fn load_config(path: &Path) -> Result<AdapterConfig, String> {
     super::config_file::load(&text, &path.display().to_string()).map_err(|e| e.to_string())
 }
 
+/// Where a config's egress approvals live: `egress-approved.toml` beside the config file.
+pub fn approvals_path(config: &Path) -> std::path::PathBuf {
+    config
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("egress-approved.toml")
+}
+
+/// Each group's effective egress list. A missing approvals file is an empty one: a group with no extras needs none,
+/// and a group with an extra is refused for want of its approval. An unreadable or malformed file is an error.
+pub fn load_egress(
+    config: &Path,
+    cfg: &AdapterConfig,
+) -> Result<Vec<super::egress_policy::GroupEgress>, String> {
+    let path = approvals_path(config);
+    let approvals = match std::fs::read_to_string(&path) {
+        Ok(t) => super::egress_policy::Approvals::from_toml(&t)
+            .map_err(|e| format!("{}: {e}", path.display()))?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Default::default(),
+        Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
+    };
+    super::egress_policy::effective(cfg, &approvals)
+}
+
 /// Can this adapter hand a JIT config to `launcher` today?
 fn runnable(launcher: &str) -> Result<(), String> {
     match launcher {
@@ -67,6 +91,10 @@ fn runnable(launcher: &str) -> Result<(), String> {
         "account" => Err(
             "the account launcher is Windows-only: this build cannot check or run it here; run `spawn adapter --check` on the Windows host"
                 .into(),
+        ),
+        "hyperv-vm" if cfg!(windows) => Ok(()),
+        "hyperv-vm" => Err(
+            "the hyperv-vm launcher is Windows-only: this build cannot check or run it here".into(),
         ),
         "windows-sandbox" => {
             Err("the windows-sandbox launcher is not used for runners: network-needing runners run in a VM behind a filtering proxy (CireSnave 2026-11-21; ROADMAP rows 38 to 44)".into())
@@ -101,6 +129,15 @@ pub fn check(cfg: &AdapterConfig, pem_key: bool) -> CheckReport {
                 g.labels.join(",")
             )),
             Err(why) => r.problems.push(format!("group `{}`: {why}", g.name)),
+        }
+    }
+    if cfg.groups.iter().any(|g| g.launcher == "hyperv-vm") {
+        match super::guest_credential::default_path()
+            .ok_or_else(|| "guest credential: LOCALAPPDATA is not set".to_string())
+            .and_then(|p| super::guest_credential::check(&p))
+        {
+            Ok(line) => r.lines.push(line),
+            Err(why) => r.problems.push(why),
         }
     }
     match check_key_path(&cfg.key_path, &[]) {
@@ -176,7 +213,10 @@ impl<B: RunnerBackend> RunnerBackend for Logged<B> {
 
 /// The routing dispatcher for `cfg`: one dispatcher per launcher some group names. Refuses (naming every
 /// group) if any group's launcher cannot take a config.
-pub fn router(cfg: &AdapterConfig) -> Result<RoutingDispatch, String> {
+pub fn router(
+    cfg: &AdapterConfig,
+    vm: Option<&super::vm_host_config::VmHostFile>,
+) -> Result<RoutingDispatch, String> {
     let bad: Vec<String> = cfg
         .groups
         .iter()
@@ -203,7 +243,41 @@ pub fn router(cfg: &AdapterConfig) -> Result<RoutingDispatch, String> {
             Box::new(SandboxDispatch::new(backend, transport)),
         )?;
     }
+    if cfg.groups.iter().any(|g| g.launcher == "hyperv-vm") {
+        let vm = vm.ok_or("a `hyperv-vm` group needs vm-host.toml")?;
+        let cred = super::guest_credential::default_path()
+            .ok_or("guest credential: LOCALAPPDATA is not set")?;
+        let backend = Logged(super::vm_backend::VmBackend::new(
+            super::vm_backend::ScriptHost {
+                runner: crate::hyperv::PowerShell,
+                cfg: vm.host(cred.clone()),
+            },
+            Duration::from_secs(cfg.job_timeout_s),
+            Duration::from_secs(vm.ready_s),
+        ));
+        let transport = super::vm_backend::VmTransport {
+            runner: crate::hyperv::PowerShell,
+            guest_credential: cred,
+            runner_dir: vm.runner_dir.clone(),
+        };
+        r = r.with(
+            "hyperv-vm",
+            Box::new(SandboxDispatch::new(backend, transport)),
+        )?;
+    }
     Ok(r)
+}
+
+/// The `vm-host.toml` beside `config` when some group uses the `hyperv-vm` launcher, else `None`.
+pub fn load_vm_host(
+    config: &Path,
+    cfg: &AdapterConfig,
+) -> Result<Option<super::vm_host_config::VmHostFile>, String> {
+    if cfg.groups.iter().any(|g| g.launcher == "hyperv-vm") {
+        super::vm_host_config::load(config).map(Some)
+    } else {
+        Ok(None)
+    }
 }
 
 /// Announces, before each dispatch, which job goes to which group and launcher. Holds no secret: the JIT
@@ -324,10 +398,12 @@ pub fn run(
     status: Option<&Path>,
 ) -> Result<bool, String> {
     let cfg = load_config(config)?;
+    load_egress(config, &cfg)?; // an unapproved egress entry stops the start, as `--check` reports it
+    let vm = load_vm_host(config, &cfg)?;
     // one adapter at a time: the lock sits beside the status file and is held until this process ends
     let _lock = status.map(super::status::Lock::acquire).transpose()?;
     let groups: Vec<String> = cfg.groups.iter().map(|g| g.name.clone()).collect();
-    let dispatch = router(&cfg)?;
+    let dispatch = router(&cfg, vm.as_ref())?;
     let keys = key_provider(&cfg.key_path, pem_key).map_err(|e| e.to_string())?;
     let github = HttpGithub::new(cfg.app_id, cfg.installation_id, keys);
     let ceiling = Duration::from_secs(cfg.job_timeout_s);
@@ -415,6 +491,37 @@ QUJD
         .unwrap()
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn a_hyperv_vm_group_needs_vm_host_toml_and_the_guest_credential() {
+        use super::super::vm_host_config::VmHostFile;
+        let c = cfg("hyperv-vm", "C:/k.pem");
+        // no vm-host.toml: start refuses, naming the file
+        let e = router(&c, None)
+            .err()
+            .expect("refused without vm-host.toml");
+        assert!(e.contains("vm-host.toml"), "{e}");
+        // with it, the group is routable (control: the same call refused above)
+        let vm = VmHostFile::from_toml(
+            r#"base = 'C:\b.vhdx'
+base_sha256 = "4E6F8F78DE851B9DCFB0685BBC5126E9726B63E0B74F3E34F8D8088E39EA6C0B"
+vm_dir = 'C:\vms'
+switch = "s"
+"#,
+        )
+        .unwrap();
+        assert!(router(&c, Some(&vm)).is_ok());
+        // and `--check` loads the file only for a group that uses the launcher
+        let conf = std::env::temp_dir().join(format!("antspawn-vmh-{}", std::process::id()));
+        std::fs::create_dir_all(&conf).unwrap();
+        let conf = conf.join("adapter.toml");
+        assert!(
+            load_vm_host(&conf, &c).is_err(),
+            "no file beside the config"
+        );
+        assert_eq!(load_vm_host(&conf, &cfg("account", "C:/k.pem")), Ok(None));
+    }
+
     #[test]
     fn a_sandbox_group_stops_check_and_start_naming_the_group_and_the_ruling() {
         let c = cfg("windows-sandbox", "C:/k.pem");
@@ -424,7 +531,7 @@ QUJD
                 .iter()
                 .any(|p| p.contains("`g`") && p.contains("VM"))
         );
-        let e = router(&c).err().expect("refused");
+        let e = router(&c, None).err().expect("refused");
         assert!(e.contains("`g`") && e.contains("VM"), "{e}");
     }
 
@@ -516,7 +623,7 @@ QUJD
     fn an_unknown_launcher_is_refused() {
         let c = cfg("naive", "C:/k.pem");
         assert!(
-            router(&c)
+            router(&c, None)
                 .err()
                 .unwrap()
                 .contains("unknown launcher `naive`")
@@ -530,7 +637,7 @@ QUJD
         let r = check(&c, true);
         assert!(r.problems.iter().any(|p| p.contains("not a file")), "{r:?}");
         assert!(r.lines.iter().any(|l| l.contains("launcher `account`")));
-        let dispatch = router(&c).expect("account is routable on Windows");
+        let dispatch = router(&c, None).expect("account is routable on Windows");
         assert!(!dispatch.busy());
         let exe = std::env::current_exe().unwrap();
         let ok = check(&cfg("account", &exe.display().to_string()), true);
@@ -567,5 +674,73 @@ QUJD
     fn a_relative_key_path_is_refused_by_check() {
         let r = check(&cfg("account", "rel/k.pem"), true);
         assert!(r.problems.iter().any(|p| p.starts_with("key_path")));
+    }
+
+    fn egress_cfg(extra: &str) -> AdapterConfig {
+        super::super::config_file::load(
+            &format!(
+                "org = \"O\"
+app_id = 1
+installation_id = 2
+key_path = 'k'
+job_timeout_s = 600
+
+[[group]]
+name = \"g\"
+repos = [\"O/a\"]
+labels = [\"antspawn\"]
+launcher = \"windows-sandbox\"
+{extra}"
+            ),
+            "t.toml",
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn egress_extras_need_the_approvals_file_beside_the_config() {
+        let dir = std::env::temp_dir().join(format!("antspawn-egress-cfg-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let conf = dir.join("adapter.toml");
+        let approvals = dir.join("egress-approved.toml");
+        let _ = std::fs::remove_file(&approvals);
+        assert_eq!(approvals_path(&conf), approvals);
+        // no extras: no file needed
+        assert_eq!(load_egress(&conf, &egress_cfg("")).unwrap().len(), 1);
+        // an extra with no file is refused (the known-bad control) ...
+        let c = egress_cfg(
+            "egress = [\"files.example.org:443\"]
+",
+        );
+        let e = load_egress(&conf, &c).unwrap_err();
+        assert!(e.contains("not approved"), "{e}");
+        // ... and passes once the file approves it for the group's repo
+        std::fs::write(
+            &approvals,
+            "[[approved]]
+host = \"files.example.org\"
+repo = \"O/a\"
+approved = \"board 1 / 2026-11-21\"
+reason = \"test\"
+",
+        )
+        .unwrap();
+        let g = load_egress(&conf, &c).unwrap();
+        assert!(g[0].policy.allows("files.example.org"));
+        assert!(crate::adapter::egress_policy::describe(&g[0]).contains("files.example.org:443"));
+        // a malformed file is an error naming it
+        std::fs::write(
+            &approvals,
+            "[[approved]]
+host = 1
+",
+        )
+        .unwrap();
+        assert!(
+            load_egress(&conf, &c)
+                .unwrap_err()
+                .contains("egress-approved.toml")
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
