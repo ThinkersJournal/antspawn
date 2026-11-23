@@ -73,3 +73,17 @@ New idea 9: the host hands a single-use runner config to a fresh VM over the Hyp
 - US11537421B1 (Amazon): signing, not delivery; outside as read, needs more.
 - EP2783284B1 (Solano): registration/config analysis; outside as read.
 - **NOT done:** USPTO ODP claim 1 (no with-secret window used) and WIPO. Row 20 stays partial; the first-publish search is still owed.
+
+## Addendum 2026-11-23: runner-VM path ideas (row 37, partial, claims UNREAD)
+
+Run by the antspawn lane, Claude Sonnet 5.5, keyless; not legal advice; a person should confirm. New ideas since the 0.0.47 sweep:
+
+10. A per-job runner VM on an internal switch with no route off the host, reaching the world only through a host proxy that accepts `CONNECT host:443` and decides on the host name against a per-group list; the listener reached identifies the group.
+11. A read-only base image with vendor files baked in; each job gets a disposable child disk, destroyed after the job.
+12. Host-to-guest push over the VM bus (idea 9, covered above), with a DPAPI-stored guest credential.
+
+Queries (Google Patents, WebSearch restricted to `patents.google.com`, 2026-11-23, 10 results each): Q12 idea 10 (internal switch, no route, allowlist CONNECT proxy, per-group listener); Q13 idea 11 (differencing disk per job, JIT runner); Q14 idea 9/12 (hypervisor-bus command, one-time credential on stdin). Q15 Espacenet/EPO domains for idea 10 returned **no Espacenet records** (only USPTO ppubs PDFs and arXiv papers).
+
+Closest titles seen, **claims NOT read** (patent-claims.py returned HTTP 503 on every request, retried with 8 s gaps): US11930045 (secure network access from sandboxed applications; egress policy as a list of allowed endpoints), US9386021B1 (restricting network access to untrusted VMs), US20130036402A1 (VMs to manage software builds; differencing disk), US9930029B2 (hypervisor back-door channel to a guest agent), US10965716 / US10505985 (hostname validation and policy evasion prevention). Each is `unread`, **not** cleared, and not "outside as read". Idea 10 needs more: US11930045 and the hostname-validation pair are the ones to read first.
+
+**NOT searched:** USPTO ODP (no with-secret window), WIPO, non-US filings, Espacenet (no results), any claim text above, ideas 2, 7, 8 again.
