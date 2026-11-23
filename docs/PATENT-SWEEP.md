@@ -87,3 +87,30 @@ Queries (Google Patents, WebSearch restricted to `patents.google.com`, 2026-11-2
 Closest titles seen, **claims NOT read** (patent-claims.py returned HTTP 503 on every request, retried with 8 s gaps): US11930045 (secure network access from sandboxed applications; egress policy as a list of allowed endpoints), US9386021B1 (restricting network access to untrusted VMs), US20130036402A1 (VMs to manage software builds; differencing disk), US9930029B2 (hypervisor back-door channel to a guest agent), US10965716 / US10505985 (hostname validation and policy evasion prevention). Each is `unread`, **not** cleared, and not "outside as read". Idea 10 needs more: US11930045 and the hostname-validation pair are the ones to read first.
 
 **NOT searched:** USPTO ODP (no with-secret window), WIPO, non-US filings, Espacenet (no results), any claim text above, ideas 2, 7, 8 again.
+
+## Addendum 2026-11-23 (later): claims read by the PM; idea 10 stated exactly (row 37, still open)
+
+The PM read the claims on Google Patents (HTTP 200; the earlier 503 was transient; relayed by pm-ants). Independent claims only. **Not done:** USPTO ODP, WIPO, non-US filings, prosecution history. Research, not counsel; a person should confirm. Kind codes corrected: **US11930045B1** and **US10505985B1** (not B2). Verdict for every row below stays **NOT CLEARED**.
+
+| Patent | What its independent claims need | Idea | Read as |
+|---|---|---|---|
+| US11930045B1 | claims 1/11/21: an RPC from a sandboxed UDF, an overlay network with a secure egress path, a tunneling protocol, a network call over it | 10 | **needs more** (see below) |
+| US9386021B1 | a host with no network access, plus an auth token the host cannot read | 10 | outside as read **only if** the proxy is host-run and the host holds the policy (ours is both) |
+| US9930029B2 | a reversed RPC socket plus a CA certificate for the guest's request | 12 | outside as read **unless** per-guest CA certificates are issued (we issue none; no TLS interception) |
+| US20130036402A1 | hosted-build update and distribution | 11 | outside as read |
+| US10965716B2, US10505985B1 | hostname validation | 10 | outside as read **unless** our allowlist resolves and compares hostnames (see the residue below) |
+
+Ideas 11 and 12 are outside as read. Idea 12 holds only while we never issue per-guest CAs.
+
+### Idea 10, stated exactly (what carries the guest's traffic)
+
+Source: `docs/RUNNER-NETWORK.md` ("The proxy"), design with a decision core unit-tested on loopback only; **not measured on a live guest**.
+
+- **Carrier: HTTP `CONNECT host:443` only.** Nothing else crosses: no virtual interface, no encapsulation, no overlay, no tunnel protocol of ours. The guest's tool sends `CONNECT name:443` to the proxy by IP literal (`HTTPS_PROXY`); the proxy answers, opens its own TCP connection to the target, and then copies bytes both ways. The TLS session is end to end between guest and target; the proxy never terminates it and holds no CA.
+- **Network shape:** the guest sits on a Hyper-V `Internal` switch (one /30 per guest) with IPv4 forwarding disabled and no NAT, so it has no route to anything but the host's own address. Windows Firewall on that interface admits only the proxy port. The guest has no DNS server; the host resolves.
+- **Where the policy lives:** the proxy is one host process (the broker's account) listening on the host side of each switch; one listener per group, the listener reached identifies the group, the allowlist is a host-side file the guest cannot read or name. The guest holds no token for the policy.
+- **Decision:** an exact host-name match of the `CONNECT` target against the group's list (default list plus approved per-project entries), port 443 only; otherwise a 403 and a log line.
+- **Plain statement for a reader:** the guest does not run an RPC, a UDF or a tunnel; it makes an ordinary proxy `CONNECT`. Against US11930045B1 claims 1/11/21, the elements to compare are (a) an RPC from a sandboxed UDF (ours: none, the guest runs a CI job), (b) an overlay network (ours: a plain internal switch, no overlay), (c) a tunneling protocol (ours: `CONNECT`, which is a proxy handshake that then relays bytes; whether that counts as a "tunneling protocol" in the claim's sense is the question for a person). **Verdict: NOT CLEARED; the open question is (c).**
+- **Residue on hostname validation:** the proxy compares the `CONNECT` name only; it does not check the TLS SNI (a later optional ClientHello check is described, not built). If that check is added, or the proxy resolves a name and compares addresses, re-read US10965716B2 and US10505985B1 first.
+
+Re-sweep before: adding a virtual interface, encapsulation or overlay for guest traffic; issuing per-guest CA certificates or intercepting TLS; adding an SNI or resolved-address comparison.
