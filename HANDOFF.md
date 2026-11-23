@@ -34,4 +34,4 @@ CireSnave 2026-11-21: "Get as much done per day as you can": pack the day's PR, 
 - `fetch` agents time out on amd.com: `curl -L -A Mozilla/5.0 -m 40` works.
 
 ## Timers
-No WAIT lines. On start run `lane-restart waits` and arm any it lists. The 2026-11-23 00:02Z WAKE is spent.
+No WAIT lines. 2026-11-23: row 37 run on pm-ants TASK: addendum committed on work-5 (2 commits, unpushed; rides the 11-24 00:05Z PR window), claims unread (Google Patents 503), ODP/WIPO not done; row 37 stays open. Next: retry `tools/patent-claims.py` on US11930045B2, US9386021B1, US20130036402A1, US9930029B2, US10965716B2. Mail wakes you.
