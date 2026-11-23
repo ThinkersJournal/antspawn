@@ -76,7 +76,7 @@ impl VmHostFile {
             }
         }
         for (k, v) in [("base", &self.base), ("vm_dir", &self.vm_dir)] {
-            if !Path::new(v).is_absolute() {
+            if !windows_absolute(v) {
                 return Err(format!("{k} must be an absolute path"));
             }
         }
@@ -117,6 +117,17 @@ pub fn load(config: &Path) -> Result<VmHostFile, String> {
         )
     })?;
     VmHostFile::from_toml(&text).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// These are Windows host paths, so judge them as such on every platform:
+/// a drive letter and separator (`C:\x`), or a UNC path (`\\host\share`).
+fn windows_absolute(v: &str) -> bool {
+    let b = v.as_bytes();
+    let drive = b.len() >= 3
+        && b[0].is_ascii_alphabetic()
+        && b[1] == b':'
+        && (b[2] == b'\\' || b[2] == b'/');
+    drive || v.starts_with("\\\\")
 }
 
 #[cfg(test)]
