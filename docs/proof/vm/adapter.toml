@@ -1,0 +1,17 @@
+# Adapter configuration for the FIRST LIVE VM job (PATH step 4; docs/RUNNER-VM-PATH.md, docs/RUNNER-NETWORK.md).
+# One group, one repo (antspawn-proof), launcher hyperv-vm: the runner registers inside a fresh Hyper-V VM and the VM is destroyed after one job.
+# Beside it: vm-host.toml (base image + pinned hash, vm_dir, switch). Nothing here is a secret: key_path is a path; the guest credential is a DPAPI file.
+# NOT run: needs the pool switches (ROADMAP row 39, elevated) and the egress proxy on 10.77.1.1:3128 first.
+org = "ThinkersJournal"
+app_id = 5441608
+installation_id = 174476958
+key_path = 'C:\Users\cires\AppData\Local\antspawn\github-app\antspawn-runner.key.dpapi'
+job_timeout_s = 900
+
+[[group]]
+name = "antspawn-vm"
+repos = ["ThinkersJournal/antspawn-proof"]
+labels = ["antspawn-vm"]
+launcher = "hyperv-vm"
+# one address per pool slot (a guest reaches only its own slot's host address); this first job uses slot 1 only
+egress_listen = ["10.77.1.1:3128"]
