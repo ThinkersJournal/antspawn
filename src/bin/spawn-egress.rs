@@ -15,13 +15,92 @@ use std::time::Duration;
 
 fn usage() -> ExitCode {
     eprintln!(
-        "usage: spawn-egress --listen <ip:port> --group <name> --log <file> [--allow host:443]... [--approved <egress-approved.toml> --repos O/a,O/b]\n  every --allow entry needs an approval in the file for each repo; the listen address must be a private IPv4 or loopback"
+        "usage: spawn-egress --config <adapter.toml> --log-dir <dir> [--check-sni]   (one listener per group with an egress_listen)
+       spawn-egress --listen <ip:port> --group <name> --log <file> [--allow host:443]... [--approved <egress-approved.toml> --repos O/a,O/b]\n  every --allow entry needs an approval in the file for each repo; the listen address must be a private IPv4 or loopback"
     );
     ExitCode::from(2)
 }
 
+fn args_has(flag: &str) -> bool {
+    std::env::args().any(|a| a == flag)
+}
+
+/// `spawn-egress --config <adapter.toml> --log-dir <dir> [--check-sni]`: one listener per group that has an
+/// `egress_listen`, each with that group's effective list (approvals enforced as `spawn adapter` enforces them).
+/// Fails closed: an unapproved entry, an unbindable address or a config with no listener starts nothing.
+fn from_config(args: &[String]) -> ExitCode {
+    let (mut config, mut dir, mut check_sni) = (None, None, false);
+    let mut i = 0;
+    while i < args.len() {
+        match (args[i].as_str(), args.get(i + 1)) {
+            ("--config", Some(v)) => config = Some(v.clone()),
+            ("--log-dir", Some(v)) => dir = Some(v.clone()),
+            ("--check-sni", _) => {
+                check_sni = true;
+                i += 1;
+                continue;
+            }
+            _ => return usage(),
+        }
+        i += 2;
+    }
+    let (Some(config), Some(dir)) = (config, dir) else {
+        return usage();
+    };
+    let config = std::path::PathBuf::from(config);
+    let loaded = antspawn::adapter::command::load_config(&config)
+        .and_then(|cfg| antspawn::adapter::command::load_egress(&config, &cfg).map(|g| (cfg, g)));
+    let (cfg, groups) = match loaded {
+        Ok(x) => x,
+        Err(e) => {
+            eprintln!("spawn-egress: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    let mut bound = Vec::new();
+    for (g, e) in cfg.groups.iter().zip(groups) {
+        let Some(l) = &g.egress_listen else { continue };
+        let listener = match TcpListener::bind(l.as_str()) {
+            Ok(l) => l,
+            Err(err) => {
+                eprintln!("spawn-egress: group {}: cannot bind {l}: {err}", g.name);
+                return ExitCode::from(1);
+            }
+        };
+        bound.push((g.name.clone(), l.clone(), listener, e.policy));
+    }
+    if bound.is_empty() {
+        eprintln!("spawn-egress: no group has an egress_listen");
+        return ExitCode::from(2);
+    }
+    let mut threads = Vec::new();
+    for (name, addr, listener, policy) in bound {
+        eprintln!("spawn-egress: group {name} on {addr}");
+        let log = file_log(
+            std::path::Path::new(&dir).join(format!("{name}.deny.log")),
+            4 * 1024 * 1024,
+        );
+        let cfg = Listener {
+            group: name,
+            policy,
+            log,
+            max_tunnels: 64,
+            idle: Duration::from_secs(30),
+            check_sni,
+        };
+        threads.push(std::thread::spawn(move || serve(listener, cfg)));
+    }
+    for t in threads {
+        let _ = t.join();
+    }
+    ExitCode::SUCCESS
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args_has("--config") {
+        return from_config(&std::env::args().skip(1).collect::<Vec<_>>());
+    }
     let (mut listen, mut group, mut log, mut approved, mut repos) =
         (None, None, None, None, Vec::new());
     let mut allow: Vec<String> = Vec::new();

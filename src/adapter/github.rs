@@ -144,6 +144,10 @@ pub struct RunnerGroup {
     /// of the default list. Each needs a named approval in `egress-approved.toml` (`docs/RUNNER-NETWORK.md`).
     #[serde(default)]
     pub egress: Vec<String>,
+    /// `ip:port` of this group's egress listener (the host address of its pool switch). A private IPv4 address or
+    /// loopback, never `0.0.0.0`; unique across groups. `spawn adapter --check` probes it.
+    #[serde(default)]
+    pub egress_listen: Option<String>,
 }
 
 /// The adapter's configuration (TOML, strict). Holds a key *path*, never a key.
@@ -191,6 +195,7 @@ impl AdapterConfig {
             return invalid("no [[group]] declared");
         }
         let (mut names, mut label_sets) = (BTreeSet::new(), BTreeSet::new());
+        let mut listens = BTreeSet::new();
         let (mut tasks, mut pipes) = (BTreeSet::new(), BTreeSet::new());
         for g in &self.groups {
             if g.name.trim().is_empty() || !names.insert(g.name.as_str()) {
@@ -240,6 +245,24 @@ impl AdapterConfig {
             for e in &g.egress {
                 if let Err(why) = super::egress_policy::entry_host(e) {
                     return invalid(format!("group `{}` egress: {why}", g.name));
+                }
+            }
+            if let Some(l) = &g.egress_listen {
+                match l.parse::<std::net::SocketAddr>() {
+                    Ok(a) if crate::egress::bindable(a.ip()) && a.port() != 0 => {
+                        if !listens.insert(a) {
+                            return invalid(format!(
+                                "group `{}` egress_listen `{l}` is another group's listener: one listener per group",
+                                g.name
+                            ));
+                        }
+                    }
+                    _ => {
+                        return invalid(format!(
+                            "group `{}` egress_listen `{l}` must be ip:port on a private IPv4 or loopback address (never 0.0.0.0)",
+                            g.name
+                        ));
+                    }
                 }
             }
             for r in &g.repos {

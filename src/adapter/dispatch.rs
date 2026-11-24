@@ -182,6 +182,7 @@ mod tests {
             task: None,
             pipe: None,
             egress: Vec::new(),
+            egress_listen: None,
         }
     }
 

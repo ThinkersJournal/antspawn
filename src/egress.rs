@@ -562,6 +562,40 @@ pub fn bindable(ip: IpAddr) -> bool {
     }
 }
 
+/// What probing a group's listener found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Probe {
+    /// Answered `403` to a `CONNECT` for a name no list holds, as a filtering listener must.
+    Filtering,
+    /// Nothing answered at the address (the proxy is not running).
+    Down(String),
+    /// Something answered, but not with the refusal: not our proxy, or one that does not filter.
+    Wrong(String),
+}
+
+/// Probe the listener at `addr`: send `CONNECT` for a name on no list and expect the `403` refusal. Sends no byte
+/// upstream (the refusal comes before any connection), so it needs no network beyond the listener.
+pub fn probe(addr: SocketAddr, timeout: Duration) -> Probe {
+    let mut s = match TcpStream::connect_timeout(&addr, timeout) {
+        Ok(s) => s,
+        Err(e) => return Probe::Down(e.to_string()),
+    };
+    let _ = s.set_read_timeout(Some(timeout));
+    let req = b"CONNECT probe.not-on-any-list.invalid:443 HTTP/1.1\r\nHost: probe.not-on-any-list.invalid:443\r\n\r\n";
+    if let Err(e) = s.write_all(req) {
+        return Probe::Wrong(format!("write failed: {e}"));
+    }
+    let mut buf = [0u8; 64];
+    match s.read(&mut buf) {
+        Ok(n) if buf[..n].starts_with(b"HTTP/1.1 403") => Probe::Filtering,
+        Ok(n) => Probe::Wrong(format!(
+            "answered `{}`",
+            String::from_utf8_lossy(&buf[..n.min(24)]).trim()
+        )),
+        Err(e) => Probe::Wrong(format!("no answer: {e}")),
+    }
+}
+
 /// A [`Log`] that appends lines to `path`; when the file passes `cap` bytes it is renamed to `path.1` (replacing the
 /// previous one) and a new file starts. Write failures are swallowed: the proxy must not stop because its log did.
 pub fn file_log(path: std::path::PathBuf, cap: u64) -> Log {
@@ -998,5 +1032,35 @@ mod tests {
         assert_eq!(Reason::SniMismatch.as_str(), "sni-mismatch");
         let line = deny_line(1, "g", "github.com", 443, Reason::SniMismatch, "10.0.0.2");
         assert!(line.contains("reason=sni-mismatch"), "{line}");
+    }
+
+    #[test]
+    fn probe_finds_a_filtering_listener_and_not_a_dead_or_open_one() {
+        let (proxy, _lines) = start(pol());
+        assert_eq!(probe(proxy, Duration::from_secs(5)), Probe::Filtering);
+        // control: nothing listening is Down
+        let dead = {
+            let l = TcpListener::bind("127.0.0.1:0").unwrap();
+            l.local_addr().unwrap()
+        };
+        assert!(matches!(
+            probe(dead, Duration::from_secs(2)),
+            Probe::Down(_)
+        ));
+        // known-bad: a "proxy" that lets everything through (answers 200) must not pass as filtering
+        let open = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = open.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for c in open.incoming() {
+                let mut c = c.unwrap();
+                let mut b = [0u8; 256];
+                let _ = c.read(&mut b);
+                let _ = c.write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n");
+            }
+        });
+        assert!(matches!(
+            probe(addr, Duration::from_secs(5)),
+            Probe::Wrong(_)
+        ));
     }
 }
