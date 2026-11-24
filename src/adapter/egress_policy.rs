@@ -162,33 +162,37 @@ pub fn listener_report(
 ) -> (Vec<String>, Vec<String>) {
     let (mut lines, mut problems) = (Vec::new(), Vec::new());
     for g in &cfg.groups {
-        let Some(l) = &g.egress_listen else {
+        if g.egress_listen.is_empty() {
             lines.push(format!(
                 "group `{}`: no egress_listen, nothing to probe",
                 g.name
             ));
-            continue;
-        };
-        let Ok(addr) = l.parse::<std::net::SocketAddr>() else {
-            problems.push(format!(
-                "group `{}`: egress_listen `{l}` is not ip:port",
-                g.name
-            ));
-            continue;
-        };
-        match probe(addr) {
+        }
+        for (slot, l) in g.egress_listen.iter().enumerate() {
+            let Ok(addr) = l.parse::<std::net::SocketAddr>() else {
+                problems.push(format!(
+                    "group `{}`: egress_listen `{l}` is not ip:port",
+                    g.name
+                ));
+                continue;
+            };
+            match probe(addr) {
             Probe::Filtering => lines.push(format!(
-                "group `{}`: egress listener {addr} answers 403 to a name on no list",
-                g.name
+                "group `{}` slot {}: egress listener {addr} answers 403 to a name on no list",
+                g.name,
+                slot + 1
             )),
             Probe::Down(why) => problems.push(format!(
-                "group `{}`: egress listener {addr} is down ({why}); start spawn-egress for this group",
-                g.name
+                "group `{}` slot {}: egress listener {addr} is down ({why}); start spawn-egress for this group",
+                g.name,
+                slot + 1
             )),
             Probe::Wrong(why) => problems.push(format!(
-                "group `{}`: egress listener {addr} is not a filtering proxy ({why})",
-                g.name
+                "group `{}` slot {}: egress listener {addr} is not a filtering proxy ({why})",
+                g.name,
+                slot + 1
             )),
+        }
         }
     }
     (lines, problems)
@@ -333,7 +337,7 @@ launcher = "windows-sandbox"
     }
 
     fn listen_cfg(listen: &str) -> AdapterConfig {
-        cfg(&format!("egress_listen = \"{listen}\""))
+        cfg(&format!("egress_listen = [\"{listen}\"]"))
     }
 
     #[test]
@@ -366,7 +370,7 @@ name = \"g\"
 repos = [\"O/a\"]
 labels = [\"x\"]
 launcher = \"windows-sandbox\"
-egress_listen = \"10.77.0.1:3128\"
+egress_listen = [\"10.77.0.1:3128\"]
 ",
         );
         assert!(ok.is_ok(), "{ok:?}");
@@ -388,7 +392,7 @@ name = \"g\"
 repos = [\"O/a\"]
 labels = [\"x\"]
 launcher = \"windows-sandbox\"
-egress_listen = \"{bad}\"
+egress_listen = [\"{bad}\"]
 "
             ));
             assert!(r.is_err(), "{bad} was accepted");
@@ -403,19 +407,55 @@ name = \"g\"
 repos = [\"O/a\"]
 labels = [\"x\"]
 launcher = \"windows-sandbox\"
-egress_listen = \"10.77.0.1:3128\"
+egress_listen = [\"10.77.0.1:3128\"]
 [[group]]
 name = \"h\"
 repos = [\"O/a\"]
 labels = [\"y\"]
 launcher = \"windows-sandbox\"
-egress_listen = \"10.77.0.1:3128\"
+egress_listen = [\"10.77.0.1:3128\"]
 ";
         assert!(
             AdapterConfig::from_toml(two)
                 .unwrap_err()
                 .to_string()
-                .contains("one listener per group")
+                .contains("already used")
         );
+    }
+
+    #[test]
+    fn two_slots_of_one_group_need_different_addresses() {
+        let head = "org = \"O\"
+app_id = 1
+installation_id = 2
+key_path = \"k\"
+job_timeout_s = 60
+[[group]]
+name = \"g\"
+repos = [\"O/a\"]
+labels = [\"x\"]
+launcher = \"windows-sandbox\"
+";
+        let same = AdapterConfig::from_toml(&format!(
+            "{head}egress_listen = [\"10.77.1.1:3128\", \"10.77.1.1:3128\"]
+"
+        ));
+        assert!(same.unwrap_err().to_string().contains("already used"));
+        // control: two different slot addresses of one group load, and are probed once each
+        let c = AdapterConfig::from_toml(&format!(
+            "{head}egress_listen = [\"10.77.1.1:3128\", \"10.77.2.1:3128\"]
+"
+        ))
+        .unwrap();
+        let seen = std::cell::RefCell::new(Vec::new());
+        let (l, p) = listener_report(&c, &|a| {
+            seen.borrow_mut().push(a);
+            Probe::Filtering
+        });
+        assert!(
+            p.is_empty() && l.len() == 2 && seen.borrow().len() == 2,
+            "{l:?}"
+        );
+        assert!(l[0].contains("slot 1") && l[1].contains("slot 2"), "{l:?}");
     }
 }

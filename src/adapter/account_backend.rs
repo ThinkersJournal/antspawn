@@ -270,7 +270,7 @@ mod tests {
             task: Some("t".into()),
             pipe: Some("p".into()),
             egress: Vec::new(),
-            egress_listen: None,
+            egress_listen: Vec::new(),
         }
     }
 

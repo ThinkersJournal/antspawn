@@ -144,10 +144,11 @@ pub struct RunnerGroup {
     /// of the default list. Each needs a named approval in `egress-approved.toml` (`docs/RUNNER-NETWORK.md`).
     #[serde(default)]
     pub egress: Vec<String>,
-    /// `ip:port` of this group's egress listener (the host address of its pool switch). A private IPv4 address or
-    /// loopback, never `0.0.0.0`; unique across groups. `spawn adapter --check` probes it.
+    /// `ip:port` of the egress listener of each of this group's slots (the host address of that slot's pool switch;
+    /// a guest reaches only its own slot's address). One allow list per group, one listener per slot. Each is a private
+    /// IPv4 address or loopback, never `0.0.0.0`, and unique across the whole config. `spawn adapter --check` probes each.
     #[serde(default)]
-    pub egress_listen: Option<String>,
+    pub egress_listen: Vec<String>,
 }
 
 /// The adapter's configuration (TOML, strict). Holds a key *path*, never a key.
@@ -247,12 +248,12 @@ impl AdapterConfig {
                     return invalid(format!("group `{}` egress: {why}", g.name));
                 }
             }
-            if let Some(l) = &g.egress_listen {
+            for l in &g.egress_listen {
                 match l.parse::<std::net::SocketAddr>() {
                     Ok(a) if crate::egress::bindable(a.ip()) && a.port() != 0 => {
                         if !listens.insert(a) {
                             return invalid(format!(
-                                "group `{}` egress_listen `{l}` is another group's listener: one listener per group",
+                                "group `{}` egress_listen `{l}` is already used by another slot: every slot's listener address is its own",
                                 g.name
                             ));
                         }

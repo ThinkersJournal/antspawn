@@ -33,11 +33,14 @@
 param(
     [switch]$Apply,
     [switch]$Undo,
+    # Read-only: print what -Undo would remove, as found on this machine. Needs no elevation, changes nothing.
+    [switch]$UndoDryRun,
     [string]$RunnerUser = 'antspawn-run',
     [string]$LauncherUser = "$env:USERDOMAIN\$env:USERNAME"
 )
 $ErrorActionPreference = 'Stop'
 if ($Apply -and $Undo) { throw 'Choose -Apply or -Undo, not both.' }
+if ($UndoDryRun -and ($Apply -or $Undo)) { throw '-UndoDryRun stands alone.' }
 $Broker = 'antspawn-v0-broker'
 $BrokerDescription = 'AntSpawn V0 broker. Remove: broker-v0.ps1 -Undo'
 $Dir = Join-Path $env:ProgramData 'antspawn-v0'
@@ -45,6 +48,26 @@ $Res = Join-Path $Dir 'results'
 $SwitchName = 'antspawn-v0-sw'
 $HostIp = '10.77.0.1'
 $Live = $Apply -or $Undo
+if ($UndoDryRun) {
+    Write-Host 'mode: UNDO DRY RUN (read-only; nothing is changed)'
+    foreach ($t in 'AntSpawnV0Probe', 'AntSpawnV0Listen') {
+        $x = Get-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue
+        Write-Host ("FOUND  task {0}: {1}" -f $t, $(if ($x) { "present, $($x.State); -Undo stops and unregisters it" } else { 'absent' }))
+    }
+    $vms = @(Get-VM -Name 'antspawn-v0-*' -ErrorAction SilentlyContinue)
+    Write-Host ("FOUND  VMs antspawn-v0-*: {0}{1}" -f $vms.Count, $(if ($vms.Count) { ' (' + (($vms | ForEach-Object Name) -join ', ') + '; -Undo turns off and removes them)' } else { '' }))
+    $sw = @(Get-VMSwitch -Name $SwitchName -ErrorAction SilentlyContinue)
+    Write-Host ("FOUND  switch {0}: {1}; -Undo removes it" -f $SwitchName, $(if ($sw.Count) { "present ($($sw.Count))" } else { 'absent' }))
+    $ip = @(Get-NetIPAddress -IPAddress $HostIp -ErrorAction SilentlyContinue)
+    Write-Host ("FOUND  address {0}: {1}" -f $HostIp, $(if ($ip.Count) { "on $($ip[0].InterfaceAlias); -Undo removes it" } else { 'absent' }))
+    $u = Get-LocalUser -Name $Broker -ErrorAction SilentlyContinue
+    Write-Host ("FOUND  user {0}: {1}" -f $Broker, $(if ($u) { "present, Enabled=$($u.Enabled); -Undo removes it, its Hyper-V Administrators membership and its batch right" } else { 'absent' }))
+    $m = @(Get-LocalGroupMember -SID 'S-1-5-32-578' -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*$Broker" })
+    Write-Host ("FOUND  Hyper-V Administrators membership: {0}" -f $(if ($m.Count) { 'yes' } else { 'no' }))
+    Write-Host ("FOUND  folder {0}: {1}" -f $Dir, $(if (Test-Path -LiteralPath $Dir) { 'present; -Undo deletes it' } else { 'absent' }))
+    Write-Host 'LEAVES every other account, switch, VM, task and firewall rule. The batch-logon right is not read here (needs elevation); -Undo reads it.'
+    return
+}
 # Every string handed to the account cmdlets, against the limits those cmdlets enforce. A dry run never
 # calls them, so this is what makes the dry run catch an over-long value (New-LocalUser -Description
 # is limited to 48, and a 64-character one stopped the first -Apply). Limits: SAM account name 20,

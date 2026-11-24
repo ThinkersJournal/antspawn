@@ -15,7 +15,7 @@ use std::time::Duration;
 
 fn usage() -> ExitCode {
     eprintln!(
-        "usage: spawn-egress --config <adapter.toml> --log-dir <dir> [--check-sni]   (one listener per group with an egress_listen)
+        "usage: spawn-egress --config <adapter.toml> --log-dir <dir> [--check-sni]   (one allow list per group, one listener per slot address in its egress_listen)
        spawn-egress --listen <ip:port> --group <name> --log <file> [--allow host:443]... [--approved <egress-approved.toml> --repos O/a,O/b]\n  every --allow entry needs an approval in the file for each repo; the listen address must be a private IPv4 or loopback"
     );
     ExitCode::from(2)
@@ -25,8 +25,8 @@ fn args_has(flag: &str) -> bool {
     std::env::args().any(|a| a == flag)
 }
 
-/// `spawn-egress --config <adapter.toml> --log-dir <dir> [--check-sni]`: one listener per group that has an
-/// `egress_listen`, each with that group's effective list (approvals enforced as `spawn adapter` enforces them).
+/// `spawn-egress --config <adapter.toml> --log-dir <dir> [--check-sni]`: one listener per address in a group's
+/// `egress_listen` (one per slot), each with that group's effective list (approvals enforced as `spawn adapter` enforces them).
 /// Fails closed: an unapproved entry, an unbindable address or a config with no listener starts nothing.
 fn from_config(args: &[String]) -> ExitCode {
     let (mut config, mut dir, mut check_sni) = (None, None, false);
@@ -59,27 +59,35 @@ fn from_config(args: &[String]) -> ExitCode {
     };
     let mut bound = Vec::new();
     for (g, e) in cfg.groups.iter().zip(groups) {
-        let Some(l) = &g.egress_listen else { continue };
-        let listener = match TcpListener::bind(l.as_str()) {
-            Ok(l) => l,
-            Err(err) => {
-                eprintln!("spawn-egress: group {}: cannot bind {l}: {err}", g.name);
-                return ExitCode::from(1);
-            }
-        };
-        bound.push((g.name.clone(), l.clone(), listener, e.policy));
+        for l in &g.egress_listen {
+            let listener = match TcpListener::bind(l.as_str()) {
+                Ok(l) => l,
+                Err(err) => {
+                    eprintln!("spawn-egress: group {}: cannot bind {l}: {err}", g.name);
+                    return ExitCode::from(1);
+                }
+            };
+            bound.push((g.name.clone(), l.clone(), listener, e.policy.clone()));
+        }
     }
     if bound.is_empty() {
         eprintln!("spawn-egress: no group has an egress_listen");
         return ExitCode::from(2);
     }
+    // one allow list per group, one listener per slot; a group's slots share its deny log
+    let mut logs = std::collections::BTreeMap::new();
     let mut threads = Vec::new();
     for (name, addr, listener, policy) in bound {
-        eprintln!("spawn-egress: group {name} on {addr}");
-        let log = file_log(
-            std::path::Path::new(&dir).join(format!("{name}.deny.log")),
-            4 * 1024 * 1024,
-        );
+        eprintln!("spawn-egress: group {name} slot listener on {addr}");
+        let log = logs
+            .entry(name.clone())
+            .or_insert_with(|| {
+                file_log(
+                    std::path::Path::new(&dir).join(format!("{name}.deny.log")),
+                    4 * 1024 * 1024,
+                )
+            })
+            .clone();
         let cfg = Listener {
             group: name,
             policy,
