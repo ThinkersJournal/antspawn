@@ -18,7 +18,7 @@ The undo scripts for the runner accounts (`ghr-spawn1`, `ghr-spawn2`) are writte
 | | |
 |---|---|
 | Command | `& "$s\broker-v0.ps1" -Undo` |
-| Dry run | `scripts\broker-v0.ps1` with no flag prints the *apply* plan only; **`-Undo` has no dry run** (it needs elevation to read). Read-only state today: user `antspawn-v0-broker` Enabled, member of `Hyper-V Administrators`, tasks `AntSpawnV0Probe` and `AntSpawnV0Listen` Ready, switch `antspawn-v0-sw` with `10.77.0.1` (all read 2026-11-24). |
+| Dry run (ran) | `& "$s\broker-v0.ps1" -UndoDryRun` (new, read-only, no elevation): found both tasks Ready, 0 VMs, switch `antspawn-v0-sw` holding `10.77.0.1`, user `antspawn-v0-broker` Enabled and in `Hyper-V Administrators`, folder `C:\ProgramData\antspawn-v0`. The batch right is not read unelevated; `-Undo` reads it. (`broker-v0.ps1` with no flag prints the *apply* plan.) |
 | Removes | both tasks, any `antspawn-v0-*` VM/switch/disks, the 10.77.0.1 address, the group membership and batch right, the user, `%ProgramData%\antspawn-v0`; reads back PASS/FAIL |
 | Leaves | every other account, switch, VM and rule |
 
@@ -31,7 +31,7 @@ The undo scripts for the runner accounts (`ghr-spawn1`, `ghr-spawn2`) are writte
 | Changes | 4 Internal switches, a /30 host address each, `Set-NetIPInterface -Forwarding Disabled`, and per switch three inbound **Block** rules bound to its interface: TCP on every port except 3128 (`1-3127,3129-65535`), UDP, ICMPv4. (Windows Firewall cannot say "block all but one port" and a Block beats an Allow, hence ranges.) State in `%ProgramData%\antspawn-pool\state.json` (Administrators + SYSTEM). Reads each slot back and stops at the first mismatch |
 | Undo | `& "$s\broker-pool.ps1" -Undo` removes only what `state.json` names, reads back |
 | Not exercised by the dry run | `New-VMSwitch`, the address, `New-NetFirewallRule -InterfaceAlias` on a fresh interface, the port-filter read-back. **`-ProxyPort` is new in this branch: UNRUN beyond parsing** |
-| Design point for the PM | the proxy's listener for a group is `10.77.i.1:3128` of ONE slot, but a guest reaches only its own slot's host address. So a group's `egress_listen` is per slot, or one listener per slot sharing the group's list. Decide before the first guest run (the config has one `egress_listen` per group today) |
+| Listener per slot (PM decision 2026-11-24) | a guest reaches only its own slot's `10.77.i.1`, so the listener is per **slot** and the allow list per **group**: `egress_listen = ["10.77.1.1:3128", "10.77.2.1:3128"]` on a group (one address per slot, unique across the config); `spawn-egress --config` starts one listener per address with the group's one list; `--check` probes every slot |
 
 ## 3. Proxy and scan (no elevation)
 
@@ -39,7 +39,7 @@ The undo scripts for the runner accounts (`ghr-spawn1`, `ghr-spawn2`) are writte
 
 ## 4. Row 42 (PowerShell Direct as the broker account)
 
-CireSnave ruled the broker runs as `cires` (board 483, "C"), and `cires` is in `Hyper-V Administrators`. The V7 paste (`scripts/broker-account.ps1`, account `antspawn-broker`) was for a *dedicated* account that ruling superseded. PowerShell Direct, `New-VM` from a differencing child, boot-to-answer time (about 12 s) and guest start/stop are already run as `cires`, non-elevated, by the pilot (`docs/RUNNER-VM-PATH.md`, `src/hyperv.rs`). What row 42 still lacks is only **guest-to-host and guest-to-guest scans**, which need step 2. So: no elevated item for row 42; PM to confirm with CireSnave that V7's dedicated account is dropped.
+CireSnave ruled the broker runs as `cires` (board 483, "C"), and `cires` is in `Hyper-V Administrators`. The V7 paste (`scripts/broker-account.ps1`, account `antspawn-broker`) was for a *dedicated* account that ruling superseded. PowerShell Direct, `New-VM` from a differencing child, boot-to-answer time (about 12 s) and guest start/stop are already run as `cires`, non-elevated, by the pilot (`docs/RUNNER-VM-PATH.md`, `src/hyperv.rs`). What row 42 still lacks is only **guest-to-host and guest-to-guest scans**, which need step 2. So: no elevated item for row 42; **V7 is dropped** (board 483, the broker runs the sandbox as `cires`; PM 2026-11-24): `scripts/broker-account.ps1` is superseded and nothing is owed on it.
 
 ## Runner-account undo (written, dry-run, not part of the item)
 
