@@ -84,6 +84,12 @@ required = false
 description = "Extra hosts this group's runners may reach through the egress proxy, each host:443 or *.domain:443; every entry needs an approval in egress-approved.toml."
 
 [[table.field]]
+key = "egress_listen"
+type = "list"
+required = false
+description = "ip:port of the egress listener of each of this group's slots (the host address of that slot's pool switch): private IPv4 or loopback, never 0.0.0.0, unique across the config. One allow list per group, one listener per slot. spawn adapter --check probes each."
+
+[[table.field]]
 key = "pipe"
 type = "string"
 required = false

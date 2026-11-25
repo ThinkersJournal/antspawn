@@ -1,0 +1,65 @@
+# Goes to ThinkersJournal/antspawn-proof as .github/workflows/vm-proof.yml (a lane does not push it; the PM or CireSnave does).
+# The FIRST live VM job, and only on antspawn-proof. workflow_dispatch only. Every step that expects a refusal PASSES only if the
+# operation was refused for the reason that proves it, so a green job means the control held. Steps marked (needs rows 39/40)
+# cannot pass before the pool switch, firewall and egress proxy exist: a red run before then is the expected result.
+name: antspawn-vm-proof
+on: workflow_dispatch
+permissions: {}
+
+jobs:
+  vm:
+    runs-on: [self-hosted, windows, antspawn-vm]
+    timeout-minutes: 10
+    steps:
+      - name: positive - the toolchain baked into the image is here
+        shell: pwsh
+        run: |
+          cargo --version
+          git --version
+          if (-not (Test-Path 'C:\Program Files\AMD\AOCL-Windows')) { "note: no AOCL folder in this image" }
+      - name: clean slate - a fresh child disk has no sentinel, then leave one
+        shell: pwsh
+        run: |
+          $s = 'C:\sentinel.txt'
+          if (Test-Path $s) { throw "sentinel from an earlier run: $s (the VM was not fresh)" }
+          Set-Content $s "run $env:GITHUB_RUN_ID"
+          "left $s"
+      - name: no host mounts - the guest has C only and no SMB mappings
+        shell: pwsh
+        run: |
+          $d = @(Get-PSDrive -PSProvider FileSystem | ForEach-Object Name)
+          "drives: $($d -join ', ')"
+          if ($d.Count -ne 1 -or $d[0] -ne 'C') { throw "unexpected drives: $d" }
+          if (@(Get-SmbMapping -ErrorAction SilentlyContinue).Count -ne 0) { throw 'an SMB mapping exists' }
+      - name: positive - an allowed host through the proxy (needs rows 39/40)
+        shell: pwsh
+        run: |
+          $r = Invoke-WebRequest -Uri https://api.github.com/ -UseBasicParsing -TimeoutSec 30
+          "api.github.com: $($r.StatusCode)"
+      - name: control - a host on no list is refused by the proxy (needs rows 39/40)
+        shell: pwsh
+        run: |
+          try { Invoke-WebRequest -Uri https://example.com/ -UseBasicParsing -TimeoutSec 30 | Out-Null; throw 'REACHED example.com' }
+          catch { if ($_.Exception.Message -like 'REACHED*') { throw }; "refused, as required: $($_.Exception.Message)" }
+      - name: control - a direct connection that skips the proxy goes nowhere (needs rows 39/40)
+        shell: pwsh
+        run: |
+          $c = [Net.Sockets.TcpClient]::new()
+          $t = $c.ConnectAsync('140.82.112.3', 443)   # a github.com address: allowed by NAME at the proxy, but there is no route for a direct one
+          if ($t.Wait(8000) -and $c.Connected) { throw 'DIRECT CONNECTION SUCCEEDED: the guest has a route out' }
+          'no direct route, as required'
+      - name: control - the host's other ports are closed; only the proxy port answers (needs rows 39/40)
+        shell: pwsh
+        run: |
+          $gw = (Get-NetRoute -DestinationPrefix 0.0.0.0/0 -ErrorAction SilentlyContinue | Select-Object -First 1).NextHop
+          if (-not $gw) { $gw = '10.77.1.1' }
+          $open = foreach ($p in 22, 135, 139, 445, 2222, 3389, 5985, 5986, 8080) {
+            $c = [Net.Sockets.TcpClient]::new()
+            if ($c.ConnectAsync($gw, $p).Wait(2000) -and $c.Connected) { $p }
+            $c.Dispose()
+          }
+          if ($open) { throw "host $gw answers on: $($open -join ', ')" }
+          "no answer on 9 ports of $gw"
+          $c = [Net.Sockets.TcpClient]::new()
+          if (-not ($c.ConnectAsync($gw, 3128).Wait(3000) -and $c.Connected)) { throw "positive control failed: the proxy port 3128 on $gw does not answer, so the scan above proved nothing" }
+          "proxy port 3128 answers (positive control)"

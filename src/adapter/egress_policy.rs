@@ -9,7 +9,7 @@
 use serde::Deserialize;
 
 use super::github::{AdapterConfig, RunnerGroup};
-use crate::egress::{ALLOWED_PORT, Pattern, Policy};
+use crate::egress::{ALLOWED_PORT, Pattern, Policy, Probe};
 
 /// Hosts every group may reach: GitHub's essential, action-download, log/artifact and cache hosts, and crates.io
 /// (`docs/RUNNER-NETWORK.md`, "The hosts"). The runner self-update hosts are deliberately absent.
@@ -136,11 +136,66 @@ pub fn describe(g: &GroupEgress) -> String {
     } else {
         g.extra.join(", ")
     };
+    let hosts: Vec<String> = g
+        .policy
+        .patterns()
+        .iter()
+        .map(|p| match p {
+            Pattern::Exact(h) => format!("{h}:{ALLOWED_PORT}"),
+            Pattern::Under(s) => format!("*.{s}:{ALLOWED_PORT}"),
+        })
+        .collect();
     format!(
-        "group `{}`: {} default hosts, extra: {extra}",
+        "group `{}`: {} default hosts, extra: {extra}; effective list: {}",
         g.group,
-        DEFAULT_ALLOW.len()
+        DEFAULT_ALLOW.len(),
+        hosts.join(", ")
     )
+}
+
+/// `--check` lines and problems for each group's listener. `probe` is injected so tests need no socket.
+/// A group with no `egress_listen` has no listener to probe (a line says so); a listener that does not answer the
+/// refusal to a name on no list is a problem: a runner behind it would have no way out, or one that does not filter.
+pub fn listener_report(
+    cfg: &AdapterConfig,
+    probe: &dyn Fn(std::net::SocketAddr) -> Probe,
+) -> (Vec<String>, Vec<String>) {
+    let (mut lines, mut problems) = (Vec::new(), Vec::new());
+    for g in &cfg.groups {
+        if g.egress_listen.is_empty() {
+            lines.push(format!(
+                "group `{}`: no egress_listen, nothing to probe",
+                g.name
+            ));
+        }
+        for (slot, l) in g.egress_listen.iter().enumerate() {
+            let Ok(addr) = l.parse::<std::net::SocketAddr>() else {
+                problems.push(format!(
+                    "group `{}`: egress_listen `{l}` is not ip:port",
+                    g.name
+                ));
+                continue;
+            };
+            match probe(addr) {
+            Probe::Filtering => lines.push(format!(
+                "group `{}` slot {}: egress listener {addr} answers 403 to a name on no list",
+                g.name,
+                slot + 1
+            )),
+            Probe::Down(why) => problems.push(format!(
+                "group `{}` slot {}: egress listener {addr} is down ({why}); start spawn-egress for this group",
+                g.name,
+                slot + 1
+            )),
+            Probe::Wrong(why) => problems.push(format!(
+                "group `{}` slot {}: egress listener {addr} is not a filtering proxy ({why})",
+                g.name,
+                slot + 1
+            )),
+        }
+        }
+    }
+    (lines, problems)
 }
 
 #[cfg(test)]
@@ -270,5 +325,137 @@ launcher = "windows-sandbox"
             d.contains("files.example.org:443") && d.contains("group `g`"),
             "{d}"
         );
+    }
+
+    #[test]
+    fn describe_lists_every_effective_host() {
+        let c = cfg("");
+        let d = describe(&effective(&c, &Approvals::default()).unwrap()[0]);
+        for h in DEFAULT_ALLOW {
+            assert!(d.contains(h), "{h} missing from {d}");
+        }
+    }
+
+    fn listen_cfg(listen: &str) -> AdapterConfig {
+        cfg(&format!("egress_listen = [\"{listen}\"]"))
+    }
+
+    #[test]
+    fn listener_report_flags_a_listener_that_is_down_or_does_not_filter() {
+        let c = listen_cfg("127.0.0.1:3128");
+        let (l, p) = listener_report(&c, &|_| Probe::Filtering);
+        assert!(p.is_empty() && l[0].contains("answers 403"), "{l:?} {p:?}");
+        let (_, p) = listener_report(&c, &|_| Probe::Down("refused".into()));
+        assert!(p.len() == 1 && p[0].contains("is down"), "{p:?}");
+        let (_, p) = listener_report(&c, &|_| Probe::Wrong("answered `HTTP/1.1 200`".into()));
+        assert!(
+            p.len() == 1 && p[0].contains("not a filtering proxy"),
+            "{p:?}"
+        );
+        // a group with no listener is a line, not a problem
+        let (l, p) = listener_report(&cfg(""), &|_| unreachable!());
+        assert!(p.is_empty() && l[0].contains("nothing to probe"), "{l:?}");
+    }
+
+    #[test]
+    fn egress_listen_must_be_private_and_unique() {
+        let ok = AdapterConfig::from_toml(
+            "org = \"O\"
+app_id = 1
+installation_id = 2
+key_path = \"k\"
+job_timeout_s = 60
+[[group]]
+name = \"g\"
+repos = [\"O/a\"]
+labels = [\"x\"]
+launcher = \"windows-sandbox\"
+egress_listen = [\"10.77.0.1:3128\"]
+",
+        );
+        assert!(ok.is_ok(), "{ok:?}");
+        for bad in [
+            "0.0.0.0:3128",
+            "8.8.8.8:3128",
+            "10.77.0.1:0",
+            "10.77.0.1",
+            "[::1]:3128",
+        ] {
+            let r = AdapterConfig::from_toml(&format!(
+                "org = \"O\"
+app_id = 1
+installation_id = 2
+key_path = \"k\"
+job_timeout_s = 60
+[[group]]
+name = \"g\"
+repos = [\"O/a\"]
+labels = [\"x\"]
+launcher = \"windows-sandbox\"
+egress_listen = [\"{bad}\"]
+"
+            ));
+            assert!(r.is_err(), "{bad} was accepted");
+        }
+        let two = "org = \"O\"
+app_id = 1
+installation_id = 2
+key_path = \"k\"
+job_timeout_s = 60
+[[group]]
+name = \"g\"
+repos = [\"O/a\"]
+labels = [\"x\"]
+launcher = \"windows-sandbox\"
+egress_listen = [\"10.77.0.1:3128\"]
+[[group]]
+name = \"h\"
+repos = [\"O/a\"]
+labels = [\"y\"]
+launcher = \"windows-sandbox\"
+egress_listen = [\"10.77.0.1:3128\"]
+";
+        assert!(
+            AdapterConfig::from_toml(two)
+                .unwrap_err()
+                .to_string()
+                .contains("already used")
+        );
+    }
+
+    #[test]
+    fn two_slots_of_one_group_need_different_addresses() {
+        let head = "org = \"O\"
+app_id = 1
+installation_id = 2
+key_path = \"k\"
+job_timeout_s = 60
+[[group]]
+name = \"g\"
+repos = [\"O/a\"]
+labels = [\"x\"]
+launcher = \"windows-sandbox\"
+";
+        let same = AdapterConfig::from_toml(&format!(
+            "{head}egress_listen = [\"10.77.1.1:3128\", \"10.77.1.1:3128\"]
+"
+        ));
+        assert!(same.unwrap_err().to_string().contains("already used"));
+        // control: two different slot addresses of one group load, and are probed once each
+        let c = AdapterConfig::from_toml(&format!(
+            "{head}egress_listen = [\"10.77.1.1:3128\", \"10.77.2.1:3128\"]
+"
+        ))
+        .unwrap();
+        let seen = std::cell::RefCell::new(Vec::new());
+        let (l, p) = listener_report(&c, &|a| {
+            seen.borrow_mut().push(a);
+            Probe::Filtering
+        });
+        assert!(
+            p.is_empty() && l.len() == 2 && seen.borrow().len() == 2,
+            "{l:?}"
+        );
+        assert!(l[0].contains("slot 1") && l[1].contains("slot 2"), "{l:?}");
     }
 }

@@ -77,6 +77,7 @@ pub fn load(text: &str, origin: &str) -> Result<AdapterConfig, ConfigError> {
                 task: field_opt(row, "task")?,
                 pipe: field_opt(row, "pipe")?,
                 egress: field_list_opt(row, "egress")?,
+                egress_listen: field_list_opt(row, "egress_listen")?,
             })
         })
         .collect::<Result<Vec<_>, ConfigError>>()?;

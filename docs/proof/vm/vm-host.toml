@@ -1,0 +1,7 @@
+# Beside docs/proof/vm/adapter.toml (the adapter reads vm-host.toml from the config's folder). Paths and a hash, no secret.
+base = 'C:\vmimages\pilot\core-vendor-base.vhdx'
+base_sha256 = "4e6f8f78de851b9dcfb0685bbc5126e9726b63e0b74f3e34f8d8088e39ea6c0b"
+vm_dir = 'C:\vmimages\pilot-run'
+switch = "antspawn-sw1"
+memory_mb = 4096
+vcpus = 2

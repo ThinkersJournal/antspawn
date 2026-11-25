@@ -30,14 +30,16 @@
 
   Not exercised by the dry run and able to fail: New-VMSwitch, New-NetIPAddress on the new vEthernet,
   New-NetFirewallRule -InterfaceAlias for an interface that appeared seconds ago, and the icacls. The
-  inbound Block means a guest cannot reach any host service at its switch's host address (design, not
+  inbound Block means (with -ProxyPort 0) a guest cannot reach any host service at its switch's host address (design, not
   yet measured: the guest probe is V6).
 #>
 [CmdletBinding()]
 param(
     [switch]$Apply,
     [switch]$Undo,
-    [ValidateRange(1, 32)][int]$Slots = 4
+    [ValidateRange(1, 32)][int]$Slots = 4,
+    # 0 = block everything inbound (V3 as first written). N = the egress proxy's TCP port: it is the ONLY inbound a guest can reach.
+    [ValidateRange(0, 65535)][int]$ProxyPort = 0
 )
 $ErrorActionPreference = 'Stop'
 if ($Apply -and $Undo) { throw 'Choose -Apply or -Undo, not both.' }
@@ -89,23 +91,38 @@ function Verify-Slot($p) {
     }
     $fw = (Get-NetIPInterface -InterfaceAlias $p.Alias -AddressFamily IPv4 -ErrorAction SilentlyContinue).Forwarding
     if ("$fw" -ne 'Disabled') { $problems += "IPv4 forwarding '$fw', want Disabled" }
-    $r = @(Get-NetFirewallRule -Name $p.Rule -ErrorAction SilentlyContinue)
-    if ($r.Count -ne 1) { $problems += "firewall rules named $($p.Rule): $($r.Count), want 1" }
-    else {
+    foreach ($rn in (Rule-Names $p)) {
+        $r = @(Get-NetFirewallRule -Name $rn -ErrorAction SilentlyContinue)
+        if ($r.Count -ne 1) { $problems += "firewall rules named ${rn}: $($r.Count), want 1"; continue }
         if ($r[0].Direction -ne 'Inbound' -or $r[0].Action -ne 'Block' -or $r[0].Enabled -ne 'True') {
-            $problems += "rule is $($r[0].Direction)/$($r[0].Action)/enabled=$($r[0].Enabled), want Inbound/Block/True"
+            $problems += "rule $rn is $($r[0].Direction)/$($r[0].Action)/enabled=$($r[0].Enabled), want Inbound/Block/True"
+        }
+        if ($rn -eq $p.Rule -and $ProxyPort -ne 0) {
+            $pf = Get-NetFirewallPortFilter -AssociatedNetFirewallRule $r[0]
+            if ($pf.Protocol -ne 'TCP' -or (@($pf.LocalPort) -join ',') -ne ((Port-Ranges $ProxyPort) -join ',')) { $problems += "rule $rn ports are $($pf.Protocol) $(@($pf.LocalPort) -join ','), want TCP $((Port-Ranges $ProxyPort) -join ',')" }
         }
         $if = Get-NetFirewallInterfaceFilter -AssociatedNetFirewallRule $r[0]
-        if (@($if.InterfaceAlias) -notcontains $p.Alias) { $problems += "rule interface filter is '$($if.InterfaceAlias)', want $($p.Alias)" }
+        if (@($if.InterfaceAlias) -notcontains $p.Alias) { $problems += "rule $rn interface filter is '$($if.InterfaceAlias)', want $($p.Alias)" }
     }
     return $problems
 }
+
+# -ProxyPort N: Windows Firewall has no 'block all but one port', and a Block rule beats any Allow, so the rules are
+# Block TCP on every port EXCEPT N, Block UDP, Block ICMPv4. Anything else (other IP protocols) finds no Allow rule
+# and meets the profile's default inbound Block. DHCP is not needed: the guest address is static.
+function Port-Ranges([int]$n) {
+    $r = @()
+    if ($n -gt 1) { $r += "1-$($n - 1)" }
+    if ($n -lt 65535) { $r += "$($n + 1)-65535" }
+    return $r
+}
+function Rule-Names($p) { if ($ProxyPort -eq 0) { @($p.Rule) } else { @($p.Rule, "$($p.Rule)-udp", "$($p.Rule)-icmp") } }
 
 Write-Host ("mode: " + $(if ($Apply) { 'APPLY' } elseif ($Undo) { 'UNDO' } else { 'DRY RUN (nothing is changed)' }))
 
 if (-not $Undo) {
     foreach ($p in $Plan) {
-        Write-Host ("{0,-6} switch {1} Internal; host {2}/{3} (guest {4}); forwarding Disabled; no NAT; inbound Block rule {5} on '{6}'" -f 'PLAN', $p.Switch, $p.Host, $p.Prefix, $p.Guest, $p.Rule, $p.Alias)
+        Write-Host ("{0,-6} switch {1} Internal; host {2}/{3} (guest {4}); forwarding Disabled; no NAT; inbound {7} on '{6}'" -f 'PLAN', $p.Switch, $p.Host, $p.Prefix, $p.Guest, $p.Rule, $p.Alias, $(if ($ProxyPort -eq 0) { 'Block-all rule ' + $p.Rule } else { "rules $((Rule-Names $p) -join ', '): Block TCP except port $ProxyPort, Block UDP, Block ICMPv4" }))
     }
     Write-Host "PLAN   state: $StateFile (Administrators and SYSTEM only, ACL read back), written after each slot"
 }
@@ -121,9 +138,11 @@ if ($Undo) {
             continue
         }
         try {
-            if (Get-NetFirewallRule -Name $m.Rule -ErrorAction SilentlyContinue) { Remove-NetFirewallRule -Name $m.Rule }
+            foreach ($rn in @($m.Rule, "$($m.Rule)-udp", "$($m.Rule)-icmp")) {
+                if (Get-NetFirewallRule -Name $rn -ErrorAction SilentlyContinue) { Remove-NetFirewallRule -Name $rn }
+            }
             if (Get-VMSwitch -Name $m.Switch -ErrorAction SilentlyContinue) { Remove-VMSwitch -Name $m.Switch -Force }
-            $still = (Get-NetFirewallRule -Name $m.Rule -ErrorAction SilentlyContinue) -or (Get-VMSwitch -Name $m.Switch -ErrorAction SilentlyContinue)
+            $still = (@($m.Rule, "$($m.Rule)-udp", "$($m.Rule)-icmp") | Where-Object { Get-NetFirewallRule -Name $_ -ErrorAction SilentlyContinue }) -or (Get-VMSwitch -Name $m.Switch -ErrorAction SilentlyContinue)
             if ($still) { throw 'still present after removal' }
             Write-Host "OK     removed $($m.Switch) and rule $($m.Rule) (read back: gone)"
         } catch {
@@ -144,7 +163,9 @@ if ($taken.Count -gt 0) {
 }
 foreach ($p in $Plan) {
     if (@(Get-VMSwitch -Name $p.Switch -ErrorAction SilentlyContinue).Count -gt 0) { $refuse += "a switch named $($p.Switch) already exists" }
-    if (Get-NetFirewallRule -Name $p.Rule -ErrorAction SilentlyContinue) { $refuse += "a firewall rule named $($p.Rule) already exists" }
+    foreach ($rn in @($p.Rule, "$($p.Rule)-udp", "$($p.Rule)-icmp")) {
+        if (Get-NetFirewallRule -Name $rn -ErrorAction SilentlyContinue) { $refuse += "a firewall rule named $rn already exists" }
+    }
 }
 if (Test-Path -LiteralPath $StateFile) { $refuse += "$StateFile exists: -Undo first" }
 foreach ($r in $refuse) { Write-Host "REFUSE $r" }
@@ -168,7 +189,13 @@ foreach ($p in $Plan) {
     Save-State $made
     New-NetIPAddress -InterfaceAlias $p.Alias -IPAddress $p.Host -PrefixLength $p.Prefix | Out-Null
     Set-NetIPInterface -InterfaceAlias $p.Alias -AddressFamily IPv4 -Forwarding Disabled
-    New-NetFirewallRule -Name $p.Rule -DisplayName "antspawn pool slot $($p.Index): block inbound" -Direction Inbound -Action Block -InterfaceAlias $p.Alias -Profile Any | Out-Null
+    if ($ProxyPort -eq 0) {
+        New-NetFirewallRule -Name $p.Rule -DisplayName "antspawn pool slot $($p.Index): block inbound" -Direction Inbound -Action Block -InterfaceAlias $p.Alias -Profile Any | Out-Null
+    } else {
+        New-NetFirewallRule -Name $p.Rule -DisplayName "antspawn pool slot $($p.Index): block inbound TCP except $ProxyPort" -Direction Inbound -Action Block -Protocol TCP -LocalPort (Port-Ranges $ProxyPort) -InterfaceAlias $p.Alias -Profile Any | Out-Null
+        New-NetFirewallRule -Name "$($p.Rule)-udp" -DisplayName "antspawn pool slot $($p.Index): block inbound UDP" -Direction Inbound -Action Block -Protocol UDP -InterfaceAlias $p.Alias -Profile Any | Out-Null
+        New-NetFirewallRule -Name "$($p.Rule)-icmp" -DisplayName "antspawn pool slot $($p.Index): block inbound ICMPv4" -Direction Inbound -Action Block -Protocol ICMPv4 -InterfaceAlias $p.Alias -Profile Any | Out-Null
+    }
     $deadline = (Get-Date).AddSeconds(30)
     while ((Get-Date) -lt $deadline) {
         $st = (Get-NetIPAddress -InterfaceAlias $p.Alias -IPAddress $p.Host -ErrorAction SilentlyContinue).AddressState

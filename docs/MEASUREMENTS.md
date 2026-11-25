@@ -503,3 +503,15 @@ Not measured: a bind under `C:\Projects\<name>` (the account has an explicit den
 - **Run:** `spawn-egress --listen 127.0.0.1:38444 --group t --check-sni`, a Python TLS client through `CONNECT api.github.com:443`.
 - **Results:** SNI `api.github.com` (matches): the TLS handshake completed and the real api.github.com answered `HTTP/1.1 200 OK`; the close line showed up=160 down=6903 bytes. SNI `github.com` through the same tunnel (a mismatch): the proxy closed the tunnel before a byte went upstream, the client saw `SSLEOFError`, and the deny line read `reason=sni-mismatch`.
 - **Not measured:** a client using Encrypted Client Hello (it sends no usable SNI, so it would be refused: why the check is a flag, off by default), a ClientHello split over several TCP segments beyond what `read_exact` reads, git/cargo/the runner through it. One run on one day.
+
+## 2026-11-24: egress listener probe in `spawn adapter --check`, ROADMAP rows 38 and 43 (ref: `work-5`, debug build; run as `cires`, host loopback, no VM)
+
+- **Run:** a one-group adapter config with `egress_listen = "127.0.0.1:18443"`; `spawn adapter --check` first with nothing listening, then with `spawn-egress --config <it> --log-dir <dir>` running.
+- **Results:** nothing listening: `--check` reported the listener `is down (... actively refused it ...)` as a problem. Listener running: `--check` printed `egress listener 127.0.0.1:18443 answers 403 to a name on no list` and the deny log held one line `reason=not-listed host=probe.not-on-any-list.invalid`. Unit controls: a listener answering `200` to everything is `Wrong`, a dead address is `Down`.
+- **Not measured:** a probe from a guest or over a pool switch (rows 39 and 40); several groups on several addresses at once (one group run); `--check-sni` together with `--config`. One run on one day.
+
+## 2026-11-24 (later): two slot listeners of one group, ROADMAP rows 38 and 43 (ref: `work-5`, debug build; run as `cires`, host loopback `127.0.0.1` and `127.0.0.2`, no VM)
+
+- **Run:** `egress_listen = ["127.0.0.1:18443", "127.0.0.2:18443"]` on one group; `spawn-egress --config` then `spawn adapter --check`, then the proxy stopped and `--check` again.
+- **Results:** `--check` printed `slot 1` and `slot 2`, each `answers 403 to a name on no list`; the group's one deny log held two `reason=not-listed` lines (one per probe). After the proxy stopped, `--check` reported 2 listeners `is down`.
+- **Not measured:** a guest, a pool switch, the host-port scan, more than two slots, different allow lists on one machine at once. One run on one day.

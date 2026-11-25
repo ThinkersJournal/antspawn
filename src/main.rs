@@ -204,6 +204,15 @@ fn adapter(
         ),
         Err(e) => report.problems.push(format!("egress: {e}")),
     }
+    {
+        let (lines, problems) = antspawn::adapter::egress_policy::listener_report(&cfg, &|a| {
+            antspawn::egress::probe(a, std::time::Duration::from_secs(3))
+        });
+        report.lines.extend(lines);
+        report
+            .problems
+            .extend(problems.into_iter().map(|p| format!("egress: {p}")));
+    }
     match command::load_vm_host(config, &cfg) {
         Ok(Some(v)) => report.lines.push(format!(
             "vm host: base {} (sha256 pinned), vm_dir {}, switch {}, {} MB, {} vCPU",
