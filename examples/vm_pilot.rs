@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use antspawn::adapter::dispatch::JitTransport;
 use antspawn::adapter::github::Secret;
-use antspawn::adapter::guest_credential;
+use antspawn::adapter::guest_secret;
 use antspawn::adapter::vm_backend::{ScriptHost, VmHost, VmHostConfig, VmTransport};
 
 /// A made-up value shaped like a JIT config. Never a real one.
@@ -25,11 +25,8 @@ fn main() {
         eprintln!("usage: vm_pilot <base.vhdx> <base-sha256> <vm_dir> <switch>");
         std::process::exit(64);
     }
-    let cred = guest_credential::default_path().expect("LOCALAPPDATA");
-    println!(
-        "PILOT {}",
-        guest_credential::check(&cred).unwrap_or_else(|e| e)
-    );
+    let cred = guest_secret::default_dir().expect("ProgramData");
+    println!("PILOT {}", guest_secret::check(&cred).unwrap_or_else(|e| e));
     let host = ScriptHost {
         runner: PowerShell,
         cfg: VmHostConfig {
@@ -39,7 +36,7 @@ fn main() {
             switch: a[3].clone(),
             memory_mb: 4096,
             vcpus: 2,
-            guest_credential: cred.clone(),
+            secret_dir: cred.clone(),
         },
     };
     let vm = "antspawn-run-pilot-0";
@@ -58,12 +55,16 @@ fn main() {
         && step("create", host.create(vm).map(|()| String::new()))
         && step("start", host.start(vm).map(|()| String::new()))
         && step(
+            "provision (fresh per-VM password)",
+            guest_secret::fresh().and_then(|p| host.provision(vm, &p).map(|()| String::new())),
+        )
+        && step(
             "ready",
             host.wait_ready(vm, Duration::from_secs(300))
                 .map(|()| String::new()),
         )
         && step("guest-hostname", {
-            let pre = guest_credential::credential_preamble(&cred).unwrap();
+            let pre = guest_secret::credential_preamble(&cred, vm).unwrap();
             PowerShell.run(&format!(
                 "$ErrorActionPreference='Stop'\n{pre}Invoke-Command -VMName '{vm}' -Credential $cred -ScriptBlock {{ hostname }}\n"
             ))
@@ -71,7 +72,7 @@ fn main() {
         && step("deliver a FAKE config, runner starts", {
             let t = VmTransport {
                 runner: PowerShell,
-                guest_credential: cred.clone(),
+                secret_dir: cred.clone(),
                 runner_dir: r"C:\runner".into(),
             };
             t.deliver(vm, &Secret::new(FAKE.into()))
@@ -82,7 +83,7 @@ fn main() {
             { host.wait_end(vm, Duration::from_secs(240)) },
         )
         && step("guest holds no trace of the fake config", {
-            let pre = guest_credential::credential_preamble(&cred).unwrap();
+            let pre = guest_secret::credential_preamble(&cred, vm).unwrap();
             PowerShell.run(&format!(
                 "$ErrorActionPreference='Stop'\n{pre}Invoke-Command -VMName '{vm}' -Credential $cred -ArgumentList '{FAKE}' -ScriptBlock {{ param($f) $ErrorActionPreference='SilentlyContinue'; $hits = Get-ChildItem C:/runner, C:/Users, C:/ProgramData, C:/Windows/Temp -Recurse -File -Force -ErrorAction SilentlyContinue | Where-Object {{ $_.Length -lt 5MB }} | Select-String -SimpleMatch -Pattern $f -List -ErrorAction SilentlyContinue; 'files holding it: ' + @($hits).Count; $c = 'C:/Windows/Temp/antspawn-control.txt'; Set-Content -LiteralPath $c -Value $f; $ctl = Get-ChildItem C:/Windows/Temp -File -Force | Select-String -SimpleMatch -Pattern $f -List; Remove-Item -LiteralPath $c -Force; 'positive control (planted file) found: ' + @($ctl).Count; 'diag logs: ' + @(Get-ChildItem C:/runner/_diag -ErrorAction SilentlyContinue).Count }}\n"
             ))

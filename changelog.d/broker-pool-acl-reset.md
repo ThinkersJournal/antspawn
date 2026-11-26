@@ -1,5 +1,0 @@
-kind: broker-pool.ps1 rebuilds the state folder ACL from scratch
----
-Board 503 `-Apply` failed its own ACL read-back: `%ProgramData%\antspawn-pool` already existed with an explicit ACE for a user, and `icacls /inheritance:r /grant:r` replaces only the SIDs it names. The script now runs `icacls <dir> /reset` first, then drops inheritance and grants Administrators and SYSTEM, and keeps the read-back. Verified: the same icacls sequence on a temp folder with an extra explicit ACE left exactly Administrators and SYSTEM; `tests/broker_pool_script.rs` pins the order (reset, inheritance, read-back) with a known-bad control. The elevated `-Apply` itself is not re-run here.
-
-Also measured (docs/MEASUREMENTS.md 2026-11-26): `spawn-egress --config` bound the four pool slot addresses 10.77.1-4.1:3128 as `cires`, and `spawn adapter --check` got `403` from each; `api.github.com` connected and `example.com` was refused on slots 1 and 2. Guest-side controls (row 44) are not measured: they need a VM on a pool switch.
