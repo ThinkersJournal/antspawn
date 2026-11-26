@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.140 — CI: portfolio workflow pinned to CodeRipper 0.48.1
+
+The advisory `portfolio` job now uses `ciresnave/coderipper/.github/workflows/portfolio.yml@467fd259d6d062cba4c5683d310f1a6f2b66e763` (CODERIPPER_VERSION 0.48.1). One-line CI change on pm-ants TASK; no code touched.
+
 ## 0.0.139 — runner egress listeners per group with a probe in `--check`; patent sweep addendum for the runner-VM path
 
 - docs: `docs/PATENT-SWEEP.md` addendum for runner-VM ideas 10-12: 4 Google Patents queries, Espacenet returned nothing. The PM's later read of the independent claims is recorded (ideas 11 and 12 outside as read; idea 10 stated exactly, NOT CLEARED, open on one question). USPTO ODP and WIPO not searched. ROADMAP row 37 stays open.
