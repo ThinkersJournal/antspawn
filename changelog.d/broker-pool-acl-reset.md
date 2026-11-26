@@ -1,0 +1,3 @@
+kind: broker-pool.ps1 rebuilds the state folder ACL from scratch
+---
+Board 503 `-Apply` failed its own ACL read-back: `%ProgramData%\antspawn-pool` already existed with an explicit ACE for a user, and `icacls /inheritance:r /grant:r` replaces only the SIDs it names. The script now runs `icacls <dir> /reset` first, then drops inheritance and grants Administrators and SYSTEM, and keeps the read-back. Verified: the same icacls sequence on a temp folder with an extra explicit ACE left exactly Administrators and SYSTEM; `tests/broker_pool_script.rs` pins the order (reset, inheritance, read-back) with a known-bad control. The elevated `-Apply` itself is not re-run here.
