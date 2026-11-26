@@ -10,7 +10,7 @@
 //!   hands it to a [`Runner`]; nothing here has touched Hyper-V.
 //!
 //! **The guest channel** is PowerShell Direct with a **fresh password per VM** (PM ruling 2026-11-26; `adapter::guest_secret`): made
-//! when the VM starts, handed to the host PowerShell on stdin, stored only as a DPAPI LocalMachine blob in the pool state folder and
+//! when the VM starts, handed to the host PowerShell on stdin, stored only as a DPAPI CurrentUser blob in `%LOCALAPPDATA%\antspawn\guests` (user and SYSTEM ACL only) and
 //! deleted with the VM. Each guest script builds its `PSCredential` from that VM's blob inside the PowerShell process: the password
 //! is never in the script text, an argument, a log or a result.
 
@@ -137,7 +137,7 @@ pub struct VmHostConfig {
     pub switch: String,
     pub memory_mb: u32,
     pub vcpus: u8,
-    /// Folder of the per-VM password blobs (`guest_secret::default_dir`): Administrators and SYSTEM only.
+    /// Folder of the per-VM password blobs (`guest_secret::default_dir`): this user and SYSTEM only.
     pub secret_dir: std::path::PathBuf,
 }
 
@@ -239,7 +239,7 @@ impl<R: Runner + Send + Sync + 'static> ScriptHost<R> {
         ))
     }
 
-    /// Reads the password from **stdin**, stores it as a LocalMachine DPAPI blob in this VM's file, and puts it on the VM bus as a data
+    /// Reads the password from **stdin**, makes the folder user-and-SYSTEM only (ACL read back, before any secret is written), stores it as a CurrentUser DPAPI blob in this VM's file, and puts it on the VM bus as a data
     /// exchange item that the guest's startup task (`scripts/guest-bootstrap.ps1`) reads. The script carries names and paths only.
     pub fn script_provision(&self, vm: &str) -> Result<String, String> {
         let n = named(vm)?;
@@ -255,8 +255,15 @@ impl<R: Runner + Send + Sync + 'static> ScriptHost<R> {
              if (-not $pw) {{ throw 'no guest password on stdin' }}\n\
              try {{\n\
              \x20 Add-Type -AssemblyName System.Security\n\
-             \x20 if (-not (Test-Path -LiteralPath {dir})) {{ New-Item -ItemType Directory -Path {dir} | Out-Null }}\n\
-             \x20 $blob = [Security.Cryptography.ProtectedData]::Protect([Text.Encoding]::UTF8.GetBytes($pw), $null, 'LocalMachine')\n\
+             \x20 if (-not (Test-Path -LiteralPath {dir})) {{ New-Item -ItemType Directory -Path {dir} -Force | Out-Null }}\n\
+             \x20 & icacls.exe {dir} /reset | Out-Null\n\
+             \x20 if ($LASTEXITCODE -ne 0) {{ throw 'icacls /reset failed on the guest secret folder' }}\n\
+             \x20 $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value\n\
+             \x20 & icacls.exe {dir} /inheritance:r /grant:r \"*$($me):(OI)(CI)F\" '*S-1-5-18:(OI)(CI)F' | Out-Null\n\
+             \x20 if ($LASTEXITCODE -ne 0) {{ throw 'icacls failed on the guest secret folder' }}\n\
+             \x20 $ids = @((Get-Acl -LiteralPath {dir}).Access | ForEach-Object {{ $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value }} | Sort-Object -Unique)\n\
+             \x20 if ($ids.Count -ne 2 -or @($ids | Where-Object {{ $_ -notin @($me, 'S-1-5-18') }}).Count -gt 0) {{ throw \"guest secret folder ACL is not this user and SYSTEM only: $($ids -join ', ')\" }}\n\
+             \x20 $blob = [Security.Cryptography.ProtectedData]::Protect([Text.Encoding]::UTF8.GetBytes($pw), $null, 'CurrentUser')\n\
              \x20 [IO.File]::WriteAllText({file}, (($blob | ForEach-Object {{ $_.ToString('x2') }}) -join ''))\n\
              \x20 $vmo = Get-WmiObject -Namespace {KVP_NS_ROOT} -Class Msvm_ComputerSystem -Filter \"ElementName={n}\"\n\
              \x20 $svc = Get-WmiObject -Namespace {KVP_NS_ROOT} -Class Msvm_VirtualSystemManagementService\n\
@@ -625,7 +632,7 @@ mod tests {
                 switch: "antspawn-pool-1".into(),
                 memory_mb: 4096,
                 vcpus: 2,
-                secret_dir: std::path::PathBuf::from(r"C:\ProgramData\antspawn-pool\guest"),
+                secret_dir: std::path::PathBuf::from(r"C:\Users\x\AppData\Local\antspawn\guests"),
             },
         }
     }
@@ -713,8 +720,8 @@ mod tests {
         let h = host();
         let s = h.script_wait_end("antspawn-run-g-0", 600).unwrap();
         assert!(
-            s.contains("antspawn-run-g-0.dpapi")
-                && s.contains("'LocalMachine'")
+            s.contains("antspawn-run-g-0.cred")
+                && s.contains("'CurrentUser'")
                 && s.contains("Invoke-Command -VMName 'antspawn-run-g-0'"),
             "{s}"
         );
@@ -756,8 +763,9 @@ mod tests {
         );
         assert!(
             script.contains("[Console]::In.ReadToEnd()")
-                && script.contains("'LocalMachine'")
-                && script.contains("antspawn-run-g-0.dpapi")
+                && script.contains("'CurrentUser'")
+                && !script.contains("LocalMachine")
+                && script.contains("antspawn-run-g-0.cred")
                 && script.contains("$pw = $null"),
             "{script}"
         );
@@ -822,14 +830,86 @@ mod tests {
         assert!(!r.contains(PW));
         let d = h.script_destroy("antspawn-run-g-0").unwrap();
         assert!(
-            d.contains("antspawn-run-g-0.dpapi") && !d.contains("antspawn-run-g-1"),
+            d.contains("antspawn-run-g-0.cred") && !d.contains("antspawn-run-g-1"),
             "{d}"
         );
         // the blob is removed AFTER the VM, so an unwritable folder cannot keep a VM alive
         assert!(
-            d.find("Remove-VM").unwrap() < d.find("antspawn-run-g-0.dpapi").unwrap(),
+            d.find("Remove-VM").unwrap() < d.find("antspawn-run-g-0.cred").unwrap(),
             "{d}"
         );
+    }
+
+    #[test]
+    fn the_provisioning_script_locks_the_folder_before_it_writes_the_secret() {
+        let h = host();
+        let s = h.script_provision("antspawn-run-g-0").unwrap();
+        let at = |n: &str| s.find(n).unwrap_or_else(|| panic!("{n} missing in {s}"));
+        let (reset, inherit, readback, write) = (
+            at("/reset"),
+            at("/inheritance:r"),
+            at("ACL is not this user and SYSTEM only"),
+            at("WriteAllText"),
+        );
+        assert!(
+            reset < inherit && inherit < readback && readback < write,
+            "{s}"
+        );
+        // control: a script with the read-back removed would not satisfy the order check
+        assert!(
+            !s.replace("ACL is not this user and SYSTEM only", "x")
+                .contains("ACL is not this user")
+        );
+    }
+
+    /// Runs the REAL script (Windows PowerShell) against a temp folder that starts with an extra explicit ACE, as board 503's did.
+    /// It ends at the Hyper-V step (no such VM, and this account may not own the namespace), after the part under test.
+    #[cfg(windows)]
+    #[test]
+    fn measured_the_script_leaves_user_and_system_only_and_the_blob_is_not_plaintext() {
+        use crate::hyperv::PowerShell;
+        let dir = std::env::temp_dir().join(format!("antspawn-prov-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let q = dir.display().to_string();
+        // an extra explicit ACE for Users (S-1-5-32-545)
+        let out = std::process::Command::new("icacls.exe")
+            .args([q.as_str(), "/grant", "*S-1-5-32-545:(RX)"])
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        let mut h = host();
+        h.cfg.secret_dir = dir.clone();
+        let h = ScriptHost {
+            runner: PowerShell,
+            cfg: h.cfg,
+        };
+        let pw = super::super::guest_secret::fresh().unwrap();
+        let _ = h.provision("antspawn-run-g-0", &pw); // may fail at the VM step
+        let blob = dir.join("antspawn-run-g-0.cred");
+        let hex = std::fs::read_to_string(&blob).expect("the blob was written before the VM step");
+        assert!(
+            !hex.contains(pw.expose()) && hex.len() > 64,
+            "plaintext or empty blob"
+        );
+        let check = PowerShell
+            .run(&format!(
+                "$ids = @((Get-Acl -LiteralPath '{q}').Access | ForEach-Object {{ $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value }} | Sort-Object -Unique)\n\
+                 $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value\n\
+                 'ACL=' + ($ids -join ',') + ';ME=' + $me\n"
+            ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let check = check.unwrap_or_else(|e| e);
+        let acl = check
+            .lines()
+            .find(|l| l.starts_with("ACL="))
+            .unwrap_or(&check)
+            .to_string();
+        let (ids, me) = acl.trim_start_matches("ACL=").split_once(";ME=").unwrap();
+        let mut got: Vec<&str> = ids.split(',').collect();
+        got.sort_unstable();
+        let mut want = vec![me.trim(), "S-1-5-18"];
+        want.sort_unstable();
+        assert_eq!(got, want, "ACL after the script: {acl}");
     }
 
     // ---- the JIT transport ----
@@ -859,7 +939,7 @@ mod tests {
                 seen: Mutex::new(Vec::new()),
                 reply,
             },
-            secret_dir: std::path::PathBuf::from(r"C:\ProgramData\antspawn-pool\guest"),
+            secret_dir: std::path::PathBuf::from(r"C:\Users\x\AppData\Local\antspawn\guests"),
             runner_dir: r"C:\runner".into(),
         }
     }

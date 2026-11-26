@@ -133,7 +133,7 @@ pub fn check(cfg: &AdapterConfig, pem_key: bool) -> CheckReport {
     }
     if cfg.groups.iter().any(|g| g.launcher == "hyperv-vm") {
         match super::guest_secret::default_dir()
-            .ok_or_else(|| "guest secret: ProgramData is not set".to_string())
+            .ok_or_else(|| "guest secret: LOCALAPPDATA is not set".to_string())
             .and_then(|p| super::guest_secret::check(&p))
         {
             Ok(line) => r.lines.push(line),
@@ -246,7 +246,7 @@ pub fn router(
     if cfg.groups.iter().any(|g| g.launcher == "hyperv-vm") {
         let vm = vm.ok_or("a `hyperv-vm` group needs vm-host.toml")?;
         let cred =
-            super::guest_secret::default_dir().ok_or("guest secret: ProgramData is not set")?;
+            super::guest_secret::default_dir().ok_or("guest secret: LOCALAPPDATA is not set")?;
         let backend = Logged(super::vm_backend::VmBackend::new(
             super::vm_backend::ScriptHost {
                 runner: crate::hyperv::PowerShell,

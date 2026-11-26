@@ -4,8 +4,10 @@
 //! reused across slots or builds) that
 //! * is made here and handed to the host PowerShell on its **stdin**, never in a script, an argument, an environment block, a log,
 //!   a status file, `with-secret` or a vault;
-//! * is stored only as a DPAPI **LocalMachine** blob under the pool state folder (`%ProgramData%\antspawn-pool`, Administrators and
-//!   SYSTEM only, `scripts/broker-pool.ps1`), one file per VM, removed when the VM is destroyed;
+//! * is stored only as a DPAPI **CurrentUser** blob, one file per VM (`%LOCALAPPDATA%\antspawn\guests\<vm>.cred`), in a folder this
+//!   adapter creates without elevation, with inheritance removed and an ACL of this user and SYSTEM only (set and read back by the
+//!   provisioning script before any secret is written); removed when the VM is destroyed. Not the admin-only pool state folder
+//!   (PM revised ruling 2026-11-26: the pool state stays Administrators and SYSTEM, written by the elevated `broker-pool.ps1`);
 //! * reaches the guest over the VM bus (Hyper-V data exchange), where the base image's startup task `scripts/guest-bootstrap.ps1`
 //!   sets it, and is taken off the bus once the guest has answered with it;
 //! * is used only for PowerShell Direct to that one guest.
@@ -20,13 +22,13 @@ use super::github::Secret;
 use crate::broker_proto::valid_vm_id;
 use crate::hyperv::quote;
 
-/// Sub-folder of the pool state folder that holds the per-VM blobs.
-pub const SUB_DIR: &str = "guest";
+/// Sub-folder of `%LOCALAPPDATA%\antspawn` that holds the per-VM blobs.
+pub const SUB_DIR: &str = "guests";
 
-/// `%ProgramData%\antspawn-pool\guest`, if `ProgramData` is set.
+/// `%LOCALAPPDATA%\antspawn\guests`, if `LOCALAPPDATA` is set.
 pub fn default_dir() -> Option<PathBuf> {
-    let base = std::env::var_os("ProgramData")?;
-    Some(PathBuf::from(base).join("antspawn-pool").join(SUB_DIR))
+    let base = std::env::var_os("LOCALAPPDATA")?;
+    Some(PathBuf::from(base).join("antspawn").join(SUB_DIR))
 }
 
 /// A fresh password: 32 random bytes as 64 hex digits behind a fixed `Aa1-` so the local complexity rule (three of four character
@@ -61,7 +63,7 @@ pub fn vm_file(dir: &Path, vm: &str) -> Result<PathBuf, String> {
             dir.display()
         ));
     }
-    Ok(dir.join(format!("{vm}.dpapi")))
+    Ok(dir.join(format!("{vm}.cred")))
 }
 
 /// `C:\...` or `\\host\...`: a Windows host path judged the same on every platform (the Linux CI lesson).
@@ -71,8 +73,8 @@ fn is_windows_absolute(s: &str) -> bool {
         || s.starts_with("\\\\")
 }
 
-/// Can this process create and remove a file in `dir`? `Ok` is a fixed sentence. The folder is Administrators-and-SYSTEM only
-/// (the ruling), so a non-elevated adapter fails here, loudly, at `--check` instead of at the first job.
+/// Create `dir` if needed, then prove this process can create and remove a file in it. `Ok` is a fixed sentence. (The ACL is set and
+/// read back by the provisioning script before it writes any secret; a folder this user can write is all `--check` needs.)
 ///
 /// # Errors
 /// A plain message for `--check`; none carries any secret.
@@ -83,16 +85,12 @@ pub fn check(dir: &Path) -> Result<String, String> {
             dir.display()
         ));
     }
-    if !dir.is_dir() {
-        return Err(format!(
-            "guest secret: {} does not exist; the first provisioning creates it under the pool state folder (run scripts\\broker-pool.ps1 -Apply first)",
-            dir.display()
-        ));
-    }
+    std::fs::create_dir_all(dir)
+        .map_err(|e| format!("guest secret: cannot create {} ({e})", dir.display()))?;
     let probe = dir.join(format!(".probe-{}", std::process::id()));
     std::fs::write(&probe, b"x").map_err(|e| {
         format!(
-            "guest secret: this process cannot write {} ({e}); the folder is Administrators and SYSTEM only, so the adapter must run with that right",
+            "guest secret: this process cannot write {} ({e})",
             dir.display()
         )
     })?;
@@ -103,7 +101,7 @@ pub fn check(dir: &Path) -> Result<String, String> {
     ))
 }
 
-/// PowerShell that defines `$cred` (user `Administrator`) from the VM's LocalMachine blob. The script holds the file's path only.
+/// PowerShell that defines `$cred` (user `Administrator`) from the VM's CurrentUser blob. The script holds the file's path only.
 ///
 /// # Errors
 /// A bad VM name or folder.
@@ -114,7 +112,7 @@ pub fn credential_preamble(dir: &Path, vm: &str) -> Result<String, String> {
          $hex = (Get-Content -LiteralPath {p} -Raw).Trim()\n\
          $bytes = [byte[]]::new($hex.Length / 2)\n\
          for ($i = 0; $i -lt $bytes.Length; $i++) {{ $bytes[$i] = [Convert]::ToByte($hex.Substring(2 * $i, 2), 16) }}\n\
-         $chars = [Text.Encoding]::UTF8.GetString([Security.Cryptography.ProtectedData]::Unprotect($bytes, $null, 'LocalMachine')).ToCharArray()\n\
+         $chars = [Text.Encoding]::UTF8.GetString([Security.Cryptography.ProtectedData]::Unprotect($bytes, $null, 'CurrentUser')).ToCharArray()\n\
          $ss = New-Object System.Security.SecureString\n\
          foreach ($c in $chars) {{ $ss.AppendChar($c) }}\n\
          $ss.MakeReadOnly(); [Array]::Clear($chars, 0, $chars.Length)\n\
@@ -144,10 +142,19 @@ mod tests {
     }
 
     #[test]
+    fn the_default_folder_is_under_local_app_data_not_the_admin_only_state_folder() {
+        let d = default_dir().map(|p| p.display().to_string().to_ascii_lowercase());
+        if let Some(d) = d {
+            assert!(d.ends_with(r"antspawn\guests"), "{d}");
+            assert!(!d.contains("antspawn-pool"), "{d}");
+        }
+    }
+
+    #[test]
     fn a_blob_name_is_per_vm_and_only_for_our_vms() {
-        let d = Path::new(r"C:\ProgramData\antspawn-pool\guest");
+        let d = Path::new(r"C:\Users\x\AppData\Local\antspawn\guests");
         let f = vm_file(d, "antspawn-run-g-0").unwrap();
-        assert!(f.display().to_string().ends_with("antspawn-run-g-0.dpapi"));
+        assert!(f.display().to_string().ends_with("antspawn-run-g-0.cred"));
         assert_ne!(f, vm_file(d, "antspawn-run-g-1").unwrap());
         assert!(vm_file(d, "not-ours").is_err());
         assert!(vm_file(d, "antspawn-run-..\\x").is_err());
@@ -156,10 +163,10 @@ mod tests {
 
     #[test]
     fn the_preamble_reads_a_local_machine_blob_and_holds_no_password() {
-        let d = Path::new(r"C:\ProgramData\antspawn-pool\guest");
+        let d = Path::new(r"C:\Users\x\AppData\Local\antspawn\guests");
         let s = credential_preamble(d, "antspawn-run-g-0").unwrap();
         assert!(
-            s.contains("antspawn-run-g-0.dpapi") && s.contains("'LocalMachine'"),
+            s.contains("antspawn-run-g-0.cred") && s.contains("'CurrentUser'"),
             "{s}"
         );
         assert!(!s.contains("Aa1-"), "{s}");
@@ -167,11 +174,10 @@ mod tests {
     }
 
     #[test]
-    fn check_needs_an_existing_writable_absolute_folder() {
+    fn check_makes_the_folder_without_elevation_and_needs_it_writable_and_absolute() {
         assert!(check(Path::new("rel")).is_err());
         let d = std::env::temp_dir().join(format!("antspawn-gs-{}", std::process::id()));
-        assert!(check(&d).unwrap_err().contains("does not exist"));
-        std::fs::create_dir_all(&d).unwrap();
+        assert!(!d.exists());
         assert!(check(&d).unwrap().contains("writable"));
         assert!(
             std::fs::read_dir(&d).unwrap().next().is_none(),
