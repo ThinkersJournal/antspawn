@@ -261,7 +261,7 @@ impl<R: Runner + Send + Sync + 'static> ScriptHost<R> {
              \x20 $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value\n\
              \x20 & icacls.exe {dir} /inheritance:r /grant:r \"*$($me):(OI)(CI)F\" '*S-1-5-18:(OI)(CI)F' | Out-Null\n\
              \x20 if ($LASTEXITCODE -ne 0) {{ throw 'icacls failed on the guest secret folder' }}\n\
-             \x20 $ids = @((Get-Acl -LiteralPath {dir}).Access | ForEach-Object {{ $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value }} | Sort-Object -Unique)\n\
+             \x20 $ids = @((New-Object IO.DirectoryInfo({dir})).GetAccessControl().GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) | ForEach-Object {{ $_.IdentityReference.Value }} | Sort-Object -Unique)\n\
              \x20 if ($ids.Count -ne 2 -or @($ids | Where-Object {{ $_ -notin @($me, 'S-1-5-18') }}).Count -gt 0) {{ throw \"guest secret folder ACL is not this user and SYSTEM only: $($ids -join ', ')\" }}\n\
              \x20 $blob = [Security.Cryptography.ProtectedData]::Protect([Text.Encoding]::UTF8.GetBytes($pw), $null, 'CurrentUser')\n\
              \x20 [IO.File]::WriteAllText({file}, (($blob | ForEach-Object {{ $_.ToString('x2') }}) -join ''))\n\
@@ -544,7 +544,10 @@ mod tests {
                 ..Fake::default()
             });
             let e = b.run_one(&group(), &mut |_| Ok(())).unwrap_err();
-            assert!(e.contains(&format!("{step} failed")), "{step}: {e}");
+            assert!(
+                e.contains(&format!("{step} failed")),
+                "{step}: wrong failure text"
+            );
             let c = calls.lock().unwrap().clone();
             assert_eq!(
                 c.last().unwrap(),
@@ -592,7 +595,10 @@ mod tests {
             ..Fake::default()
         });
         let e = b.run_one(&group(), &mut |_| Ok(())).unwrap_err();
-        assert!(e.contains("was not removed") && e.contains("locked"), "{e}");
+        assert!(
+            e.contains("was not removed") && e.contains("locked"),
+            "wrong failure text"
+        );
         let (b, _) = backend(Fake {
             fail_at: Some("end"),
             destroy_fails: true,
@@ -601,7 +607,7 @@ mod tests {
         let e = b.run_one(&group(), &mut |_| Ok(())).unwrap_err();
         assert!(
             e.contains("end failed") && e.contains("was not removed"),
-            "{e}"
+            "wrong failure text"
         );
     }
 
@@ -813,7 +819,10 @@ mod tests {
         let e = h
             .provision("antspawn-run-g-0", &Secret::new(PW.into()))
             .unwrap_err();
-        assert!(!e.contains(PW) && e.contains("<redacted>"), "{e}");
+        assert!(
+            !e.contains(PW) && e.contains("<redacted>"),
+            "the password was not redacted"
+        );
         // control: the raw runner error did carry it
         assert!(Leaky.run_with_input("", PW).unwrap_err().contains(PW));
     }
@@ -896,7 +905,7 @@ mod tests {
         );
         let check = PowerShell
             .run(&format!(
-                "$ids = @((Get-Acl -LiteralPath '{q}').Access | ForEach-Object {{ $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value }} | Sort-Object -Unique)\n\
+                "$ids = @((New-Object IO.DirectoryInfo('{q}')).GetAccessControl().GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) | ForEach-Object {{ $_.IdentityReference.Value }} | Sort-Object -Unique)\n\
                  $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value\n\
                  'ACL=' + ($ids -join ',') + ';ME=' + $me\n"
             ));
@@ -974,7 +983,10 @@ mod tests {
         let e = t
             .deliver("antspawn-run-g-0", &Secret::new(JIT.into()))
             .unwrap_err();
-        assert!(!e.contains(JIT) && e.contains("<redacted>"), "{e}");
+        assert!(
+            !e.contains(JIT) && e.contains("<redacted>"),
+            "the config was not redacted"
+        );
         // control: the unredacted failure did carry it
         assert!(t.runner.reply.clone().unwrap_err().contains(JIT));
     }
@@ -992,7 +1004,7 @@ mod tests {
             let e = t
                 .deliver("antspawn-run-g-0", &Secret::new(bad.into()))
                 .unwrap_err();
-            assert!(e.contains("refused"), "{bad:?}: {e}");
+            assert!(e.contains("refused"), "{bad:?} was not refused");
             assert!(
                 t.runner.seen.lock().unwrap().is_empty(),
                 "{bad:?} left the host"

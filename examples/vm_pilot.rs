@@ -56,7 +56,11 @@ fn main() {
         && step("start", host.start(vm).map(|()| String::new()))
         && step(
             "provision (fresh per-VM password)",
-            guest_secret::fresh().and_then(|p| host.provision(vm, &p).map(|()| String::new())),
+            guest_secret::fresh().and_then(|p| {
+                host.provision(vm, &p).map(|()| String::new()).map_err(|_| {
+                    "provision failed (text withheld: it handled the password)".to_string()
+                })
+            }),
         )
         && step(
             "ready",
