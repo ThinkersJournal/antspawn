@@ -80,7 +80,8 @@ fn main() {
                 runner_dir: r"C:\runner".into(),
             };
             t.deliver(vm, &Secret::new(FAKE.into()))
-                .map(|()| "started".into())
+                .map(|()| "started".to_string())
+                .map_err(|_| "deliver failed (text withheld: it handled the config)".to_string())
         })
         && step(
             "wait_end with the real runner (fake config: it fails and exits)",
