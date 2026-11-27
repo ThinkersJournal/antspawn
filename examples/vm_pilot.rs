@@ -102,10 +102,7 @@ fn main() {
         })
         && quiet(
             "wait_end with the real runner (fake config: it fails and exits)",
-            {
-                host.wait_end(vm, Duration::from_secs(240))
-                    .map(|()| String::new())
-            },
+            { host.wait_end(vm, Duration::from_secs(240)) },
             "(runner ended)",
         )
         && quiet(
