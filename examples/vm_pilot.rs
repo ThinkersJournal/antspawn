@@ -54,14 +54,14 @@ fn main() {
     let ok = step("verify", host.verify_base().map(|()| String::new()))
         && step("create", host.create(vm).map(|()| String::new()))
         && step("start", host.start(vm).map(|()| String::new()))
-        && step(
-            "provision (fresh per-VM password)",
-            guest_secret::fresh().and_then(|p| {
-                host.provision(vm, &p).map(|()| String::new()).map_err(|_| {
-                    "provision failed (text withheld: it handled the password)".to_string()
-                })
-            }),
-        )
+        && step("provision (fresh per-VM password)", {
+            // only ok/failed leaves this block: a failure text from a step that handled the password is not printed
+            if guest_secret::fresh().is_ok_and(|p| host.provision(vm, &p).is_ok()) {
+                Ok(String::new())
+            } else {
+                Err("provision failed (text withheld: it handled the password)".to_string())
+            }
+        })
         && step(
             "ready",
             host.wait_ready(vm, Duration::from_secs(300))
@@ -79,9 +79,11 @@ fn main() {
                 secret_dir: cred.clone(),
                 runner_dir: r"C:\runner".into(),
             };
-            t.deliver(vm, &Secret::new(FAKE.into()))
-                .map(|()| "started".to_string())
-                .map_err(|_| "deliver failed (text withheld: it handled the config)".to_string())
+            if t.deliver(vm, &Secret::new(FAKE.into())).is_ok() {
+                Ok("started".to_string())
+            } else {
+                Err("deliver failed (text withheld: it handled the config)".to_string())
+            }
         })
         && step(
             "wait_end with the real runner (fake config: it fails and exits)",
