@@ -798,8 +798,9 @@ mod tests {
         fn run(&self, _: &str) -> Result<String, String> {
             Err("no".into())
         }
-        fn run_with_input(&self, _: &str, input: &str) -> Result<String, String> {
-            Err(format!("powershell exited 1: echoed {input} back"))
+        fn run_with_input(&self, _: &str, _input: &str) -> Result<String, String> {
+            // the worst case: the failure text carries the (test) password; the tests only ever feed this runner `PW`
+            Err(format!("powershell exited 1: echoed {PW} back"))
         }
     }
 
@@ -884,9 +885,11 @@ mod tests {
             cfg: h.cfg,
         };
         let pw = super::super::guest_secret::fresh().unwrap();
-        let _ = h.provision("antspawn-run-g-0", &pw); // may fail at the VM step
+        let ran = h.provision("antspawn-run-g-0", &pw); // may fail at the VM step
         let blob = dir.join("antspawn-run-g-0.cred");
-        let hex = std::fs::read_to_string(&blob).expect("the blob was written before the VM step");
+        let hex = std::fs::read_to_string(&blob).unwrap_or_else(|e| {
+            panic!("the blob was written before the VM step: {e}; provision said {ran:?}")
+        });
         assert!(
             !hex.contains(pw.expose()) && hex.len() > 64,
             "plaintext or empty blob"
