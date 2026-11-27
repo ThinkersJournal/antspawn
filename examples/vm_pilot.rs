@@ -51,6 +51,17 @@ fn main() {
         );
         ok
     };
+    // for steps whose script reads the per-VM credential: only the outcome is printed, never text that came back from them
+    let quiet = |name: &str, r: Result<String, String>, shown: &str| {
+        let ok = r.is_ok();
+        println!(
+            "PILOT {name}: {} at {:.1}s {}",
+            if ok { "ok" } else { "FAILED" },
+            t.elapsed().as_secs_f32(),
+            if ok { shown } else { "(text withheld)" }
+        );
+        ok
+    };
     let ok = step("verify", host.verify_base().map(|()| String::new()))
         && step("create", host.create(vm).map(|()| String::new()))
         && step("start", host.start(vm).map(|()| String::new()))
@@ -67,12 +78,16 @@ fn main() {
             host.wait_ready(vm, Duration::from_secs(300))
                 .map(|()| String::new()),
         )
-        && step("guest-hostname", {
-            let pre = guest_secret::credential_preamble(&cred, vm).unwrap();
-            PowerShell.run(&format!(
+        && quiet(
+            "guest-hostname",
+            {
+                let pre = guest_secret::credential_preamble(&cred, vm).unwrap();
+                PowerShell.run(&format!(
                 "$ErrorActionPreference='Stop'\n{pre}Invoke-Command -VMName '{vm}' -Credential $cred -ScriptBlock {{ hostname }}\n"
             ))
-        })
+            },
+            "(guest answered over PowerShell Direct)",
+        )
         && step("deliver a FAKE config, runner starts", {
             let t = VmTransport {
                 runner: PowerShell,
@@ -89,12 +104,16 @@ fn main() {
             "wait_end with the real runner (fake config: it fails and exits)",
             { host.wait_end(vm, Duration::from_secs(240)) },
         )
-        && step("guest holds no trace of the fake config", {
-            let pre = guest_secret::credential_preamble(&cred, vm).unwrap();
-            PowerShell.run(&format!(
+        && quiet(
+            "guest holds no trace of the fake config",
+            {
+                let pre = guest_secret::credential_preamble(&cred, vm).unwrap();
+                PowerShell.run(&format!(
                 "$ErrorActionPreference='Stop'\n{pre}Invoke-Command -VMName '{vm}' -Credential $cred -ArgumentList '{FAKE}' -ScriptBlock {{ param($f) $ErrorActionPreference='SilentlyContinue'; $hits = Get-ChildItem C:/runner, C:/Users, C:/ProgramData, C:/Windows/Temp -Recurse -File -Force -ErrorAction SilentlyContinue | Where-Object {{ $_.Length -lt 5MB }} | Select-String -SimpleMatch -Pattern $f -List -ErrorAction SilentlyContinue; 'files holding it: ' + @($hits).Count; $c = 'C:/Windows/Temp/antspawn-control.txt'; Set-Content -LiteralPath $c -Value $f; $ctl = Get-ChildItem C:/Windows/Temp -File -Force | Select-String -SimpleMatch -Pattern $f -List; Remove-Item -LiteralPath $c -Force; 'positive control (planted file) found: ' + @($ctl).Count; 'diag logs: ' + @(Get-ChildItem C:/runner/_diag -ErrorAction SilentlyContinue).Count }}\n"
             ))
-        });
+            },
+            "(script ran; read the counts with vm-pilot.ps1 if needed)",
+        );
     let d = step("destroy", host.destroy(vm).map(|()| String::new()));
     std::process::exit(i32::from(!(ok && d)));
 }
