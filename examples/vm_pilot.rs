@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use antspawn::adapter::dispatch::JitTransport;
 use antspawn::adapter::github::Secret;
-use antspawn::adapter::guest_credential;
+use antspawn::adapter::guest_secret;
 use antspawn::adapter::vm_backend::{ScriptHost, VmHost, VmHostConfig, VmTransport};
 
 /// A made-up value shaped like a JIT config. Never a real one.
@@ -25,11 +25,8 @@ fn main() {
         eprintln!("usage: vm_pilot <base.vhdx> <base-sha256> <vm_dir> <switch>");
         std::process::exit(64);
     }
-    let cred = guest_credential::default_path().expect("LOCALAPPDATA");
-    println!(
-        "PILOT {}",
-        guest_credential::check(&cred).unwrap_or_else(|e| e)
-    );
+    let cred = guest_secret::default_dir().expect("ProgramData");
+    println!("PILOT {}", guest_secret::check(&cred).unwrap_or_else(|e| e));
     let host = ScriptHost {
         runner: PowerShell,
         cfg: VmHostConfig {
@@ -39,7 +36,7 @@ fn main() {
             switch: a[3].clone(),
             memory_mb: 4096,
             vcpus: 2,
-            guest_credential: cred.clone(),
+            secret_dir: cred.clone(),
         },
     };
     let vm = "antspawn-run-pilot-0";
@@ -54,39 +51,80 @@ fn main() {
         );
         ok
     };
+    // for steps whose script reads the per-VM credential: only the outcome is printed, never text that came back from them
+    let quiet = |name: &str, r: Result<String, String>, shown: &str| {
+        let ok = r.is_ok();
+        println!(
+            "PILOT {name}: {} at {:.1}s {}",
+            if ok { "ok" } else { "FAILED" },
+            t.elapsed().as_secs_f32(),
+            if ok { shown } else { "(text withheld)" }
+        );
+        ok
+    };
     let ok = step("verify", host.verify_base().map(|()| String::new()))
         && step("create", host.create(vm).map(|()| String::new()))
         && step("start", host.start(vm).map(|()| String::new()))
+        && step("provision (fresh per-VM password)", {
+            // only ok/failed leaves this block: a failure text from a step that handled the password is not printed
+            if guest_secret::fresh().is_ok_and(|p| host.provision(vm, &p).is_ok()) {
+                Ok(String::new())
+            } else {
+                Err("provision failed (text withheld: it handled the password)".to_string())
+            }
+        })
         && step(
             "ready",
             host.wait_ready(vm, Duration::from_secs(300))
                 .map(|()| String::new()),
         )
-        && step("guest-hostname", {
-            let pre = guest_credential::credential_preamble(&cred).unwrap();
-            PowerShell.run(&format!(
+        && quiet(
+            "guest-hostname",
+            {
+                let pre = guest_secret::credential_preamble(&cred, vm).unwrap();
+                PowerShell.run(&format!(
                 "$ErrorActionPreference='Stop'\n{pre}Invoke-Command -VMName '{vm}' -Credential $cred -ScriptBlock {{ hostname }}\n"
             ))
-        })
+            },
+            "(guest answered over PowerShell Direct)",
+        )
         && step("deliver a FAKE config, runner starts", {
             let t = VmTransport {
                 runner: PowerShell,
-                guest_credential: cred.clone(),
+                secret_dir: cred.clone(),
                 runner_dir: r"C:\runner".into(),
             };
-            t.deliver(vm, &Secret::new(FAKE.into()))
-                .map(|()| "started".into())
+            if t.deliver(vm, &Secret::new(FAKE.into())).is_ok() {
+                Ok("started".to_string())
+            } else {
+                Err("deliver failed (text withheld: it handled the config)".to_string())
+            }
         })
-        && step(
+        && quiet(
             "wait_end with the real runner (fake config: it fails and exits)",
             { host.wait_end(vm, Duration::from_secs(240)) },
+            "(runner ended)",
         )
-        && step("guest holds no trace of the fake config", {
-            let pre = guest_credential::credential_preamble(&cred).unwrap();
-            PowerShell.run(&format!(
+        && quiet(
+            "guest holds no trace of the fake config",
+            {
+                let pre = guest_secret::credential_preamble(&cred, vm).unwrap();
+                let out = PowerShell.run(&format!(
                 "$ErrorActionPreference='Stop'\n{pre}Invoke-Command -VMName '{vm}' -Credential $cred -ArgumentList '{FAKE}' -ScriptBlock {{ param($f) $ErrorActionPreference='SilentlyContinue'; $hits = Get-ChildItem C:/runner, C:/Users, C:/ProgramData, C:/Windows/Temp -Recurse -File -Force -ErrorAction SilentlyContinue | Where-Object {{ $_.Length -lt 5MB }} | Select-String -SimpleMatch -Pattern $f -List -ErrorAction SilentlyContinue; 'files holding it: ' + @($hits).Count; $c = 'C:/Windows/Temp/antspawn-control.txt'; Set-Content -LiteralPath $c -Value $f; $ctl = Get-ChildItem C:/Windows/Temp -File -Force | Select-String -SimpleMatch -Pattern $f -List; Remove-Item -LiteralPath $c -Force; 'positive control (planted file) found: ' + @($ctl).Count; 'diag logs: ' + @(Get-ChildItem C:/runner/_diag -ErrorAction SilentlyContinue).Count }}\n"
-            ))
-        });
+            ));
+                // judged here, not printed: no file holds the fake config, and the planted control file was found
+                match out {
+                    Ok(o)
+                        if o.contains("files holding it: 0")
+                            && o.contains("planted file) found: 1") =>
+                    {
+                        Ok(String::new())
+                    }
+                    _ => Err(String::new()),
+                }
+            },
+            "(0 files hold it; the planted control was found)",
+        );
     let d = step("destroy", host.destroy(vm).map(|()| String::new()));
     std::process::exit(i32::from(!(ok && d)));
 }

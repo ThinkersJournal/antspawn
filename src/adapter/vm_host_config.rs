@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! `vm-host.toml`, beside the adapter config: where the runner base image and the VMs live (ROADMAP row 40). Read only when a group
 //! names the `hyperv-vm` launcher. Set by whoever starts the adapter, never by a job. It holds paths and a hash, no secret: the guest
-//! password is a DPAPI file (`guest_credential`), never here.
+//! password is made per VM (`guest_secret`), never here.
 
 use std::path::{Path, PathBuf};
 
@@ -93,7 +93,7 @@ impl VmHostFile {
     }
 
     /// The host configuration `ScriptHost` takes.
-    pub fn host(&self, guest_credential: PathBuf) -> VmHostConfig {
+    pub fn host(&self, secret_dir: PathBuf) -> VmHostConfig {
         VmHostConfig {
             base: self.base.clone(),
             base_sha256: self.base_sha256.clone(),
@@ -101,7 +101,7 @@ impl VmHostFile {
             switch: self.switch.clone(),
             memory_mb: self.memory_mb,
             vcpus: self.vcpus,
-            guest_credential,
+            secret_dir,
         }
     }
 }

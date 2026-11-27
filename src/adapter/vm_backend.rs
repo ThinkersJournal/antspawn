@@ -9,10 +9,10 @@
 //! * [`VmHost`] is what acts on Hyper-V. [`ScriptHost`] builds each PowerShell script as text (quoted, prefix-checked, tested as text) and
 //!   hands it to a [`Runner`]; nothing here has touched Hyper-V.
 //!
-//! **The guest channel** is PowerShell Direct with the one baked Administrator password, kept as a DPAPI file for the adapter's
-//! account (CireSnave, board 488 "A"; `adapter::guest_credential`). Each guest script builds its `PSCredential` from that file inside
-//! the PowerShell process: the password is never in the script text, an argument, a log or a result. **Not here yet:** the JIT
-//! delivery itself (the transport that writes the config to the runner shim); only the runner-end wait uses the channel.
+//! **The guest channel** is PowerShell Direct with a **fresh password per VM** (PM ruling 2026-11-26; `adapter::guest_secret`): made
+//! when the VM starts, handed to the host PowerShell on stdin, stored only as a DPAPI CurrentUser blob in `%LOCALAPPDATA%\antspawn\guests` (user and SYSTEM ACL only) and
+//! deleted with the VM. Each guest script builds its `PSCredential` from that VM's blob inside the PowerShell process: the password
+//! is never in the script text, an argument, a log or a result.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -23,12 +23,21 @@ use super::github::{RunnerGroup, Secret};
 use crate::broker_proto::{VM_PREFIX, valid_vm_id};
 use crate::hyperv::{Runner, quote};
 
+/// The Hyper-V data-exchange (KVP) item that carries a VM's password to its guest; the guest startup task reads it from
+/// `HKLM:\SOFTWARE\Microsoft\Virtual Machine\External`. The name is not secret.
+pub const KVP_NAME: &str = "antspawn-guest-pw";
+const KVP_NS_ROOT: &str = "root\\virtualization\\v2";
+const KVP_NS: &str = "\\\\.\\root\\virtualization\\v2";
+
 /// What acts on Hyper-V for one runner VM. Every method may fail with a reason; `destroy` is idempotent (a VM already gone is `Ok`).
 pub trait VmHost: Send + Sync + 'static {
     /// Check the base disk against its pinned hash. Called once per backend, before the first VM.
     fn verify_base(&self) -> Result<(), String>;
     fn create(&self, vm: &str) -> Result<(), String>;
     fn start(&self, vm: &str) -> Result<(), String>;
+    /// Give this VM its own Administrator password: store it for the host side and put it on the VM bus for the guest. Called once per
+    /// VM, after `start`, with a password made for that VM alone.
+    fn provision(&self, vm: &str, secret: &Secret) -> Result<(), String>;
     /// Wait until the guest answers (heartbeat), at most `limit`.
     fn wait_ready(&self, vm: &str, limit: Duration) -> Result<(), String>;
     /// Wait until the runner has ended, at most `limit`; `Ok` is a one-line account.
@@ -106,6 +115,7 @@ impl<H: VmHost> RunnerBackend for VmBackend<H> {
         let up = (|| {
             self.host.create(&vm)?;
             self.host.start(&vm)?;
+            self.host.provision(&vm, &super::guest_secret::fresh()?)?;
             self.host.wait_ready(&vm, self.ready)?;
             started(&vm)?;
             self.host.wait_end(&vm, self.limit)
@@ -127,8 +137,8 @@ pub struct VmHostConfig {
     pub switch: String,
     pub memory_mb: u32,
     pub vcpus: u8,
-    /// The DPAPI file holding the guest Administrator password (`guest_credential::default_path`).
-    pub guest_credential: std::path::PathBuf,
+    /// Folder of the per-VM password blobs (`guest_secret::default_dir`): this user and SYSTEM only.
+    pub secret_dir: std::path::PathBuf,
 }
 
 /// The real [`VmHost`]: scripts for a [`Runner`] (PowerShell on stdin). Nothing here has touched Hyper-V.
@@ -170,7 +180,8 @@ impl<R: Runner + Send + Sync + 'static> ScriptHost<R> {
     }
 
     /// A differencing child of the base, a generation 2 VM with one NIC on the pool switch, static memory, no checkpoints,
-    /// only the heartbeat integration service (PowerShell Direct rides the VM bus, not an integration service). Not started.
+    /// only the heartbeat and key-value-exchange integration services (PowerShell Direct rides the VM bus, not an integration service;
+    /// the key-value exchange is how the guest receives its own password, `guest_secret`). Not started.
     pub fn script_create(&self, vm: &str) -> Result<String, String> {
         let n = named(vm)?;
         let base = quote(&self.cfg.base)?;
@@ -183,7 +194,7 @@ impl<R: Runner + Send + Sync + 'static> ScriptHost<R> {
              New-VM -Name {n} -Generation 2 -MemoryStartupBytes {mem} -VHDPath {disk} -SwitchName {switch} -Path {vmdir} | Out-Null\n\
              Set-VMMemory -VMName {n} -DynamicMemoryEnabled $false\n\
              Set-VMProcessor -VMName {n} -Count {cpus} -ExposeVirtualizationExtensions $false\n\
-             Get-VMIntegrationService -VMName {n} | Where-Object {{ $_.Name -ne 'Heartbeat' }} | Disable-VMIntegrationService\n\
+             Get-VMIntegrationService -VMName {n} | Where-Object {{ $_.Name -notin 'Heartbeat', 'Key-Value Pair Exchange' }} | Disable-VMIntegrationService\n\
              Set-VM -Name {n} -CheckpointType Disabled\n",
             vmdir = quote(&self.cfg.vm_dir)?,
             cpus = self.cfg.vcpus,
@@ -202,15 +213,65 @@ impl<R: Runner + Send + Sync + 'static> ScriptHost<R> {
     /// Exit non-zero if either does not arrive within `secs` in all.
     pub fn script_ready(&self, vm: &str, secs: u64) -> Result<String, String> {
         let n = named(vm)?;
-        let pre =
-            crate::adapter::guest_credential::credential_preamble(&self.cfg.guest_credential)?;
+        let pre = crate::adapter::guest_secret::credential_preamble(&self.cfg.secret_dir, vm)?;
+        let seal = self.script_seal(vm)?;
         Ok(format!(
             "$ErrorActionPreference='Stop'\n{pre}$end = (Get-Date).AddSeconds({secs})\n\
              while ((Get-VMIntegrationService -VMName {n} -Name Heartbeat).PrimaryStatusDescription -ne 'OK') {{\n\
              \x20 if ((Get-Date) -gt $end) {{ throw 'no heartbeat in time' }}\n  Start-Sleep -Seconds 1\n}}\n\
              while ($true) {{\n\
              \x20 try {{ if (Invoke-Command -VMName {n} -Credential $cred -ScriptBlock {{ 'up' }} -ErrorAction Stop) {{ break }} }} catch {{ }}\n\
-             \x20 if ((Get-Date) -gt $end) {{ throw 'the guest did not answer PowerShell Direct in time' }}\n  Start-Sleep -Seconds 2\n}}\n"
+             \x20 if ((Get-Date) -gt $end) {{ throw 'the guest did not answer PowerShell Direct in time' }}\n  Start-Sleep -Seconds 2\n}}\n{seal}"
+        ))
+    }
+
+    /// Take the password off the VM bus once the guest has answered with it, so the job cannot read it from the guest registry. The
+    /// item is removed by name; no value is needed.
+    fn script_seal(&self, vm: &str) -> Result<String, String> {
+        let n = named(vm)?;
+        Ok(format!(
+            "$vmo = Get-WmiObject -Namespace {KVP_NS_ROOT} -Class Msvm_ComputerSystem -Filter \"ElementName={n}\"\n\
+             $svc = Get-WmiObject -Namespace {KVP_NS_ROOT} -Class Msvm_VirtualSystemManagementService\n\
+             $item = ([wmiclass]'{KVP_NS}:Msvm_KvpExchangeDataItem').CreateInstance()\n\
+             $item.Name = '{KVP_NAME}'; $item.Data = ''; $item.Source = 0\n\
+             $r = $svc.RemoveKvpItems($vmo, @($item.PSBase.GetText(1)))\n\
+             if ($r.ReturnValue -ne 0 -and $r.ReturnValue -ne 4096) {{ throw \"could not take the guest password off the VM bus ($($r.ReturnValue))\" }}\n"
+        ))
+    }
+
+    /// Reads the password from **stdin**, makes the folder user-and-SYSTEM only (ACL read back, before any secret is written), stores it as a CurrentUser DPAPI blob in this VM's file, and puts it on the VM bus as a data
+    /// exchange item that the guest's startup task (`scripts/guest-bootstrap.ps1`) reads. The script carries names and paths only.
+    pub fn script_provision(&self, vm: &str) -> Result<String, String> {
+        let n = named(vm)?;
+        let file = quote(
+            &crate::adapter::guest_secret::vm_file(&self.cfg.secret_dir, vm)?
+                .display()
+                .to_string(),
+        )?;
+        let dir = quote(&self.cfg.secret_dir.display().to_string())?;
+        Ok(format!(
+            "$ErrorActionPreference='Stop'\n\
+             $pw = [Console]::In.ReadToEnd().Trim()\n\
+             if (-not $pw) {{ throw 'no guest password on stdin' }}\n\
+             try {{\n\
+             \x20 Add-Type -AssemblyName System.Security\n\
+             \x20 if (-not (Test-Path -LiteralPath {dir})) {{ New-Item -ItemType Directory -Path {dir} -Force | Out-Null }}\n\
+             \x20 & icacls.exe {dir} /reset | Out-Null\n\
+             \x20 if ($LASTEXITCODE -ne 0) {{ throw 'icacls /reset failed on the guest secret folder' }}\n\
+             \x20 $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value\n\
+             \x20 & icacls.exe {dir} /inheritance:r /grant:r \"*$($me):(OI)(CI)F\" '*S-1-5-18:(OI)(CI)F' | Out-Null\n\
+             \x20 if ($LASTEXITCODE -ne 0) {{ throw 'icacls failed on the guest secret folder' }}\n\
+             \x20 $ids = @((New-Object IO.DirectoryInfo({dir})).GetAccessControl().GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) | ForEach-Object {{ $_.IdentityReference.Value }} | Sort-Object -Unique)\n\
+             \x20 if ($ids.Count -ne 2 -or @($ids | Where-Object {{ $_ -notin @($me, 'S-1-5-18') }}).Count -gt 0) {{ throw \"guest secret folder ACL is not this user and SYSTEM only: $($ids -join ', ')\" }}\n\
+             \x20 $blob = [Security.Cryptography.ProtectedData]::Protect([Text.Encoding]::UTF8.GetBytes($pw), $null, 'CurrentUser')\n\
+             \x20 [IO.File]::WriteAllText({file}, (($blob | ForEach-Object {{ $_.ToString('x2') }}) -join ''))\n\
+             \x20 $vmo = Get-WmiObject -Namespace {KVP_NS_ROOT} -Class Msvm_ComputerSystem -Filter \"ElementName={n}\"\n\
+             \x20 $svc = Get-WmiObject -Namespace {KVP_NS_ROOT} -Class Msvm_VirtualSystemManagementService\n\
+             \x20 $item = ([wmiclass]'{KVP_NS}:Msvm_KvpExchangeDataItem').CreateInstance()\n\
+             \x20 $item.Name = '{KVP_NAME}'; $item.Data = $pw; $item.Source = 0\n\
+             \x20 $r = $svc.AddKvpItems($vmo, @($item.PSBase.GetText(1)))\n\
+             \x20 if ($r.ReturnValue -ne 0 -and $r.ReturnValue -ne 4096) {{ throw \"could not put the guest password on the VM bus ($($r.ReturnValue))\" }}\n\
+             }} finally {{ $pw = $null }}\n"
         ))
     }
 
@@ -218,8 +279,7 @@ impl<R: Runner + Send + Sync + 'static> ScriptHost<R> {
     /// most `secs` from now. The credential comes from the DPAPI file inside this script; nothing here carries the password.
     pub fn script_wait_end(&self, vm: &str, secs: u64) -> Result<String, String> {
         let n = named(vm)?;
-        let pre =
-            crate::adapter::guest_credential::credential_preamble(&self.cfg.guest_credential)?;
+        let pre = crate::adapter::guest_secret::credential_preamble(&self.cfg.secret_dir, vm)?;
         Ok(format!(
             "$ErrorActionPreference='Stop'
 {pre}$end = (Get-Date).AddSeconds({secs})
@@ -242,12 +302,19 @@ $seen = $false
         let disk = quote(&self.disk(vm))?;
         // `New-VM -Path` leaves an empty folder named for the VM; remove it only when it holds no file
         let folder = quote(&join(&self.cfg.vm_dir, vm))?;
+        // the VM's own password blob goes with it (only that VM's file)
+        let blob = quote(
+            &crate::adapter::guest_secret::vm_file(&self.cfg.secret_dir, vm)?
+                .display()
+                .to_string(),
+        )?;
         Ok(format!(
             "$ErrorActionPreference='Stop'\n\
              $v = Get-VM -Name {n} -ErrorAction SilentlyContinue\n\
              if ($v) {{ if ($v.State -ne 'Off') {{ Stop-VM -Name {n} -TurnOff -Force }}; Remove-VM -Name {n} -Force }}\n\
              if (Test-Path -LiteralPath {disk}) {{ Remove-Item -LiteralPath {disk} -Force }}\n\
-             if ((Test-Path -LiteralPath {folder}) -and -not (Get-ChildItem -LiteralPath {folder} -Force -Recurse -File)) {{ Remove-Item -LiteralPath {folder} -Recurse -Force }}\n"
+             if ((Test-Path -LiteralPath {folder}) -and -not (Get-ChildItem -LiteralPath {folder} -Force -Recurse -File)) {{ Remove-Item -LiteralPath {folder} -Recurse -Force }}\n\
+             if (Test-Path -LiteralPath {blob}) {{ Remove-Item -LiteralPath {blob} -Force }}\n"
         ))
     }
 }
@@ -261,6 +328,14 @@ impl<R: Runner + Send + Sync + 'static> VmHost for ScriptHost<R> {
     }
     fn start(&self, vm: &str) -> Result<(), String> {
         self.runner.run(&self.script_start(vm)?).map(|_| ())
+    }
+    fn provision(&self, vm: &str, secret: &Secret) -> Result<(), String> {
+        let script = self.script_provision(vm)?;
+        // an error text never carries the password, whatever the runner put in it
+        self.runner
+            .run_with_input(&script, secret.expose())
+            .map(|_| ())
+            .map_err(|e| e.replace(secret.expose(), "<redacted>"))
     }
     fn wait_ready(&self, vm: &str, limit: Duration) -> Result<(), String> {
         self.runner
@@ -283,8 +358,8 @@ impl<R: Runner + Send + Sync + 'static> VmHost for ScriptHost<R> {
 /// It is never in a script, a command line, a file, a log, a status file or the disk image, and an error never carries it.
 pub struct VmTransport<R: Runner + Send + Sync + 'static> {
     pub runner: R,
-    /// The DPAPI file holding the guest Administrator password.
-    pub guest_credential: std::path::PathBuf,
+    /// Folder of the per-VM password blobs (`guest_secret::default_dir`).
+    pub secret_dir: std::path::PathBuf,
     /// The runner folder in the guest (the image's `C:\runner`, holding `run.cmd`).
     pub runner_dir: String,
 }
@@ -301,7 +376,7 @@ impl<R: Runner + Send + Sync + 'static> VmTransport<R> {
     /// The script that takes the config from stdin. It holds no secret: only names and paths.
     pub fn script_deliver(&self, vm: &str) -> Result<String, String> {
         let n = named(vm)?;
-        let pre = crate::adapter::guest_credential::credential_preamble(&self.guest_credential)?;
+        let pre = crate::adapter::guest_secret::credential_preamble(&self.secret_dir, vm)?;
         let dir = quote(&self.runner_dir)?;
         Ok(format!(
             "$ErrorActionPreference='Stop'\n{pre}$j = [Console]::In.ReadToEnd().Trim()\n\
@@ -350,6 +425,7 @@ mod tests {
     #[derive(Default)]
     struct Fake {
         calls: Arc<Mutex<Vec<String>>>,
+        secrets: Arc<Mutex<Vec<String>>>,
         fail_at: Option<&'static str>,
         destroy_fails: bool,
     }
@@ -375,6 +451,13 @@ mod tests {
         }
         fn start(&self, vm: &str) -> Result<(), String> {
             self.step("start", vm)
+        }
+        fn provision(&self, vm: &str, secret: &Secret) -> Result<(), String> {
+            self.secrets
+                .lock()
+                .unwrap()
+                .push(secret.expose().to_string());
+            self.step("provision", vm)
         }
         fn wait_ready(&self, vm: &str, _: Duration) -> Result<(), String> {
             self.step("ready", vm)
@@ -430,6 +513,7 @@ mod tests {
                 "verify",
                 &format!("create {vm}"),
                 &format!("start {vm}"),
+                &format!("provision {vm}"),
                 &format!("ready {vm}"),
                 &format!("end {vm}"),
                 &format!("destroy {vm}")
@@ -460,7 +544,10 @@ mod tests {
                 ..Fake::default()
             });
             let e = b.run_one(&group(), &mut |_| Ok(())).unwrap_err();
-            assert!(e.contains(&format!("{step} failed")), "{step}: {e}");
+            assert!(
+                e.contains(&format!("{step} failed")),
+                "{step}: wrong failure text"
+            );
             let c = calls.lock().unwrap().clone();
             assert_eq!(
                 c.last().unwrap(),
@@ -508,7 +595,10 @@ mod tests {
             ..Fake::default()
         });
         let e = b.run_one(&group(), &mut |_| Ok(())).unwrap_err();
-        assert!(e.contains("was not removed") && e.contains("locked"), "{e}");
+        assert!(
+            e.contains("was not removed") && e.contains("locked"),
+            "wrong failure text"
+        );
         let (b, _) = backend(Fake {
             fail_at: Some("end"),
             destroy_fails: true,
@@ -517,7 +607,7 @@ mod tests {
         let e = b.run_one(&group(), &mut |_| Ok(())).unwrap_err();
         assert!(
             e.contains("end failed") && e.contains("was not removed"),
-            "{e}"
+            "wrong failure text"
         );
     }
 
@@ -527,6 +617,13 @@ mod tests {
     impl Runner for Rec {
         fn run(&self, script: &str) -> Result<String, String> {
             self.0.lock().unwrap().push(script.to_string());
+            Ok(String::new())
+        }
+        fn run_with_input(&self, script: &str, input: &str) -> Result<String, String> {
+            self.0
+                .lock()
+                .unwrap()
+                .push(format!("{script}\n<<stdin:{input}>>"));
             Ok(String::new())
         }
     }
@@ -541,9 +638,7 @@ mod tests {
                 switch: "antspawn-pool-1".into(),
                 memory_mb: 4096,
                 vcpus: 2,
-                guest_credential: std::path::PathBuf::from(
-                    r"C:\Users\x\AppData\Local\antspawn\guest-credential.dpapi",
-                ),
+                secret_dir: std::path::PathBuf::from(r"C:\Users\x\AppData\Local\antspawn\guests"),
             },
         }
     }
@@ -564,7 +659,7 @@ mod tests {
             "{s}"
         );
         assert!(
-            s.contains("-ne 'Heartbeat'"),
+            s.contains("-notin 'Heartbeat', 'Key-Value Pair Exchange'"),
             "every integration service but the heartbeat is off: {s}"
         );
         assert!(
@@ -631,7 +726,8 @@ mod tests {
         let h = host();
         let s = h.script_wait_end("antspawn-run-g-0", 600).unwrap();
         assert!(
-            s.contains("guest-credential.dpapi")
+            s.contains("antspawn-run-g-0.cred")
+                && s.contains("'CurrentUser'")
                 && s.contains("Invoke-Command -VMName 'antspawn-run-g-0'"),
             "{s}"
         );
@@ -644,6 +740,188 @@ mod tests {
         h.wait_end("antspawn-run-g-0", Duration::from_secs(5))
             .unwrap();
         assert_eq!(h.runner.0.lock().unwrap().len(), 1);
+    }
+
+    // ---- the per-guest password (PM ruling 2026-11-26) ----
+
+    const PW: &str = "Aa1-0123456789abcdef-test-only-not-a-real-password";
+
+    #[test]
+    fn two_runners_get_two_different_passwords_and_each_is_made_after_start() {
+        let f = Fake::default();
+        let secrets = f.secrets.clone();
+        let (b, _) = backend(f);
+        b.run_one(&group(), &mut |_| Ok(())).unwrap();
+        b.run_one(&group(), &mut |_| Ok(())).unwrap();
+        let s = secrets.lock().unwrap().clone();
+        assert_eq!(s.len(), 2, "one password per VM");
+        assert_ne!(s[0], s[1], "a password was reused across builds");
+        assert!(s.iter().all(|p| p.len() >= 4 + 64), "{s:?}");
+    }
+
+    #[test]
+    fn the_password_is_on_stdin_never_in_the_script_and_never_in_an_error() {
+        let h = host();
+        let script = h.script_provision("antspawn-run-g-0").unwrap();
+        assert!(
+            !script.contains(PW) && !script.contains("-AsPlainText"),
+            "{script}"
+        );
+        assert!(
+            script.contains("[Console]::In.ReadToEnd()")
+                && script.contains("'CurrentUser'")
+                && !script.contains("LocalMachine")
+                && script.contains("antspawn-run-g-0.cred")
+                && script.contains("$pw = $null"),
+            "{script}"
+        );
+        // nothing in it prints, logs or exports the password
+        for bad in [
+            "Write-Host",
+            "Write-Output",
+            "Out-File",
+            "Set-Content",
+            "$env:",
+            "Start-Process",
+            "-ArgumentList",
+        ] {
+            assert!(!script.contains(bad), "{bad} in {script}");
+        }
+        h.provision("antspawn-run-g-0", &Secret::new(PW.into()))
+            .unwrap();
+        let seen = h.runner.0.lock().unwrap().clone();
+        assert_eq!(seen.len(), 1);
+        let (text, stdin) = seen[0].split_once("\n<<stdin:").unwrap();
+        assert_eq!(stdin, format!("{PW}>>"), "the password is the stdin");
+        assert!(!text.contains(PW), "password in the script text");
+        // control: the same check sees the password when it is there
+        assert!(seen[0].contains(PW));
+        assert!(h.script_provision("not-ours").is_err());
+    }
+
+    struct Leaky;
+    impl Runner for Leaky {
+        fn run(&self, _: &str) -> Result<String, String> {
+            Err("no".into())
+        }
+        fn run_with_input(&self, _: &str, _input: &str) -> Result<String, String> {
+            // the worst case: the failure text carries the (test) password; the tests only ever feed this runner `PW`
+            Err(format!("powershell exited 1: echoed {PW} back"))
+        }
+    }
+
+    #[test]
+    fn a_provisioning_failure_never_carries_the_password() {
+        let h = ScriptHost {
+            runner: Leaky,
+            cfg: host().cfg,
+        };
+        let e = h
+            .provision("antspawn-run-g-0", &Secret::new(PW.into()))
+            .unwrap_err();
+        assert!(
+            !e.contains(PW) && e.contains("<redacted>"),
+            "the password was not redacted"
+        );
+        // control: the raw runner error did carry it
+        assert!(Leaky.run_with_input("", PW).unwrap_err().contains(PW));
+    }
+
+    #[test]
+    fn the_password_comes_off_the_bus_once_the_guest_answered_and_its_blob_goes_with_the_vm() {
+        let h = host();
+        let r = h.script_ready("antspawn-run-g-0", 60).unwrap();
+        let answered = r.rfind("did not answer PowerShell Direct").unwrap();
+        let sealed = r.find("RemoveKvpItems").unwrap();
+        assert!(
+            sealed > answered,
+            "the item is removed only after the guest answered: {r}"
+        );
+        assert!(!r.contains(PW));
+        let d = h.script_destroy("antspawn-run-g-0").unwrap();
+        assert!(
+            d.contains("antspawn-run-g-0.cred") && !d.contains("antspawn-run-g-1"),
+            "{d}"
+        );
+        // the blob is removed AFTER the VM, so an unwritable folder cannot keep a VM alive
+        assert!(
+            d.find("Remove-VM").unwrap() < d.find("antspawn-run-g-0.cred").unwrap(),
+            "{d}"
+        );
+    }
+
+    #[test]
+    fn the_provisioning_script_locks_the_folder_before_it_writes_the_secret() {
+        let h = host();
+        let s = h.script_provision("antspawn-run-g-0").unwrap();
+        let at = |n: &str| s.find(n).unwrap_or_else(|| panic!("{n} missing in {s}"));
+        let (reset, inherit, readback, write) = (
+            at("/reset"),
+            at("/inheritance:r"),
+            at("ACL is not this user and SYSTEM only"),
+            at("WriteAllText"),
+        );
+        assert!(
+            reset < inherit && inherit < readback && readback < write,
+            "{s}"
+        );
+        // control: a script with the read-back removed would not satisfy the order check
+        assert!(
+            !s.replace("ACL is not this user and SYSTEM only", "x")
+                .contains("ACL is not this user")
+        );
+    }
+
+    /// Runs the REAL script (Windows PowerShell) against a temp folder that starts with an extra explicit ACE, as board 503's did.
+    /// It ends at the Hyper-V step (no such VM, and this account may not own the namespace), after the part under test.
+    #[cfg(windows)]
+    #[test]
+    fn measured_the_script_leaves_user_and_system_only_and_the_blob_is_not_plaintext() {
+        use crate::hyperv::PowerShell;
+        let dir = std::env::temp_dir().join(format!("antspawn-prov-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let q = dir.display().to_string();
+        // an extra explicit ACE for Users (S-1-5-32-545)
+        let out = std::process::Command::new("icacls.exe")
+            .args([q.as_str(), "/grant", "*S-1-5-32-545:(RX)"])
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        let mut h = host();
+        h.cfg.secret_dir = dir.clone();
+        let h = ScriptHost {
+            runner: PowerShell,
+            cfg: h.cfg,
+        };
+        let pw = super::super::guest_secret::fresh().unwrap();
+        let ran = h.provision("antspawn-run-g-0", &pw); // may fail at the VM step
+        let blob = dir.join("antspawn-run-g-0.cred");
+        let hex = std::fs::read_to_string(&blob).unwrap_or_else(|e| {
+            panic!("the blob was written before the VM step: {e}; provision said {ran:?}")
+        });
+        assert!(
+            !hex.contains(pw.expose()) && hex.len() > 64,
+            "plaintext or empty blob"
+        );
+        let check = PowerShell
+            .run(&format!(
+                "$ids = @((New-Object IO.DirectoryInfo('{q}')).GetAccessControl().GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) | ForEach-Object {{ $_.IdentityReference.Value }} | Sort-Object -Unique)\n\
+                 $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value\n\
+                 'ACL=' + ($ids -join ',') + ';ME=' + $me\n"
+            ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let check = check.unwrap_or_else(|e| e);
+        let acl = check
+            .lines()
+            .find(|l| l.starts_with("ACL="))
+            .unwrap_or(&check)
+            .to_string();
+        let (ids, me) = acl.trim_start_matches("ACL=").split_once(";ME=").unwrap();
+        let mut got: Vec<&str> = ids.split(',').collect();
+        got.sort_unstable();
+        let mut want = vec![me.trim(), "S-1-5-18"];
+        want.sort_unstable();
+        assert_eq!(got, want, "ACL after the script: {acl}");
     }
 
     // ---- the JIT transport ----
@@ -673,9 +951,7 @@ mod tests {
                 seen: Mutex::new(Vec::new()),
                 reply,
             },
-            guest_credential: std::path::PathBuf::from(
-                r"C:\Users\x\AppData\Local\antspawn\guest-credential.dpapi",
-            ),
+            secret_dir: std::path::PathBuf::from(r"C:\Users\x\AppData\Local\antspawn\guests"),
             runner_dir: r"C:\runner".into(),
         }
     }
@@ -707,7 +983,10 @@ mod tests {
         let e = t
             .deliver("antspawn-run-g-0", &Secret::new(JIT.into()))
             .unwrap_err();
-        assert!(!e.contains(JIT) && e.contains("<redacted>"), "{e}");
+        assert!(
+            !e.contains(JIT) && e.contains("<redacted>"),
+            "the config was not redacted"
+        );
         // control: the unredacted failure did carry it
         assert!(t.runner.reply.clone().unwrap_err().contains(JIT));
     }
@@ -725,7 +1004,7 @@ mod tests {
             let e = t
                 .deliver("antspawn-run-g-0", &Secret::new(bad.into()))
                 .unwrap_err();
-            assert!(e.contains("refused"), "{bad:?}: {e}");
+            assert!(e.contains("refused"), "{bad:?} was not refused");
             assert!(
                 t.runner.seen.lock().unwrap().is_empty(),
                 "{bad:?} left the host"

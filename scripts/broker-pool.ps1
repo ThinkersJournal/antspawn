@@ -173,6 +173,11 @@ if ($refuse.Count -gt 0) { if ($Apply) { throw 'Refused; nothing was created.' }
 if (-not $Apply) { Write-Host 'Dry run complete. -Apply creates the above; -Undo removes it.'; return }
 
 if (-not (Test-Path -LiteralPath $Dir)) { New-Item -ItemType Directory -Path $Dir | Out-Null }
+# Rebuild the DACL from scratch: a folder that already exists (board 503: made earlier, with an explicit ACE for a
+# user) keeps any explicit entry that /grant:r does not name, so reset to inherited-only first, then drop
+# inheritance, then grant. The read-back below still refuses anything but Administrators and SYSTEM.
+& icacls.exe $Dir /reset | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'icacls /reset failed on the state folder' }
 & icacls.exe $Dir /inheritance:r /grant:r '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-18:(OI)(CI)F' | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'icacls failed on the state folder' }
 $acl = Get-Acl -LiteralPath $Dir

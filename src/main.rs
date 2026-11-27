@@ -232,7 +232,7 @@ fn adapter(
     } else if report
         .problems
         .iter()
-        .any(|p| p.starts_with("guest credential:"))
+        .any(|p| p.starts_with("guest secret:"))
     {
         ExitCode::from(2)
     } else {

@@ -515,3 +515,9 @@ Not measured: a bind under `C:\Projects\<name>` (the account has an explicit den
 - **Run:** `egress_listen = ["127.0.0.1:18443", "127.0.0.2:18443"]` on one group; `spawn-egress --config` then `spawn adapter --check`, then the proxy stopped and `--check` again.
 - **Results:** `--check` printed `slot 1` and `slot 2`, each `answers 403 to a name on no list`; the group's one deny log held two `reason=not-listed` lines (one per probe). After the proxy stopped, `--check` reported 2 listeners `is down`.
 - **Not measured:** a guest, a pool switch, the host-port scan, more than two slots, different allow lists on one machine at once. One run on one day.
+
+## 2026-11-26: egress listeners on the real pool addresses, ROADMAP rows 39, 43 and 44 host side (ref: `work-7` on d58538e, debug build; run as `cires`, host only, no VM; pool read back by the PM after board 503)
+
+- **Run:** `egress_listen = ["10.77.1.1:3128", "10.77.2.1:3128", "10.77.3.1:3128", "10.77.4.1:3128"]` on the `antspawn-vm` group (`docs/proof/vm/adapter.toml` otherwise); `spawn-egress --config` bound all four (non-elevated bind to the pool switch addresses worked), then `spawn adapter --check`, then `curl -x http://10.77.N.1:3128 -I` for `https://api.github.com/` and `https://example.com/` on slots 1 and 2.
+- **Results:** `--check` printed `slot 1` to `slot 4`, each `egress listener 10.77.N.1:3128 answers 403 to a name on no list`. Slots 1 and 2: `api.github.com` got `200 Connection Established`, `example.com` got `403 Forbidden`.
+- **Not measured:** anything from a guest (other ports, UDP 53, another slot's address, the forwarding-on control: row 44 needs a VM on a pool switch, row 40); the 3128-only firewall rules were read back by the PM, not exercised by traffic; the deny log directory was not inspected. One run on one day.
